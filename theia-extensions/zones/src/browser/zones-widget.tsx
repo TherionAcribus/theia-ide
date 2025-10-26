@@ -1,6 +1,8 @@
 import * as React from 'react';
-import { injectable } from 'inversify';
+import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
+import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 
 type ZoneDto = { id: number; name: string; description?: string; created_at?: string; geocaches_count: number };
 
@@ -11,8 +13,12 @@ export class ZonesWidget extends ReactWidget {
     protected zones: ZoneDto[] = [];
     protected activeZoneId: number | undefined;
     protected backendBaseUrl = 'http://127.0.0.1:8000';
+    protected readonly versionStamp = 'zones-widget@' + new Date().toISOString();
 
-    constructor() {
+    constructor(
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+    ) {
         super();
         this.id = ZonesWidget.ID;
         this.title.closable = true;
@@ -20,10 +26,15 @@ export class ZonesWidget extends ReactWidget {
         this.title.caption = 'Zones';
         this.title.iconClass = 'fa fa-map';
         this.addClass('theia-zones-widget');
+        // Logs init
+        // eslint-disable-next-line no-console
+        console.log('[ZonesWidget] constructed', this.versionStamp);
     }
 
     onAfterAttach(msg: any): void {
         super.onAfterAttach(msg);
+        // eslint-disable-next-line no-console
+        console.log('[ZonesWidget] onAfterAttach');
         this.refresh();
     }
 
@@ -35,9 +46,45 @@ export class ZonesWidget extends ReactWidget {
             // Charger la zone active
             const act = await fetch(`${this.backendBaseUrl}/api/active-zone`, { credentials: 'include' });
             this.activeZoneId = act.ok ? (await act.json())?.id : undefined;
+            // eslint-disable-next-line no-console
+            console.log('[ZonesWidget] refresh -> zones:', this.zones.length, 'active:', this.activeZoneId);
             this.update();
         } catch (e) {
             console.error('Zones: fetch error', e);
+        }
+    }
+
+    protected async deleteZone(zoneId: number, zoneName: string): Promise<void> {
+        try {
+            // eslint-disable-next-line no-console
+            console.log('[ZonesWidget] deleting zone', zoneId, zoneName);
+            const res = await fetch(`${this.backendBaseUrl}/api/zones/${zoneId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+            }
+
+            // Si la zone supprimée était active, désactiver
+            if (this.activeZoneId === zoneId) {
+                await fetch(`${this.backendBaseUrl}/api/active-zone`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ zone_id: null })
+                });
+                this.activeZoneId = undefined;
+            }
+
+            // Rafraîchir la liste
+            await this.refresh();
+            // eslint-disable-next-line no-console
+            console.log('[ZonesWidget] zone deleted successfully');
+        } catch (e) {
+            console.error('Zones: delete error', e);
+            alert(`Erreur lors de la suppression: ${e}`);
         }
     }
 
@@ -76,6 +123,8 @@ export class ZonesWidget extends ReactWidget {
                         <li key={z.id} style={{ padding: '4px 0' }}>
                             <button
                                 onClick={async () => {
+                                    // eslint-disable-next-line no-console
+                                    console.log('[ZonesWidget] click zone', z.id, z.name);
                                     await fetch(`${this.backendBaseUrl}/api/active-zone`, {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
@@ -84,6 +133,28 @@ export class ZonesWidget extends ReactWidget {
                                     });
                                     this.activeZoneId = z.id;
                                     this.update();
+                                    // Ouvrir directement l'onglet central via WidgetManager
+                                    try {
+                                        // eslint-disable-next-line no-console
+                                        console.log('[ZonesWidget] opening ZoneGeocachesWidget via WidgetManager');
+                                        const widget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID) as ZoneGeocachesWidget;
+                                        widget.setZone({ zoneId: z.id, zoneName: z.name });
+                                        if (!widget.isAttached) {
+                                            this.shell.addWidget(widget, { area: 'main' });
+                                        }
+                                        this.shell.activateWidget(widget.id);
+                                    } catch (error) {
+                                        console.error('Failed to open ZoneGeocachesWidget:', error);
+                                        // Fallback: événement personnalisé
+                                        try {
+                                            // eslint-disable-next-line no-console
+                                            console.log('[ZonesWidget] fallback dispatch event open-zone-geocaches');
+                                            const event = new CustomEvent('open-zone-geocaches', { detail: { zoneId: z.id, zoneName: z.name } });
+                                            window.dispatchEvent(event);
+                                        } catch {}
+                                    }
+                                    // eslint-disable-next-line no-console
+                                    console.trace('[ZonesWidget] click trace');
                                 }}
                                 style={{
                                     width: '100%',
@@ -99,6 +170,27 @@ export class ZonesWidget extends ReactWidget {
                             >
                                 {z.name}
                                 <span style={{ opacity: 0.7, marginLeft: 6 }}>({z.geocaches_count})</span>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation(); // Empêcher l'ouverture de l'onglet
+                                        if (window.confirm(`Supprimer la zone "${z.name}" ?`)) {
+                                            this.deleteZone(z.id, z.name);
+                                        }
+                                    }}
+                                    style={{
+                                        marginLeft: 8,
+                                        padding: '2px 6px',
+                                        background: 'transparent',
+                                        color: '#ef4444',
+                                        border: '1px solid #ef4444',
+                                        borderRadius: 3,
+                                        cursor: 'pointer',
+                                        fontSize: '12px'
+                                    }}
+                                    title="Supprimer cette zone"
+                                >
+                                    ✕
+                                </button>
                             </button>
                         </li>
                     ))}

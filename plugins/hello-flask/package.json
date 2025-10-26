@@ -1,0 +1,26 @@
+{
+    "name": "hello-flask",
+    "displayName": "Hello Flask",
+    "version": "0.0.2",
+    "publisher": "local",
+    "engines": { "vscode": "^1.82.0" },
+    "activationEvents": ["onView:helloFlask.chatView", "onCommand:helloFlask.ask", "onCommand:helloFlask.ping"],
+    "contributes": {
+      "viewsContainers": {
+        "activitybar": [
+          { "id": "helloFlask.container", "title": "GeoApp", "icon": "resources/flask.svg" }
+        ]
+      },
+      "views": {
+        "helloFlask.container": [
+          { "id": "helloFlask.chatView", "name": "Chat (Flask)" }
+        ]
+      },
+      "commands": [
+        { "command": "helloFlask.ping", "title": "Hello Flask: Ping" },
+        { "command": "helloFlask.ask", "title": "Hello Flask: Ask (prompt)" }
+      ]
+    },
+    "main": "./extension.js",
+    "categories": ["Other"]
+  }

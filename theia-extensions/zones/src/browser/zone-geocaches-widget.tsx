@@ -97,14 +97,48 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected render(): React.ReactNode {
         return (
             <div className='p-2'>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <h3 style={{ margin: 0 }}>{this.title.label}</h3>
-                    <button
-                        onClick={() => this.messages.info('Ajouter une géocache (à venir)')}
-                        className='theia-button'
+                    <form
+                        onSubmit={async (e) => {
+                            e.preventDefault();
+                            try {
+                                const form = e.currentTarget as HTMLFormElement;
+                                const fd = new FormData(form);
+                                const gc = (fd.get('gc_code') as string || '').trim().toUpperCase();
+                                if (!gc) { return; }
+                                if (!this.zoneId) { this.messages.warn('Zone active manquante'); return; }
+                                const res = await fetch(`${this.backendBaseUrl}/api/geocaches/import`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    credentials: 'include',
+                                    body: JSON.stringify({ zone_id: this.zoneId, gc_code: gc })
+                                });
+
+                                if (!res.ok) {
+                                    let errorMsg = `HTTP ${res.status}`;
+                                    try {
+                                        const errorData = await res.json();
+                                        errorMsg = errorData.error || errorMsg;
+                                    } catch {
+                                        const txt = await res.text();
+                                        errorMsg += `: ${txt}`;
+                                    }
+                                    throw new Error(errorMsg);
+                                }
+                                form.reset();
+                                await this.load();
+                                this.messages.info(`Géocache ${gc} importée`);
+                            } catch (err) {
+                                console.error('Import geocache error', err);
+                                this.messages.error('Erreur lors de l\'import de la géocache');
+                            }
+                        }}
+                        style={{ display: 'flex', gap: 6, alignItems: 'center' }}
                     >
-                        + Ajouter
-                    </button>
+                        <input name='gc_code' placeholder='Code GC (ex: GC12345)' style={{ width: 180 }} />
+                        <button type='submit' className='theia-button'>Importer</button>
+                    </form>
                 </div>
                 <div style={{ marginTop: 10 }}>
                     <table className='theia-table'>

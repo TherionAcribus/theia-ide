@@ -5,6 +5,8 @@ import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/c
 import { MessageService } from '@theia/core';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
+import { ContextMenu, ContextMenuItem } from './context-menu';
+import { MoveGeocacheDialog } from './move-geocache-dialog';
 
 import '../../src/browser/style/zones-tree.css';
 
@@ -36,6 +38,8 @@ export class ZonesTreeWidget extends ReactWidget {
     protected expandedZones: Set<number> = new Set();
     protected zoneGeocaches: Map<number, GeocacheDto[]> = new Map();
     protected loadingZones: Set<number> = new Set();
+    protected contextMenu: { items: ContextMenuItem[]; x: number; y: number } | null = null;
+    protected moveDialog: { geocache: GeocacheDto; zoneId: number } | null = null;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -190,6 +194,152 @@ export class ZonesTreeWidget extends ReactWidget {
         }
     }
 
+    protected async moveGeocache(geocache: GeocacheDto, targetZoneId: number): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocache.id}/move`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ target_zone_id: targetZoneId })
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+            }
+
+            // Sauvegarder les zones actuellement dépliées
+            const expandedZoneIds = Array.from(this.expandedZones);
+            
+            // Invalider le cache des géocaches
+            this.zoneGeocaches.clear();
+            
+            // Recharger les zones pour mettre à jour les compteurs
+            await this.refresh();
+            
+            // Recharger les géocaches des zones qui étaient dépliées
+            for (const zoneId of expandedZoneIds) {
+                if (this.expandedZones.has(zoneId)) {
+                    await this.loadGeocachesForZone(zoneId);
+                }
+            }
+            
+            this.messages.info(`Géocache ${geocache.gc_code} déplacée`);
+        } catch (e) {
+            console.error('Move geocache error', e);
+            this.messages.error(`Erreur lors du déplacement: ${e}`);
+        }
+    }
+
+    protected showZoneContextMenu(zone: ZoneDto, event: React.MouseEvent): void {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const items: ContextMenuItem[] = [
+            {
+                label: 'Ouvrir',
+                icon: '📂',
+                action: () => this.openZoneTable(zone)
+            },
+            {
+                separator: true
+            },
+            {
+                label: 'Supprimer',
+                icon: '🗑️',
+                danger: true,
+                action: () => this.deleteZone(zone)
+            }
+        ];
+
+        this.contextMenu = {
+            items,
+            x: event.clientX,
+            y: event.clientY
+        };
+        this.update();
+    }
+
+    protected showGeocacheContextMenu(geocache: GeocacheDto, zoneId: number, event: React.MouseEvent): void {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const items: ContextMenuItem[] = [
+            {
+                label: 'Ouvrir',
+                icon: '📖',
+                action: () => this.openGeocacheDetails(geocache)
+            },
+            {
+                label: 'Déplacer vers...',
+                icon: '📦',
+                action: () => {
+                    this.moveDialog = { geocache, zoneId };
+                    this.update();
+                },
+                disabled: this.zones.length <= 1
+            },
+            {
+                separator: true
+            },
+            {
+                label: 'Supprimer',
+                icon: '🗑️',
+                danger: true,
+                action: async () => {
+                    const dialog = new ConfirmDialog({
+                        title: 'Supprimer la géocache',
+                        msg: `Voulez-vous vraiment supprimer ${geocache.gc_code} ?`,
+                        ok: Dialog.OK,
+                        cancel: Dialog.CANCEL
+                    });
+                    
+                    const confirmed = await dialog.open();
+                    if (!confirmed) {
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocache.id}`, {
+                            method: 'DELETE',
+                            credentials: 'include'
+                        });
+
+                        if (!res.ok) {
+                            throw new Error(`HTTP ${res.status}`);
+                        }
+
+                        // Invalider le cache
+                        this.zoneGeocaches.delete(zoneId);
+                        await this.loadGeocachesForZone(zoneId);
+                        await this.refresh();
+                        
+                        this.messages.info(`Géocache ${geocache.gc_code} supprimée`);
+                    } catch (e) {
+                        console.error('Delete geocache error', e);
+                        this.messages.error('Erreur lors de la suppression');
+                    }
+                }
+            }
+        ];
+
+        this.contextMenu = {
+            items,
+            x: event.clientX,
+            y: event.clientY
+        };
+        this.update();
+    }
+
+    protected closeContextMenu(): void {
+        this.contextMenu = null;
+        this.update();
+    }
+
+    protected closeMoveDialog(): void {
+        this.moveDialog = null;
+        this.update();
+    }
+
     protected async onAddZoneSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
         event.preventDefault();
         const form = event.currentTarget;
@@ -282,6 +432,30 @@ export class ZonesTreeWidget extends ReactWidget {
                         </div>
                     )}
                 </div>
+
+                {/* Menu contextuel */}
+                {this.contextMenu && (
+                    <ContextMenu
+                        items={this.contextMenu.items}
+                        x={this.contextMenu.x}
+                        y={this.contextMenu.y}
+                        onClose={() => this.closeContextMenu()}
+                    />
+                )}
+
+                {/* Dialog de déplacement */}
+                {this.moveDialog && (
+                    <MoveGeocacheDialog
+                        geocacheName={`${this.moveDialog.geocache.gc_code} - ${this.moveDialog.geocache.name}`}
+                        currentZoneId={this.moveDialog.zoneId}
+                        zones={this.zones}
+                        onMove={async (targetZoneId) => {
+                            await this.moveGeocache(this.moveDialog!.geocache, targetZoneId);
+                            this.closeMoveDialog();
+                        }}
+                        onCancel={() => this.closeMoveDialog()}
+                    />
+                )}
             </div>
         );
     }
@@ -304,6 +478,7 @@ export class ZonesTreeWidget extends ReactWidget {
                         background: isActive ? 'var(--theia-list-activeSelectionBackground)' : 'transparent',
                         cursor: 'pointer',
                     }}
+                    onContextMenu={(e) => this.showZoneContextMenu(zone, e)}
                     onMouseEnter={(e) => {
                         if (!isActive) {
                             (e.currentTarget as HTMLElement).style.background = 'var(--theia-list-hoverBackground)';
@@ -351,27 +526,6 @@ export class ZonesTreeWidget extends ReactWidget {
                             ({zone.geocaches_count})
                         </span>
                     </span>
-
-                    {/* Bouton supprimer */}
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            this.deleteZone(zone);
-                        }}
-                        style={{
-                            padding: '2px 6px',
-                            background: 'transparent',
-                            color: 'var(--theia-errorForeground)',
-                            border: 'none',
-                            borderRadius: 3,
-                            cursor: 'pointer',
-                            fontSize: '11px',
-                            opacity: 0.7,
-                        }}
-                        title="Supprimer cette zone"
-                    >
-                        ✕
-                    </button>
                 </div>
 
                 {/* Géocaches (si la zone est dépliée) */}
@@ -386,7 +540,7 @@ export class ZonesTreeWidget extends ReactWidget {
                                 Aucune géocache
                             </div>
                         ) : (
-                            geocaches.map(gc => this.renderGeocacheNode(gc))
+                            geocaches.map(gc => this.renderGeocacheNode(gc, zone.id))
                         )}
                     </div>
                 )}
@@ -394,11 +548,12 @@ export class ZonesTreeWidget extends ReactWidget {
         );
     }
 
-    protected renderGeocacheNode(geocache: GeocacheDto): React.ReactNode {
+    protected renderGeocacheNode(geocache: GeocacheDto, zoneId: number): React.ReactNode {
         return (
             <div
                 key={geocache.id}
                 onClick={() => this.openGeocacheDetails(geocache)}
+                onContextMenu={(e) => this.showGeocacheContextMenu(geocache, zoneId, e)}
                 style={{
                     display: 'flex',
                     alignItems: 'center',

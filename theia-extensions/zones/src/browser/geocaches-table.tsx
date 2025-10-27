@@ -9,6 +9,8 @@ import {
     SortingState,
     ColumnFiltersState,
 } from '@tanstack/react-table';
+import { ContextMenu, ContextMenuItem } from './context-menu';
+import { MoveGeocacheDialog } from './move-geocache-dialog';
 
 export interface Geocache {
     id: number;
@@ -32,6 +34,9 @@ interface GeocachesTableProps {
     onRefreshSelected?: (ids: number[]) => void;
     onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
+    onMove?: (geocache: Geocache, targetZoneId: number) => void;
+    zones?: Array<{ id: number; name: string }>;
+    currentZoneId?: number;
 }
 
 export const GeocachesTable: React.FC<GeocachesTableProps> = ({
@@ -40,12 +45,17 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onDeleteSelected,
     onRefreshSelected,
     onDelete,
-    onRefresh
+    onRefresh,
+    onMove,
+    zones = [],
+    currentZoneId
 }) => {
     const [sorting, setSorting] = React.useState<SortingState>([]);
     const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
     const [rowSelection, setRowSelection] = React.useState({});
     const [globalFilter, setGlobalFilter] = React.useState('');
+    const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
+    const [moveDialog, setMoveDialog] = React.useState<Geocache | null>(null);
 
     const columns = React.useMemo<ColumnDef<Geocache>[]>(
         () => [
@@ -199,6 +209,47 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     const selectedRows = table.getSelectedRowModel().rows;
     const selectedIds = selectedRows.map(row => row.original.id);
 
+    const showContextMenu = (geocache: Geocache, event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const items: ContextMenuItem[] = [
+            {
+                label: 'Ouvrir',
+                icon: '📖',
+                action: () => onRowClick?.(geocache)
+            },
+            {
+                label: 'Rafraîchir',
+                icon: '🔄',
+                action: () => onRefresh?.(geocache.id)
+            }
+        ];
+
+        // Ajouter l'option de déplacement si disponible
+        if (onMove && zones.length > 1 && currentZoneId) {
+            items.push({
+                label: 'Déplacer vers...',
+                icon: '📦',
+                action: () => setMoveDialog(geocache)
+            });
+        }
+
+        items.push({ separator: true });
+        items.push({
+            label: 'Supprimer',
+            icon: '🗑️',
+            danger: true,
+            action: () => onDelete?.(geocache)
+        });
+
+        setContextMenu({
+            items,
+            x: event.clientX,
+            y: event.clientY
+        });
+    };
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
             {/* Toolbar */}
@@ -287,6 +338,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                             <tr
                                 key={row.id}
                                 onClick={() => onRowClick?.(row.original)}
+                                onContextMenu={(e) => showContextMenu(row.original, e)}
                                 style={{
                                     cursor: 'pointer',
                                     background: row.getIsSelected()
@@ -320,6 +372,30 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                     </tbody>
                 </table>
             </div>
+
+            {/* Menu contextuel */}
+            {contextMenu && (
+                <ContextMenu
+                    items={contextMenu.items}
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    onClose={() => setContextMenu(null)}
+                />
+            )}
+
+            {/* Dialog de déplacement */}
+            {moveDialog && onMove && currentZoneId && (
+                <MoveGeocacheDialog
+                    geocacheName={`${moveDialog.gc_code} - ${moveDialog.name}`}
+                    currentZoneId={currentZoneId}
+                    zones={zones}
+                    onMove={(targetZoneId) => {
+                        onMove(moveDialog, targetZoneId);
+                        setMoveDialog(null);
+                    }}
+                    onCancel={() => setMoveDialog(null)}
+                />
+            )}
         </div>
     );
 };

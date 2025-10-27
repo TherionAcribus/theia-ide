@@ -129,6 +129,7 @@
     "rebuild": "theia rebuild:browser --cacheRoot ../..",
     "start": "theia start --plugins=local-dir:../../plugins",
     "watch": "concurrently --kill-others -n tsc,build -c red,yellow \"tsc -b -w --preserveWatchOutput\" \"yarn -s watch:bundle\"",
+    "watch:bundle": "webpack --watch --mode development",
     "update:theia": "ts-node ../../scripts/update-theia-version.ts",
     "update:next": "ts-node ../../scripts/update-theia-version.ts next"
   }

@@ -15,6 +15,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected zoneName?: string;
     protected rows: Geocache[] = [];
     protected loading = false;
+    protected zones: Array<{ id: number; name: string }> = [];
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -90,9 +91,17 @@ export class ZoneGeocachesWidget extends ReactWidget {
         this.loading = true;
         this.update();
         try {
+            // Charger les géocaches
             const res = await fetch(`${this.backendBaseUrl}/api/zones/${this.zoneId}/geocaches`, { credentials: 'include' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             this.rows = await res.json();
+            
+            // Charger la liste des zones pour le menu contextuel
+            const zonesRes = await fetch(`${this.backendBaseUrl}/api/zones`, { credentials: 'include' });
+            if (zonesRes.ok) {
+                this.zones = await zonesRes.json();
+            }
+            
             // eslint-disable-next-line no-console
             console.log('[ZoneGeocachesWidget] load -> rows:', this.rows.length);
         } catch (e) {
@@ -194,6 +203,25 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
+    protected async handleMove(geocache: Geocache, targetZoneId: number): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocache.id}/move`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ target_zone_id: targetZoneId })
+            });
+            
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            
+            this.messages.info(`Géocache ${geocache.gc_code} déplacée`);
+            await this.load();
+        } catch (e) {
+            console.error('Move error', e);
+            this.messages.error('Erreur lors du déplacement');
+        }
+    }
+
     protected async handleRowClick(geocache: Geocache): Promise<void> {
         try {
             const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
@@ -276,6 +304,9 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
                         onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
+                        onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}
+                        zones={this.zones}
+                        currentZoneId={this.zoneId}
                     />
                 )}
             </div>

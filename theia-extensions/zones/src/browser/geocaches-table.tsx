@@ -110,10 +110,13 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                 header: 'Type',
                 cell: info => {
                     const type = info.getValue() as string;
-                    const icon = getCacheTypeIcon(type);
-                    return <span title={type}>{icon}</span>;
+                    return (
+                        <span style={{ fontSize: '0.85em' }} title={type}>
+                            {type}
+                        </span>
+                    );
                 },
-                size: 80,
+                size: 150,
             },
             {
                 accessorKey: 'difficulty',
@@ -130,8 +133,15 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             {
                 accessorKey: 'size',
                 header: 'Taille',
-                cell: info => getSizeIcon(info.getValue() as string),
-                size: 60,
+                cell: info => {
+                    const size = info.getValue() as string;
+                    return (
+                        <span style={{ fontSize: '0.85em' }} title={size}>
+                            {size}
+                        </span>
+                    );
+                },
+                size: 100,
             },
             {
                 accessorKey: 'solved',
@@ -401,34 +411,6 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
 };
 
 // Helper functions
-function getCacheTypeIcon(type: string): string {
-    const icons: Record<string, string> = {
-        'Traditional Cache': '📍',
-        'Multi-cache': '🔢',
-        'Mystery Cache': '❓',
-        'Unknown Cache': '❓',
-        'EarthCache': '🌍',
-        'Letterbox Hybrid': '📬',
-        'Event Cache': '📅',
-        'Wherigo Cache': '📱',
-        'Virtual Cache': '👻',
-    };
-    return icons[type] || '📍';
-}
-
-function getSizeIcon(size: string): React.ReactNode {
-    const icons: Record<string, string> = {
-        'Micro': '▪️',
-        'Small': '▫️',
-        'Regular': '◽',
-        'Large': '⬜',
-        'Not chosen': '❓',
-        'Other': '⬜',
-        'Virtual': '👻',
-    };
-    return <span title={size}>{icons[size] || '◽'}</span>;
-}
-
 function getStatusBadge(solved: string, found: boolean): React.ReactNode {
     if (found) {
         return (

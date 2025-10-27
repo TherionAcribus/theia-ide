@@ -5,6 +5,7 @@ import { ZonesWidget } from './zones-widget';
 import { ZonesFrontendContribution } from './zones-frontend-contribution';
 import { ZonesCommandContribution } from './zones-command-contribution';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { GeocacheDetailsWidget } from './geocache-details-widget';
 
 export default new ContainerModule(bind => {
     bind(ZonesWidget).toSelf().inSingletonScope();
@@ -17,6 +18,12 @@ export default new ContainerModule(bind => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ZoneGeocachesWidget.ID,
         createWidget: () => ctx.container.get(ZoneGeocachesWidget)
+    })).inSingletonScope();
+
+    bind(GeocacheDetailsWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: GeocacheDetailsWidget.ID,
+        createWidget: () => ctx.container.get(GeocacheDetailsWidget)
     })).inSingletonScope();
 
     bind(ZonesFrontendContribution).toSelf().inSingletonScope();

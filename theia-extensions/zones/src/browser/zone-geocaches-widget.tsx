@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
+import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { MessageService } from '@theia/core';
 
 type GeocacheRow = { id: number; name: string };
@@ -14,7 +16,11 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected zoneName?: string;
     protected rows: GeocacheRow[] = [];
 
-    constructor(@inject(MessageService) protected readonly messages: MessageService) {
+    constructor(
+        @inject(MessageService) protected readonly messages: MessageService,
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+    ) {
         super();
         this.id = ZoneGeocachesWidget.ID;
         this.title.label = 'Géocaches';
@@ -152,7 +158,23 @@ export class ZoneGeocachesWidget extends ReactWidget {
                                 <tr><td style={{ opacity: 0.7 }}>Aucune géocache dans cette zone</td></tr>
                             ) : (
                                 this.rows.map(r => (
-                                    <tr key={r.id}>
+                                    <tr key={r.id}
+                                        onClick={async () => {
+                                            try {
+                                                const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
+                                                widget.setGeocache({ geocacheId: r.id, name: r.name });
+                                                if (!widget.isAttached) {
+                                                    this.shell.addWidget(widget, { area: 'main' });
+                                                }
+                                                this.shell.activateWidget(widget.id);
+                                            } catch (error) {
+                                                console.error('Failed to open GeocacheDetailsWidget:', error);
+                                                this.messages.error('Impossible d\'ouvrir les détails de la géocache');
+                                            }
+                                        }}
+                                        style={{ cursor: 'pointer' }}
+                                        title={`Ouvrir ${r.name}`}
+                                    >
                                         <td>{r.name}</td>
                                     </tr>
                                 ))

@@ -4,7 +4,6 @@ import {
     getCoreRowModel,
     getSortedRowModel,
     getFilteredRowModel,
-    getPaginationRowModel,
     ColumnDef,
     flexRender,
     SortingState,
@@ -31,13 +30,17 @@ interface GeocachesTableProps {
     onRowClick?: (geocache: Geocache) => void;
     onDeleteSelected?: (ids: number[]) => void;
     onRefreshSelected?: (ids: number[]) => void;
+    onDelete?: (id: number) => void;
+    onRefresh?: (id: number) => void;
 }
 
 export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     data,
     onRowClick,
     onDeleteSelected,
-    onRefreshSelected
+    onRefreshSelected,
+    onDelete,
+    onRefresh
 }) => {
     const [sorting, setSorting] = React.useState<SortingState>([]);
     const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -122,7 +125,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             },
             {
                 accessorKey: 'solved',
-                header: 'Statut',
+                header: 'Statute',
                 cell: info => {
                     const solved = info.getValue() as string;
                     return getStatusBadge(solved, (info.row.original as Geocache).found);
@@ -140,6 +143,39 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                 header: 'Propriétaire',
                 cell: info => <span style={{ fontSize: '0.9em', opacity: 0.8 }}>{info.getValue() as string || '-'}</span>,
                 size: 150,
+            },
+            {
+                id: 'actions',
+                header: 'Actionss',
+                cell: ({ row }) => (
+                    <div style={{ display: 'flex', gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                        {onRefresh && (
+                            <button
+                                onClick={() => onRefresh(row.original.id)}
+                                className="theia-button secondary"
+                                title="Rafraîchir cette géocache"
+                                style={{ padding: '2px 6px', fontSize: '0.85em' }}
+                            >
+                                🔄
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button
+                                onClick={() => {
+                                    if (window.confirm(`Supprimer ${row.original.gc_code} ?`)) {
+                                        onDelete(row.original.id);
+                                    }
+                                }}
+                                className="theia-button secondary"
+                                title="Supprimer cette géocache"
+                                style={{ padding: '2px 6px', fontSize: '0.85em', color: 'var(--theia-errorForeground)' }}
+                            >
+                                🗑️
+                            </button>
+                        )}
+                    </div>
+                ),
+                size: 100,
             },
         ],
         []
@@ -161,7 +197,6 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
         getFilteredRowModel: getFilteredRowModel(),
-        getPaginationRowModel: getPaginationRowModel(),
         enableRowSelection: true,
     });
 
@@ -292,62 +327,6 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         ))}
                     </tbody>
                 </table>
-            </div>
-
-            {/* Pagination */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
-                <div style={{ display: 'flex', gap: 4 }}>
-                    <button
-                        onClick={() => table.setPageIndex(0)}
-                        disabled={!table.getCanPreviousPage()}
-                        className="theia-button secondary"
-                    >
-                        ⏮️
-                    </button>
-                    <button
-                        onClick={() => table.previousPage()}
-                        disabled={!table.getCanPreviousPage()}
-                        className="theia-button secondary"
-                    >
-                        ⏪
-                    </button>
-                    <button
-                        onClick={() => table.nextPage()}
-                        disabled={!table.getCanNextPage()}
-                        className="theia-button secondary"
-                    >
-                        ⏩
-                    </button>
-                    <button
-                        onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-                        disabled={!table.getCanNextPage()}
-                        className="theia-button secondary"
-                    >
-                        ⏭️
-                    </button>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.9em' }}>
-                    <span>
-                        Page {table.getState().pagination.pageIndex + 1} sur {table.getPageCount()}
-                    </span>
-                    <select
-                        value={table.getState().pagination.pageSize}
-                        onChange={e => table.setPageSize(Number(e.target.value))}
-                        style={{
-                            padding: '2px 4px',
-                            background: 'var(--theia-input-background)',
-                            color: 'var(--theia-input-foreground)',
-                            border: '1px solid var(--theia-input-border)',
-                            borderRadius: 3,
-                        }}
-                    >
-                        {[10, 20, 50, 100].map(pageSize => (
-                            <option key={pageSize} value={pageSize}>
-                                Afficher {pageSize}
-                            </option>
-                        ))}
-                    </select>
-                </div>
             </div>
         </div>
     );

@@ -139,6 +139,37 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
+    protected async handleDelete(id: number): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${id}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this.messages.info('Géocache supprimée');
+            await this.load();
+        } catch (e) {
+            console.error('Delete error', e);
+            this.messages.error('Erreur lors de la suppression');
+        }
+    }
+
+    protected async handleRefresh(id: number): Promise<void> {
+        try {
+            this.messages.info('Rafraîchissement en cours...');
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${id}/refresh`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this.messages.info('Géocache rafraîchie');
+            await this.load();
+        } catch (e) {
+            console.error('Refresh error', e);
+            this.messages.error('Erreur lors du rafraîchissement');
+        }
+    }
+
     protected async handleRowClick(geocache: Geocache): Promise<void> {
         try {
             const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
@@ -219,6 +250,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onRowClick={(geocache) => this.handleRowClick(geocache)}
                         onDeleteSelected={(ids) => this.handleDeleteSelected(ids)}
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
+                        onDelete={(id) => this.handleDelete(id)}
+                        onRefresh={(id) => this.handleRefresh(id)}
                     />
                 )}
             </div>

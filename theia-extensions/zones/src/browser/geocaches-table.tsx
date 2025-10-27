@@ -118,13 +118,13 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             {
                 accessorKey: 'difficulty',
                 header: 'D',
-                cell: info => renderStars(info.getValue() as number),
+                cell: info => <span title="Difficulté">{info.getValue() as number}</span>,
                 size: 60,
             },
             {
                 accessorKey: 'terrain',
                 header: 'T',
-                cell: info => renderStars(info.getValue() as number),
+                cell: info => <span title="Terrain">{info.getValue() as number}</span>,
                 size: 60,
             },
             {
@@ -401,19 +401,6 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
 };
 
 // Helper functions
-function renderStars(value: number): React.ReactNode {
-    const full = Math.floor(value);
-    const half = value % 1 >= 0.5;
-    const stars: React.ReactNode[] = [];
-    for (let i = 0; i < full; i++) {
-        stars.push(<span key={i}>⭐</span>);
-    }
-    if (half) {
-        stars.push(<span key="half">½</span>);
-    }
-    return <span title={String(value)}>{stars}</span>;
-}
-
 function getCacheTypeIcon(type: string): string {
     const icons: Record<string, string> = {
         'Traditional Cache': '📍',

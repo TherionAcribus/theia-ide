@@ -18,7 +18,8 @@
   "dependencies": {
     "@theia/core": "1.65.1",
     "@theia/workspace": "1.65.1",
-    "inversify": "^6.0.1"
+    "inversify": "^6.0.1",
+    "@tanstack/react-table": "^8.10.7"
   },
   "peerDependencies": {
     "react": "^16.8.0"

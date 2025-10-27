@@ -1,0 +1,466 @@
+import * as React from 'react';
+import {
+    useReactTable,
+    getCoreRowModel,
+    getSortedRowModel,
+    getFilteredRowModel,
+    getPaginationRowModel,
+    ColumnDef,
+    flexRender,
+    SortingState,
+    ColumnFiltersState,
+} from '@tanstack/react-table';
+
+export interface Geocache {
+    id: number;
+    gc_code: string;
+    name: string;
+    owner: string | null;
+    cache_type: string;
+    difficulty: number;
+    terrain: number;
+    size: string;
+    solved: string;
+    found: boolean;
+    favorites_count: number;
+    hidden_date: string | null;
+}
+
+interface GeocachesTableProps {
+    data: Geocache[];
+    onRowClick?: (geocache: Geocache) => void;
+    onDeleteSelected?: (ids: number[]) => void;
+    onRefreshSelected?: (ids: number[]) => void;
+}
+
+export const GeocachesTable: React.FC<GeocachesTableProps> = ({
+    data,
+    onRowClick,
+    onDeleteSelected,
+    onRefreshSelected
+}) => {
+    const [sorting, setSorting] = React.useState<SortingState>([]);
+    const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
+    const [rowSelection, setRowSelection] = React.useState({});
+    const [globalFilter, setGlobalFilter] = React.useState('');
+
+    const columns = React.useMemo<ColumnDef<Geocache>[]>(
+        () => [
+            {
+                id: 'select',
+                header: ({ table }) => {
+                    const checkboxRef = React.useRef<HTMLInputElement>(null);
+                    React.useEffect(() => {
+                        if (checkboxRef.current) {
+                            checkboxRef.current.indeterminate = table.getIsSomeRowsSelected() && !table.getIsAllRowsSelected();
+                        }
+                    }, [table.getIsSomeRowsSelected(), table.getIsAllRowsSelected()]);
+                    
+                    return (
+                        <input
+                            ref={checkboxRef}
+                            type="checkbox"
+                            checked={table.getIsAllRowsSelected()}
+                            onChange={table.getToggleAllRowsSelectedHandler()}
+                        />
+                    );
+                },
+                cell: ({ row }) => (
+                    <input
+                        type="checkbox"
+                        checked={row.getIsSelected()}
+                        disabled={!row.getCanSelect()}
+                        onChange={row.getToggleSelectedHandler()}
+                        onClick={(e) => e.stopPropagation()}
+                    />
+                ),
+                size: 40,
+            },
+            {
+                accessorKey: 'gc_code',
+                header: 'Code GC',
+                cell: info => <strong>{info.getValue() as string}</strong>,
+                size: 100,
+            },
+            {
+                accessorKey: 'name',
+                header: 'Nom',
+                cell: info => (
+                    <div style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {info.getValue() as string}
+                    </div>
+                ),
+                size: 300,
+            },
+            {
+                accessorKey: 'cache_type',
+                header: 'Type',
+                cell: info => {
+                    const type = info.getValue() as string;
+                    const icon = getCacheTypeIcon(type);
+                    return <span title={type}>{icon}</span>;
+                },
+                size: 80,
+            },
+            {
+                accessorKey: 'difficulty',
+                header: 'D',
+                cell: info => renderStars(info.getValue() as number),
+                size: 60,
+            },
+            {
+                accessorKey: 'terrain',
+                header: 'T',
+                cell: info => renderStars(info.getValue() as number),
+                size: 60,
+            },
+            {
+                accessorKey: 'size',
+                header: 'Taille',
+                cell: info => getSizeIcon(info.getValue() as string),
+                size: 60,
+            },
+            {
+                accessorKey: 'solved',
+                header: 'Statut',
+                cell: info => {
+                    const solved = info.getValue() as string;
+                    return getStatusBadge(solved, (info.row.original as Geocache).found);
+                },
+                size: 100,
+            },
+            {
+                accessorKey: 'favorites_count',
+                header: '❤️',
+                cell: info => <span title="Favoris">{info.getValue() as number}</span>,
+                size: 50,
+            },
+            {
+                accessorKey: 'owner',
+                header: 'Propriétaire',
+                cell: info => <span style={{ fontSize: '0.9em', opacity: 0.8 }}>{info.getValue() as string || '-'}</span>,
+                size: 150,
+            },
+        ],
+        []
+    );
+
+    const table = useReactTable({
+        data,
+        columns,
+        state: {
+            sorting,
+            columnFilters,
+            rowSelection,
+            globalFilter,
+        },
+        onSortingChange: setSorting,
+        onColumnFiltersChange: setColumnFilters,
+        onRowSelectionChange: setRowSelection,
+        onGlobalFilterChange: setGlobalFilter,
+        getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(),
+        getFilteredRowModel: getFilteredRowModel(),
+        getPaginationRowModel: getPaginationRowModel(),
+        enableRowSelection: true,
+    });
+
+    const selectedRows = table.getSelectedRowModel().rows;
+    const selectedIds = selectedRows.map(row => row.original.id);
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+            {/* Toolbar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 0' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                        type="text"
+                        value={globalFilter ?? ''}
+                        onChange={e => setGlobalFilter(e.target.value)}
+                        placeholder="Rechercher..."
+                        style={{
+                            padding: '4px 8px',
+                            border: '1px solid var(--theia-input-border)',
+                            background: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            borderRadius: 3,
+                            width: 200,
+                        }}
+                    />
+                    <span style={{ fontSize: '0.9em', opacity: 0.7 }}>
+                        {table.getFilteredRowModel().rows.length} géocache(s)
+                    </span>
+                </div>
+                
+                {selectedIds.length > 0 && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <span style={{ fontSize: '0.9em', opacity: 0.8 }}>
+                            {selectedIds.length} sélectionnée(s)
+                        </span>
+                        {onRefreshSelected && (
+                            <button
+                                onClick={() => onRefreshSelected(selectedIds)}
+                                className="theia-button secondary"
+                                title="Rafraîchir les géocaches sélectionnées"
+                            >
+                                🔄 Rafraîchir
+                            </button>
+                        )}
+                        {onDeleteSelected && (
+                            <button
+                                onClick={() => {
+                                    if (window.confirm(`Supprimer ${selectedIds.length} géocache(s) ?`)) {
+                                        onDeleteSelected(selectedIds);
+                                    }
+                                }}
+                                className="theia-button secondary"
+                                style={{ color: 'var(--theia-errorForeground)' }}
+                                title="Supprimer les géocaches sélectionnées"
+                            >
+                                🗑️ Supprimer
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Table */}
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--theia-panel-border)', borderRadius: 3 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--theia-editor-background)', zIndex: 1 }}>
+                        {table.getHeaderGroups().map(headerGroup => (
+                            <tr key={headerGroup.id}>
+                                {headerGroup.headers.map(header => (
+                                    <th
+                                        key={header.id}
+                                        style={{
+                                            padding: '8px 6px',
+                                            textAlign: 'left',
+                                            borderBottom: '1px solid var(--theia-panel-border)',
+                                            cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                                            userSelect: 'none',
+                                            fontWeight: 600,
+                                        }}
+                                        onClick={header.column.getToggleSortingHandler()}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            {flexRender(header.column.columnDef.header, header.getContext())}
+                                            {{
+                                                asc: ' ⬆️',
+                                                desc: ' ⬇️',
+                                            }[header.column.getIsSorted() as string] ?? null}
+                                        </div>
+                                    </th>
+                                ))}
+                            </tr>
+                        ))}
+                    </thead>
+                    <tbody>
+                        {table.getRowModel().rows.map(row => (
+                            <tr
+                                key={row.id}
+                                onClick={() => onRowClick?.(row.original)}
+                                style={{
+                                    cursor: 'pointer',
+                                    background: row.getIsSelected()
+                                        ? 'var(--theia-list-activeSelectionBackground)'
+                                        : 'transparent',
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!row.getIsSelected()) {
+                                        (e.currentTarget as HTMLElement).style.background = 'var(--theia-list-hoverBackground)';
+                                    }
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!row.getIsSelected()) {
+                                        (e.currentTarget as HTMLElement).style.background = 'transparent';
+                                    }
+                                }}
+                            >
+                                {row.getVisibleCells().map(cell => (
+                                    <td
+                                        key={cell.id}
+                                        style={{
+                                            padding: '6px',
+                                            borderBottom: '1px solid var(--theia-panel-border)',
+                                        }}
+                                    >
+                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Pagination */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
+                <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                        onClick={() => table.setPageIndex(0)}
+                        disabled={!table.getCanPreviousPage()}
+                        className="theia-button secondary"
+                    >
+                        ⏮️
+                    </button>
+                    <button
+                        onClick={() => table.previousPage()}
+                        disabled={!table.getCanPreviousPage()}
+                        className="theia-button secondary"
+                    >
+                        ⏪
+                    </button>
+                    <button
+                        onClick={() => table.nextPage()}
+                        disabled={!table.getCanNextPage()}
+                        className="theia-button secondary"
+                    >
+                        ⏩
+                    </button>
+                    <button
+                        onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                        disabled={!table.getCanNextPage()}
+                        className="theia-button secondary"
+                    >
+                        ⏭️
+                    </button>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: '0.9em' }}>
+                    <span>
+                        Page {table.getState().pagination.pageIndex + 1} sur {table.getPageCount()}
+                    </span>
+                    <select
+                        value={table.getState().pagination.pageSize}
+                        onChange={e => table.setPageSize(Number(e.target.value))}
+                        style={{
+                            padding: '2px 4px',
+                            background: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            border: '1px solid var(--theia-input-border)',
+                            borderRadius: 3,
+                        }}
+                    >
+                        {[10, 20, 50, 100].map(pageSize => (
+                            <option key={pageSize} value={pageSize}>
+                                Afficher {pageSize}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// Helper functions
+function renderStars(value: number): React.ReactNode {
+    const full = Math.floor(value);
+    const half = value % 1 >= 0.5;
+    const stars: React.ReactNode[] = [];
+    for (let i = 0; i < full; i++) {
+        stars.push(<span key={i}>⭐</span>);
+    }
+    if (half) {
+        stars.push(<span key="half">½</span>);
+    }
+    return <span title={String(value)}>{stars}</span>;
+}
+
+function getCacheTypeIcon(type: string): string {
+    const icons: Record<string, string> = {
+        'Traditional Cache': '📍',
+        'Multi-cache': '🔢',
+        'Mystery Cache': '❓',
+        'Unknown Cache': '❓',
+        'EarthCache': '🌍',
+        'Letterbox Hybrid': '📬',
+        'Event Cache': '📅',
+        'Wherigo Cache': '📱',
+        'Virtual Cache': '👻',
+    };
+    return icons[type] || '📍';
+}
+
+function getSizeIcon(size: string): React.ReactNode {
+    const icons: Record<string, string> = {
+        'Micro': '▪️',
+        'Small': '▫️',
+        'Regular': '◽',
+        'Large': '⬜',
+        'Not chosen': '❓',
+        'Other': '⬜',
+        'Virtual': '👻',
+    };
+    return <span title={size}>{icons[size] || '◽'}</span>;
+}
+
+function getStatusBadge(solved: string, found: boolean): React.ReactNode {
+    if (found) {
+        return (
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontSize: '0.85em',
+                    background: '#2ecc71',
+                    color: '#fff',
+                    fontWeight: 600,
+                }}
+                title="Trouvée"
+            >
+                ✓ Trouvée
+            </span>
+        );
+    }
+    if (solved === 'solved') {
+        return (
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontSize: '0.85em',
+                    background: '#3498db',
+                    color: '#fff',
+                    fontWeight: 600,
+                }}
+                title="Résolue"
+            >
+                ✓ Résolue
+            </span>
+        );
+    }
+    if (solved === 'in_progress') {
+        return (
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontSize: '0.85em',
+                    background: '#f39c12',
+                    color: '#fff',
+                    fontWeight: 600,
+                }}
+                title="En cours"
+            >
+                ⏳ En cours
+            </span>
+        );
+    }
+    return (
+        <span
+            style={{
+                padding: '2px 6px',
+                borderRadius: 3,
+                fontSize: '0.85em',
+                background: '#7f8c8d',
+                color: '#fff',
+                fontWeight: 600,
+            }}
+            title="Non résolue"
+        >
+            ○ Non résolue
+        </span>
+    );
+}
+

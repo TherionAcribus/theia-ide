@@ -1,6 +1,6 @@
 import { injectable, inject } from 'inversify';
 import { FrontendApplication, FrontendApplicationContribution, WidgetManager, Widget } from '@theia/core/lib/browser';
-import { ZonesWidget } from './zones-widget';
+import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 
 @injectable()
@@ -39,7 +39,7 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
     }
 
     protected async getOrCreateWidget(): Promise<Widget> {
-        return this.widgetManager.getOrCreateWidget(ZonesWidget.ID);
+        return this.widgetManager.getOrCreateWidget(ZonesTreeWidget.ID);
     }
 }
 

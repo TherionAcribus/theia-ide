@@ -1,17 +1,17 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution, WidgetFactory } from '@theia/core/lib/browser';
 import { CommandContribution } from '@theia/core/lib/common';
-import { ZonesWidget } from './zones-widget';
+import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZonesFrontendContribution } from './zones-frontend-contribution';
 import { ZonesCommandContribution } from './zones-command-contribution';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 
 export default new ContainerModule(bind => {
-    bind(ZonesWidget).toSelf().inSingletonScope();
+    bind(ZonesTreeWidget).toSelf().inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
-        id: ZonesWidget.ID,
-        createWidget: () => ctx.container.get(ZonesWidget)
+        id: ZonesTreeWidget.ID,
+        createWidget: () => ctx.container.get(ZonesTreeWidget)
     })).inSingletonScope();
 
     bind(ZoneGeocachesWidget).toSelf().inSingletonScope();

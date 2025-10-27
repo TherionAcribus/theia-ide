@@ -1,0 +1,450 @@
+import * as React from 'react';
+import { injectable, inject } from 'inversify';
+import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
+import { MessageService } from '@theia/core';
+import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { GeocacheDetailsWidget } from './geocache-details-widget';
+
+import '../../src/browser/style/zones-tree.css';
+
+type ZoneDto = { 
+    id: number; 
+    name: string; 
+    description?: string; 
+    created_at?: string; 
+    geocaches_count: number 
+};
+
+type GeocacheDto = {
+    id: number;
+    gc_code: string;
+    name: string;
+    cache_type: string;
+    difficulty: number;
+    terrain: number;
+    found: boolean;
+};
+
+@injectable()
+export class ZonesTreeWidget extends ReactWidget {
+    static readonly ID = 'zones.tree.widget';
+
+    protected zones: ZoneDto[] = [];
+    protected activeZoneId: number | undefined;
+    protected backendBaseUrl = 'http://127.0.0.1:8000';
+    protected expandedZones: Set<number> = new Set();
+    protected zoneGeocaches: Map<number, GeocacheDto[]> = new Map();
+    protected loadingZones: Set<number> = new Set();
+
+    constructor(
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(MessageService) protected readonly messages: MessageService,
+    ) {
+        super();
+        this.id = ZonesTreeWidget.ID;
+        this.title.closable = true;
+        this.title.label = 'Zones';
+        this.title.caption = 'Zones';
+        this.title.iconClass = 'fa fa-map';
+        this.addClass('theia-zones-tree-widget');
+        console.log('[ZonesTreeWidget] constructed');
+    }
+
+    onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        console.log('[ZonesTreeWidget] onAfterAttach');
+        this.refresh();
+    }
+
+    protected async refresh(): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/zones`, { credentials: 'include' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this.zones = await res.json();
+            
+            const act = await fetch(`${this.backendBaseUrl}/api/active-zone`, { credentials: 'include' });
+            this.activeZoneId = act.ok ? (await act.json())?.id : undefined;
+            
+            console.log('[ZonesTreeWidget] refresh -> zones:', this.zones.length, 'active:', this.activeZoneId);
+            this.update();
+        } catch (e) {
+            console.error('Zones: fetch error', e);
+        }
+    }
+
+    protected async loadGeocachesForZone(zoneId: number): Promise<void> {
+        if (this.zoneGeocaches.has(zoneId)) {
+            return; // Déjà chargé
+        }
+        
+        this.loadingZones.add(zoneId);
+        this.update();
+        
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/zones/${zoneId}/geocaches`, { 
+                credentials: 'include' 
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const geocaches = await res.json();
+            this.zoneGeocaches.set(zoneId, geocaches);
+        } catch (e) {
+            console.error('Failed to load geocaches for zone', zoneId, e);
+            this.messages.error('Erreur lors du chargement des géocaches');
+        } finally {
+            this.loadingZones.delete(zoneId);
+            this.update();
+        }
+    }
+
+    protected async toggleZone(zoneId: number): Promise<void> {
+        if (this.expandedZones.has(zoneId)) {
+            this.expandedZones.delete(zoneId);
+        } else {
+            this.expandedZones.add(zoneId);
+            await this.loadGeocachesForZone(zoneId);
+        }
+        this.update();
+    }
+
+    protected async openZoneTable(zone: ZoneDto): Promise<void> {
+        try {
+            await fetch(`${this.backendBaseUrl}/api/active-zone`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ zone_id: zone.id })
+            });
+            this.activeZoneId = zone.id;
+            this.update();
+
+            const widget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID) as ZoneGeocachesWidget;
+            widget.setZone({ zoneId: zone.id, zoneName: zone.name });
+            if (!widget.isAttached) {
+                this.shell.addWidget(widget, { area: 'main' });
+            }
+            this.shell.activateWidget(widget.id);
+        } catch (error) {
+            console.error('Failed to open ZoneGeocachesWidget:', error);
+            this.messages.error('Impossible d\'ouvrir le tableau de la zone');
+        }
+    }
+
+    protected async openGeocacheDetails(geocache: GeocacheDto): Promise<void> {
+        try {
+            const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
+            widget.setGeocache({ geocacheId: geocache.id, name: geocache.name });
+            if (!widget.isAttached) {
+                this.shell.addWidget(widget, { area: 'main' });
+            }
+            this.shell.activateWidget(widget.id);
+        } catch (error) {
+            console.error('Failed to open GeocacheDetailsWidget:', error);
+            this.messages.error('Impossible d\'ouvrir les détails de la géocache');
+        }
+    }
+
+    protected async deleteZone(zone: ZoneDto): Promise<void> {
+        const dialog = new ConfirmDialog({
+            title: 'Supprimer la zone',
+            msg: `Voulez-vous vraiment supprimer la zone "${zone.name}" ?`,
+            ok: Dialog.OK,
+            cancel: Dialog.CANCEL
+        });
+        
+        const confirmed = await dialog.open();
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/zones/${zone.id}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+            }
+
+            if (this.activeZoneId === zone.id) {
+                await fetch(`${this.backendBaseUrl}/api/active-zone`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ zone_id: null })
+                });
+                this.activeZoneId = undefined;
+            }
+
+            // Nettoyer les données de la zone supprimée
+            this.expandedZones.delete(zone.id);
+            this.zoneGeocaches.delete(zone.id);
+            
+            await this.refresh();
+            this.messages.info(`Zone "${zone.name}" supprimée`);
+        } catch (e) {
+            console.error('Zones: delete error', e);
+            this.messages.error(`Erreur lors de la suppression: ${e}`);
+        }
+    }
+
+    protected async onAddZoneSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const formData = new FormData(form);
+        const name = (formData.get('name') as string || '').trim();
+        const description = (formData.get('description') as string || '').trim();
+        if (!name) { return; }
+        
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/zones`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ name, description })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            form.reset();
+            await this.refresh();
+            this.messages.info(`Zone "${name}" créée`);
+        } catch (e) {
+            console.error('Zones: create error', e);
+            this.messages.error('Erreur lors de la création de la zone');
+        }
+    }
+
+    protected getGeocacheIcon(cacheType: string): string {
+        const icons: Record<string, string> = {
+            'Traditional Cache': '📍',
+            'Multi-cache': '🔢',
+            'Mystery Cache': '❓',
+            'Unknown Cache': '❓',
+            'EarthCache': '🌍',
+            'Letterbox Hybrid': '📬',
+            'Event Cache': '📅',
+            'Wherigo Cache': '📱',
+            'Virtual Cache': '👻',
+        };
+        return icons[cacheType] || '📍';
+    }
+
+    protected render(): React.ReactNode {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '8px' }}>
+                {/* Formulaire d'ajout de zone */}
+                <form 
+                    onSubmit={e => this.onAddZoneSubmit(e)} 
+                    style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}
+                >
+                    <input 
+                        name='name' 
+                        placeholder='Nouvelle zone' 
+                        style={{
+                            padding: '4px 8px',
+                            border: '1px solid var(--theia-input-border)',
+                            background: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            borderRadius: 3,
+                        }}
+                    />
+                    <input 
+                        name='description' 
+                        placeholder='Description (optionnel)'
+                        style={{
+                            padding: '4px 8px',
+                            border: '1px solid var(--theia-input-border)',
+                            background: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            borderRadius: 3,
+                        }}
+                    />
+                    <button 
+                        type='submit'
+                        className='theia-button'
+                        style={{ padding: '4px 8px' }}
+                    >
+                        ➕ Ajouter Zone
+                    </button>
+                </form>
+
+                {/* Arbre de navigation */}
+                <div style={{ flex: 1, overflow: 'auto' }}>
+                    {this.zones.length === 0 ? (
+                        <div style={{ textAlign: 'center', opacity: 0.6, padding: '20px 10px' }}>
+                            <p style={{ fontSize: '0.9em' }}>Aucune zone</p>
+                            <p style={{ fontSize: '0.85em' }}>Créez une zone pour commencer</p>
+                        </div>
+                    ) : (
+                        <div>
+                            {this.zones.map(zone => this.renderZoneNode(zone))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    protected renderZoneNode(zone: ZoneDto): React.ReactNode {
+        const isExpanded = this.expandedZones.has(zone.id);
+        const isActive = this.activeZoneId === zone.id;
+        const isLoading = this.loadingZones.has(zone.id);
+        const geocaches = this.zoneGeocaches.get(zone.id) || [];
+
+        return (
+            <div key={zone.id} style={{ marginBottom: 4 }}>
+                {/* Ligne de la zone */}
+                <div 
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '4px 6px',
+                        borderRadius: 3,
+                        background: isActive ? 'var(--theia-list-activeSelectionBackground)' : 'transparent',
+                        cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => {
+                        if (!isActive) {
+                            (e.currentTarget as HTMLElement).style.background = 'var(--theia-list-hoverBackground)';
+                        }
+                    }}
+                    onMouseLeave={(e) => {
+                        if (!isActive) {
+                            (e.currentTarget as HTMLElement).style.background = 'transparent';
+                        }
+                    }}
+                >
+                    {/* Icône expand/collapse */}
+                    <span
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            this.toggleZone(zone.id);
+                        }}
+                        style={{
+                            width: 16,
+                            display: 'inline-block',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                        }}
+                    >
+                        {zone.geocaches_count > 0 ? (isExpanded ? '▼' : '▶') : ''}
+                    </span>
+
+                    {/* Icône dossier */}
+                    <span style={{ marginRight: 6 }}>
+                        {isExpanded ? '📂' : '📁'}
+                    </span>
+
+                    {/* Nom de la zone */}
+                    <span
+                        onClick={() => this.openZoneTable(zone)}
+                        style={{
+                            flex: 1,
+                            fontSize: '0.9em',
+                            fontWeight: isActive ? 600 : 400,
+                        }}
+                        title={zone.description || zone.name}
+                    >
+                        {zone.name}
+                        <span style={{ opacity: 0.6, marginLeft: 4, fontSize: '0.85em' }}>
+                            ({zone.geocaches_count})
+                        </span>
+                    </span>
+
+                    {/* Bouton supprimer */}
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            this.deleteZone(zone);
+                        }}
+                        style={{
+                            padding: '2px 6px',
+                            background: 'transparent',
+                            color: 'var(--theia-errorForeground)',
+                            border: 'none',
+                            borderRadius: 3,
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            opacity: 0.7,
+                        }}
+                        title="Supprimer cette zone"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                {/* Géocaches (si la zone est dépliée) */}
+                {isExpanded && (
+                    <div style={{ marginLeft: 20, marginTop: 2 }}>
+                        {isLoading ? (
+                            <div style={{ padding: '4px 6px', fontSize: '0.85em', opacity: 0.6 }}>
+                                Chargement...
+                            </div>
+                        ) : geocaches.length === 0 ? (
+                            <div style={{ padding: '4px 6px', fontSize: '0.85em', opacity: 0.6 }}>
+                                Aucune géocache
+                            </div>
+                        ) : (
+                            geocaches.map(gc => this.renderGeocacheNode(gc))
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    protected renderGeocacheNode(geocache: GeocacheDto): React.ReactNode {
+        return (
+            <div
+                key={geocache.id}
+                onClick={() => this.openGeocacheDetails(geocache)}
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '3px 6px',
+                    marginBottom: 2,
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    fontSize: '0.85em',
+                }}
+                onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = 'var(--theia-list-hoverBackground)';
+                }}
+                onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background = 'transparent';
+                }}
+                title={`${geocache.gc_code} - ${geocache.name}\nD${geocache.difficulty} T${geocache.terrain}`}
+            >
+                {/* Icône type de cache */}
+                <span style={{ marginRight: 6 }}>
+                    {this.getGeocacheIcon(geocache.cache_type)}
+                </span>
+
+                {/* Code GC */}
+                <span style={{ fontWeight: 600, marginRight: 6, color: 'var(--theia-textLink-foreground)' }}>
+                    {geocache.gc_code}
+                </span>
+
+                {/* Nom de la cache */}
+                <span style={{ 
+                    flex: 1, 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                    opacity: 0.9,
+                }}>
+                    {geocache.name}
+                </span>
+
+                {/* Indicateur "trouvée" */}
+                {geocache.found && (
+                    <span style={{ marginLeft: 4, fontSize: '0.9em' }} title="Trouvée">
+                        ✓
+                    </span>
+                )}
+            </div>
+        );
+    }
+}
+

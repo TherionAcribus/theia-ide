@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
-import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
+import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { MessageService } from '@theia/core';
 import { GeocachesTable, Geocache } from './geocaches-table';
@@ -105,6 +105,18 @@ export class ZoneGeocachesWidget extends ReactWidget {
     }
 
     protected async handleDeleteSelected(ids: number[]): Promise<void> {
+        const dialog = new ConfirmDialog({
+            title: 'Supprimer les géocaches',
+            msg: `Voulez-vous vraiment supprimer ${ids.length} géocache(s) sélectionnée(s) ?`,
+            ok: Dialog.OK,
+            cancel: Dialog.CANCEL
+        });
+        
+        const confirmed = await dialog.open();
+        if (!confirmed) {
+            return;
+        }
+        
         try {
             for (const id of ids) {
                 const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${id}`, {
@@ -139,7 +151,19 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
-    protected async handleDelete(id: number): Promise<void> {
+    protected async handleDelete(id: number, gcCode: string): Promise<void> {
+        const dialog = new ConfirmDialog({
+            title: 'Supprimer la géocache',
+            msg: `Voulez-vous vraiment supprimer la géocache ${gcCode} ?`,
+            ok: Dialog.OK,
+            cancel: Dialog.CANCEL
+        });
+        
+        const confirmed = await dialog.open();
+        if (!confirmed) {
+            return;
+        }
+        
         try {
             const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${id}`, {
                 method: 'DELETE',
@@ -250,7 +274,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onRowClick={(geocache) => this.handleRowClick(geocache)}
                         onDeleteSelected={(ids) => this.handleDeleteSelected(ids)}
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
-                        onDelete={(id) => this.handleDelete(id)}
+                        onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
                     />
                 )}

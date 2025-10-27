@@ -30,7 +30,7 @@ interface GeocachesTableProps {
     onRowClick?: (geocache: Geocache) => void;
     onDeleteSelected?: (ids: number[]) => void;
     onRefreshSelected?: (ids: number[]) => void;
-    onDelete?: (id: number) => void;
+    onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
 }
 
@@ -146,7 +146,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             },
             {
                 id: 'actions',
-                header: 'Actionss',
+                header: 'Actions',
                 cell: ({ row }) => (
                     <div style={{ display: 'flex', gap: 4 }} onClick={(e) => e.stopPropagation()}>
                         {onRefresh && (
@@ -161,11 +161,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         )}
                         {onDelete && (
                             <button
-                                onClick={() => {
-                                    if (window.confirm(`Supprimer ${row.original.gc_code} ?`)) {
-                                        onDelete(row.original.id);
-                                    }
-                                }}
+                                onClick={() => onDelete(row.original)}
                                 className="theia-button secondary"
                                 title="Supprimer cette géocache"
                                 style={{ padding: '2px 6px', fontSize: '0.85em', color: 'var(--theia-errorForeground)' }}
@@ -243,11 +239,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         )}
                         {onDeleteSelected && (
                             <button
-                                onClick={() => {
-                                    if (window.confirm(`Supprimer ${selectedIds.length} géocache(s) ?`)) {
-                                        onDeleteSelected(selectedIds);
-                                    }
-                                }}
+                                onClick={() => onDeleteSelected(selectedIds)}
                                 className="theia-button secondary"
                                 style={{ color: 'var(--theia-errorForeground)' }}
                                 title="Supprimer les géocaches sélectionnées"

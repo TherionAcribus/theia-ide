@@ -5,6 +5,7 @@ import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/c
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { MessageService } from '@theia/core';
 import { GeocachesTable, Geocache } from './geocaches-table';
+import { ImportGpxDialog } from './import-gpx-dialog';
 
 @injectable()
 export class ZoneGeocachesWidget extends ReactWidget {
@@ -16,6 +17,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected rows: Geocache[] = [];
     protected loading = false;
     protected zones: Array<{ id: number; name: string }> = [];
+    protected showImportDialog = false;
+    protected isImporting = false;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -222,6 +225,100 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
+    protected async handleImportGpx(file: File, updateExisting: boolean, onProgress?: (percentage: number, message: string) => void): Promise<void> {
+        if (!this.zoneId) {
+            this.messages.warn('Zone active manquante');
+            return;
+        }
+
+        try {
+            this.isImporting = true;
+            if (onProgress) {
+                onProgress(0, 'Préparation de l\'import...');
+            }
+
+            const formData = new FormData();
+            formData.append('gpxFile', file);
+            formData.append('zone_id', this.zoneId.toString());
+            if (updateExisting) {
+                formData.append('updateExisting', 'on');
+            }
+
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/import-gpx`, {
+                method: 'POST',
+                credentials: 'include',
+                body: formData
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            // Lire le flux de progression
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+
+            if (reader) {
+                let done = false;
+                let lastMessage = '';
+
+                while (!done) {
+                    const { value, done: readerDone } = await reader.read();
+                    done = readerDone;
+
+                    if (value) {
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n').filter(line => line.trim());
+
+                        for (const line of lines) {
+                            try {
+                                const data = JSON.parse(line);
+
+                                if (data.error) {
+                                    this.messages.error(data.message || 'Erreur lors de l\'import');
+                                    if (onProgress) {
+                                        onProgress(0, 'Erreur lors de l\'import');
+                                    }
+                                    continue;
+                                }
+
+                                if (data.progress !== undefined) {
+                                    if (onProgress) {
+                                        onProgress(data.progress, data.message || '');
+                                    }
+                                }
+
+                                if (data.final_summary) {
+                                    lastMessage = data.message;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing progress data:', e);
+                            }
+                        }
+                    }
+                }
+
+                if (lastMessage) {
+                    this.messages.info(lastMessage);
+                } else {
+                    this.messages.info('Import terminé');
+                }
+            }
+
+            // Fermer la dialog et recharger les données
+            this.showImportDialog = false;
+            await this.load();
+        } catch (e) {
+            console.error('Import GPX error', e);
+            this.messages.error('Erreur lors de l\'import du fichier GPX');
+            if (onProgress) {
+                onProgress(0, 'Erreur lors de l\'import');
+            }
+        } finally {
+            this.isImporting = false;
+        }
+    }
+
     protected async handleRowClick(geocache: Geocache): Promise<void> {
         try {
             const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
@@ -242,46 +339,65 @@ export class ZoneGeocachesWidget extends ReactWidget {
                 {/* Header with import form */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                     <h3 style={{ margin: 0 }}>{this.title.label}</h3>
-                    <form
-                        onSubmit={async (e) => {
-                            e.preventDefault();
-                            try {
-                                const form = e.currentTarget as HTMLFormElement;
-                                const fd = new FormData(form);
-                                const gc = (fd.get('gc_code') as string || '').trim().toUpperCase();
-                                if (!gc) { return; }
-                                if (!this.zoneId) { this.messages.warn('Zone active manquante'); return; }
-                                const res = await fetch(`${this.backendBaseUrl}/api/geocaches/add`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    credentials: 'include',
-                                    body: JSON.stringify({ zone_id: this.zoneId, code: gc })
-                                });
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <form
+                            onSubmit={async (e) => {
+                                e.preventDefault();
+                                try {
+                                    const form = e.currentTarget as HTMLFormElement;
+                                    const fd = new FormData(form);
+                                    const gc = (fd.get('gc_code') as string || '').trim().toUpperCase();
+                                    if (!gc) { return; }
+                                    if (!this.zoneId) { this.messages.warn('Zone active manquante'); return; }
+                                    const res = await fetch(`${this.backendBaseUrl}/api/geocaches/add`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        credentials: 'include',
+                                        body: JSON.stringify({ zone_id: this.zoneId, code: gc })
+                                    });
 
-                                if (!res.ok) {
-                                    let errorMsg = `HTTP ${res.status}`;
-                                    try {
-                                        const errorData = await res.json();
-                                        errorMsg = errorData.error || errorMsg;
-                                    } catch {
-                                        const txt = await res.text();
-                                        errorMsg += `: ${txt}`;
+                                    if (!res.ok) {
+                                        let errorMsg = `HTTP ${res.status}`;
+                                        try {
+                                            const errorData = await res.json();
+                                            errorMsg = errorData.error || errorMsg;
+                                        } catch {
+                                            const txt = await res.text();
+                                            errorMsg += `: ${txt}`;
+                                        }
+                                        throw new Error(errorMsg);
                                     }
-                                    throw new Error(errorMsg);
+                                    form.reset();
+                                    await this.load();
+                                    this.messages.info(`Géocache ${gc} importée`);
+                                } catch (err) {
+                                    console.error('Import geocache error', err);
+                                    this.messages.error('Erreur lors de l\'import de la géocache');
                                 }
-                                form.reset();
-                                await this.load();
-                                this.messages.info(`Géocache ${gc} importée`);
-                            } catch (err) {
-                                console.error('Import geocache error', err);
-                                this.messages.error('Erreur lors de l\'import de la géocache');
-                            }
-                        }}
-                        style={{ display: 'flex', gap: 6, alignItems: 'center' }}
-                    >
-                        <input name='gc_code' placeholder='Code GC (ex: GC12345)' style={{ width: 180, padding: '4px 8px' }} />
-                        <button type='submit' className='theia-button'>+ Importer</button>
-                    </form>
+                            }}
+                            style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+                        >
+                            <input name='gc_code' placeholder='Code GC (ex: GC12345)' style={{ width: 180, padding: '4px 8px' }} />
+                            <button type='submit' className='theia-button'>+ Importer</button>
+                        </form>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => {
+                                this.showImportDialog = true;
+                                this.update();
+                            }}
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 4,
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)'
+                            }}
+                        >
+                            <span>📁</span>
+                            <span>Importer GPX</span>
+                        </button>
+                    </div>
                 </div>
 
                 {/* Table or loading/empty state */}
@@ -307,6 +423,19 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}
                         zones={this.zones}
                         currentZoneId={this.zoneId}
+                    />
+                )}
+
+                {/* Import GPX Dialog */}
+                {this.showImportDialog && this.zoneId && (
+                    <ImportGpxDialog
+                        zoneId={this.zoneId}
+                        onImport={(file, updateExisting, onProgress) => this.handleImportGpx(file, updateExisting, onProgress)}
+                        onCancel={() => {
+                            this.showImportDialog = false;
+                            this.update();
+                        }}
+                        isImporting={this.isImporting}
                     />
                 )}
             </div>

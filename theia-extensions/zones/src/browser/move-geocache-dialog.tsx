@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 export interface MoveGeocacheDialogProps {
-    geocacheName: string;
+    geocacheName?: string;
+    geocacheCount?: number;
     currentZoneId: number;
     zones: Array<{ id: number; name: string }>;
     onMove: (targetZoneId: number) => void;
@@ -12,6 +13,7 @@ export interface MoveGeocacheDialogProps {
 
 export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
     geocacheName,
+    geocacheCount,
     currentZoneId,
     zones,
     onMove,
@@ -56,7 +58,7 @@ export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
                 </h3>
 
                 <p style={{ margin: '0 0 16px 0', fontSize: '0.9em', opacity: 0.8 }}>
-                    {actionLabel} <strong>{geocacheName}</strong> vers :
+                    {actionLabel} {geocacheName ? <strong>{geocacheName}</strong> : `${geocacheCount} géocache${geocacheCount && geocacheCount > 1 ? 's' : ''}`} vers :
                 </p>
 
                 {availableZones.length === 0 ? (

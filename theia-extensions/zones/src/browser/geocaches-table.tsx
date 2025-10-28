@@ -32,6 +32,8 @@ interface GeocachesTableProps {
     onRowClick?: (geocache: Geocache) => void;
     onDeleteSelected?: (ids: number[]) => void;
     onRefreshSelected?: (ids: number[]) => void;
+    onCopySelected?: (ids: number[]) => void;
+    onMoveSelected?: (ids: number[]) => void;
     onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
     onMove?: (geocache: Geocache, targetZoneId: number) => void;
@@ -45,6 +47,8 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onRowClick,
     onDeleteSelected,
     onRefreshSelected,
+    onCopySelected,
+    onMoveSelected,
     onDelete,
     onRefresh,
     onMove,
@@ -308,6 +312,24 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                                 title="Rafraîchir les géocaches sélectionnées"
                             >
                                 🔄 Rafraîchir
+                            </button>
+                        )}
+                        {onCopySelected && zones.length > 1 && (
+                            <button
+                                onClick={() => onCopySelected(selectedIds)}
+                                className="theia-button secondary"
+                                title="Copier les géocaches sélectionnées vers une autre zone"
+                            >
+                                📋 Copier
+                            </button>
+                        )}
+                        {onMoveSelected && zones.length > 1 && (
+                            <button
+                                onClick={() => onMoveSelected(selectedIds)}
+                                className="theia-button secondary"
+                                title="Déplacer les géocaches sélectionnées vers une autre zone"
+                            >
+                                📦 Déplacer
                             </button>
                         )}
                         {onDeleteSelected && (

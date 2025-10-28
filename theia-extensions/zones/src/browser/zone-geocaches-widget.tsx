@@ -6,6 +6,7 @@ import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { MessageService } from '@theia/core';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
+import { MoveGeocacheDialog } from './move-geocache-dialog';
 
 @injectable()
 export class ZoneGeocachesWidget extends ReactWidget {
@@ -19,6 +20,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected zones: Array<{ id: number; name: string }> = [];
     protected showImportDialog = false;
     protected isImporting = false;
+    protected copySelectedDialog: { geocacheIds: number[] } | null = null;
+    protected moveSelectedDialog: { geocacheIds: number[] } | null = null;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -233,7 +236,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
                 credentials: 'include',
                 body: JSON.stringify({ target_zone_id: targetZoneId })
             });
-            
+
             if (!res.ok) {
                 const errorText = await res.text();
                 let errorMsg = 'Erreur lors de la copie';
@@ -247,8 +250,80 @@ export class ZoneGeocachesWidget extends ReactWidget {
                 }
                 throw new Error(errorMsg);
             }
-            
-        this.messages.info(`Géocache ${geocache.gc_code} copiée vers la zone cible`);
+
+            this.messages.info(`Géocache ${geocache.gc_code} copiée vers la zone cible`);
+
+            // Rafraîchir le panneau des zones pour mettre à jour les compteurs
+            const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
+            if (zonesWidget && typeof zonesWidget.refresh === 'function') {
+                await zonesWidget.refresh();
+            }
+
+            await this.load();
+        } catch (e) {
+            console.error('Copy error', e);
+            this.messages.error(`Erreur lors de la copie: ${e}`);
+        }
+    }
+
+    protected async handleCopySelected(geocacheIds: number[]): Promise<void> {
+        this.copySelectedDialog = { geocacheIds };
+        this.update();
+    }
+
+    protected closeCopySelectedDialog(): void {
+        this.copySelectedDialog = null;
+        this.update();
+    }
+
+    protected async performCopySelected(geocacheIds: number[], targetZoneId: number): Promise<void> {
+        let copiedCount = 0;
+        let alreadyExistsCount = 0;
+        let errorCount = 0;
+        const targetZoneName = this.zones.find(z => z.id === targetZoneId)?.name || `Zone ${targetZoneId}`;
+
+        for (const geocacheId of geocacheIds) {
+            try {
+                // Trouver la géocache dans les données actuelles pour obtenir le gc_code
+                const geocache = this.rows.find(g => g.id === geocacheId);
+                if (!geocache) continue;
+
+                const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocacheId}/copy`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ target_zone_id: targetZoneId })
+                });
+
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    let errorMsg = 'Erreur lors de la copie';
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.error) {
+                            // Vérifier si c'est une erreur de géocache déjà existante
+                            if (errorJson.error.includes('existe déjà')) {
+                                alreadyExistsCount++;
+                                continue; // C'est normal, on continue
+                            }
+                            errorMsg = errorJson.error;
+                        }
+                    } catch {
+                        errorMsg = errorText || errorMsg;
+                    }
+                    console.error(`Copy error for ${geocache.gc_code}:`, errorMsg);
+                    errorCount++;
+                } else {
+                    copiedCount++;
+                }
+            } catch (e) {
+                console.error(`Copy error for geocache ${geocacheId}:`, e);
+                errorCount++;
+            }
+        }
+
+        // Fermer la boîte de dialogue
+        this.closeCopySelectedDialog();
 
         // Rafraîchir le panneau des zones pour mettre à jour les compteurs
         const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
@@ -256,10 +331,116 @@ export class ZoneGeocachesWidget extends ReactWidget {
             await zonesWidget.refresh();
         }
 
+        // Recharger les données
         await this.load();
-        } catch (e) {
-            console.error('Copy error', e);
-            this.messages.error(`Erreur lors de la copie: ${e}`);
+
+        // Afficher le résultat
+        let message = '';
+        if (copiedCount > 0) {
+            message += `${copiedCount} géocache${copiedCount > 1 ? 's' : ''} copiée${copiedCount > 1 ? 's' : ''}`;
+        }
+        if (alreadyExistsCount > 0) {
+            if (message) message += ', ';
+            message += `${alreadyExistsCount} géocache${alreadyExistsCount > 1 ? 's' : ''} déjà présente${alreadyExistsCount > 1 ? 's' : ''} dans ${targetZoneName}`;
+        }
+        if (errorCount > 0) {
+            if (message) message += ', ';
+            message += `${errorCount} erreur${errorCount > 1 ? 's' : ''}`;
+        }
+
+        if (errorCount === 0) {
+            this.messages.info(`Copie terminée: ${message}`);
+        } else {
+            this.messages.warn(`Copie partiellement réussie: ${message}`);
+        }
+    }
+
+    protected async handleMoveSelected(geocacheIds: number[]): Promise<void> {
+        this.moveSelectedDialog = { geocacheIds };
+        this.update();
+    }
+
+    protected closeMoveSelectedDialog(): void {
+        this.moveSelectedDialog = null;
+        this.update();
+    }
+
+    protected async performMoveSelected(geocacheIds: number[], targetZoneId: number): Promise<void> {
+        let movedCount = 0;
+        let alreadyExistsCount = 0;
+        let errorCount = 0;
+        const targetZoneName = this.zones.find(z => z.id === targetZoneId)?.name || `Zone ${targetZoneId}`;
+
+        for (const geocacheId of geocacheIds) {
+            try {
+                // Trouver la géocache dans les données actuelles pour obtenir le gc_code
+                const geocache = this.rows.find(g => g.id === geocacheId);
+                if (!geocache) continue;
+
+                const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocacheId}/move`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ target_zone_id: targetZoneId })
+                });
+
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    let errorMsg = 'Erreur lors du déplacement';
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.error) {
+                            errorMsg = errorJson.error;
+                        }
+                    } catch {
+                        errorMsg = errorText || errorMsg;
+                    }
+                    console.error(`Move error for ${geocache.gc_code}:`, errorMsg);
+                    errorCount++;
+                } else {
+                    const result = await res.json();
+                    if (result.already_exists) {
+                        alreadyExistsCount++;
+                    } else {
+                        movedCount++;
+                    }
+                }
+            } catch (e) {
+                console.error(`Move error for geocache ${geocacheId}:`, e);
+                errorCount++;
+            }
+        }
+
+        // Fermer la boîte de dialogue
+        this.closeMoveSelectedDialog();
+
+        // Rafraîchir le panneau des zones pour mettre à jour les compteurs
+        const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
+        if (zonesWidget && typeof zonesWidget.refresh === 'function') {
+            await zonesWidget.refresh();
+        }
+
+        // Recharger les données
+        await this.load();
+
+        // Afficher le résultat
+        let message = '';
+        if (movedCount > 0) {
+            message += `${movedCount} géocache${movedCount > 1 ? 's' : ''} déplacée${movedCount > 1 ? 's' : ''}`;
+        }
+        if (alreadyExistsCount > 0) {
+            if (message) message += ', ';
+            message += `${alreadyExistsCount} géocache${alreadyExistsCount > 1 ? 's' : ''} déjà présente${alreadyExistsCount > 1 ? 's' : ''} dans ${targetZoneName}`;
+        }
+        if (errorCount > 0) {
+            if (message) message += ', ';
+            message += `${errorCount} erreur${errorCount > 1 ? 's' : ''}`;
+        }
+
+        if (errorCount === 0) {
+            this.messages.info(`Déplacement terminé: ${message}`);
+        } else {
+            this.messages.warn(`Déplacement partiellement réussi: ${message}`);
         }
     }
 
@@ -456,6 +637,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onRowClick={(geocache) => this.handleRowClick(geocache)}
                         onDeleteSelected={(ids) => this.handleDeleteSelected(ids)}
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
+                        onCopySelected={(ids) => this.handleCopySelected(ids)}
+                        onMoveSelected={(ids) => this.handleMoveSelected(ids)}
                         onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}
@@ -475,6 +658,36 @@ export class ZoneGeocachesWidget extends ReactWidget {
                             this.update();
                         }}
                         isImporting={this.isImporting}
+                    />
+                )}
+
+                {/* Copy Selected Dialog */}
+                {this.copySelectedDialog && this.zoneId && (
+                    <MoveGeocacheDialog
+                        geocacheCount={this.copySelectedDialog.geocacheIds.length}
+                        currentZoneId={this.zoneId}
+                        zones={this.zones}
+                        onMove={async (targetZoneId: number) => {
+                            await this.performCopySelected(this.copySelectedDialog!.geocacheIds, targetZoneId);
+                        }}
+                        onCancel={() => this.closeCopySelectedDialog()}
+                        title="Copier les géocaches vers une zone"
+                        actionLabel="Copier"
+                    />
+                )}
+
+                {/* Move Selected Dialog */}
+                {this.moveSelectedDialog && this.zoneId && (
+                    <MoveGeocacheDialog
+                        geocacheCount={this.moveSelectedDialog.geocacheIds.length}
+                        currentZoneId={this.zoneId}
+                        zones={this.zones}
+                        onMove={async (targetZoneId: number) => {
+                            await this.performMoveSelected(this.moveSelectedDialog!.geocacheIds, targetZoneId);
+                        }}
+                        onCancel={() => this.closeMoveSelectedDialog()}
+                        title="Déplacer les géocaches vers une zone"
+                        actionLabel="Déplacer"
                     />
                 )}
             </div>

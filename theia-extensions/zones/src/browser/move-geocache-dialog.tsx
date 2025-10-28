@@ -6,6 +6,8 @@ export interface MoveGeocacheDialogProps {
     zones: Array<{ id: number; name: string }>;
     onMove: (targetZoneId: number) => void;
     onCancel: () => void;
+    title?: string;
+    actionLabel?: string;
 }
 
 export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
@@ -14,6 +16,8 @@ export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
     zones,
     onMove,
     onCancel,
+    title = 'Déplacer la géocache',
+    actionLabel = 'Déplacer',
 }) => {
     const [selectedZoneId, setSelectedZoneId] = React.useState<number | null>(null);
 
@@ -48,11 +52,11 @@ export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
                 onClick={(e) => e.stopPropagation()}
             >
                 <h3 style={{ margin: '0 0 16px 0', fontSize: '1.1em' }}>
-                    Déplacer la géocache
+                    {title}
                 </h3>
 
                 <p style={{ margin: '0 0 16px 0', fontSize: '0.9em', opacity: 0.8 }}>
-                    Déplacer <strong>{geocacheName}</strong> vers :
+                    {actionLabel} <strong>{geocacheName}</strong> vers :
                 </p>
 
                 {availableZones.length === 0 ? (
@@ -111,7 +115,7 @@ export const MoveGeocacheDialog: React.FC<MoveGeocacheDialogProps> = ({
                         disabled={selectedZoneId === null || availableZones.length === 0}
                         style={{ padding: '6px 16px' }}
                     >
-                        Déplacer
+                        {actionLabel}
                     </button>
                 </div>
             </div>

@@ -40,6 +40,7 @@ export class ZonesTreeWidget extends ReactWidget {
     protected loadingZones: Set<number> = new Set();
     protected contextMenu: { items: ContextMenuItem[]; x: number; y: number } | null = null;
     protected moveDialog: { geocache: GeocacheDto; zoneId: number } | null = null;
+    protected copyDialog: { geocache: GeocacheDto; zoneId: number } | null = null;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -62,7 +63,7 @@ export class ZonesTreeWidget extends ReactWidget {
         this.refresh();
     }
 
-    protected async refresh(): Promise<void> {
+    public async refresh(): Promise<void> {
         try {
             const res = await fetch(`${this.backendBaseUrl}/api/zones`, { credentials: 'include' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -230,6 +231,52 @@ export class ZonesTreeWidget extends ReactWidget {
         }
     }
 
+    protected async copyGeocache(geocache: GeocacheDto, targetZoneId: number): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocache.id}/copy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ target_zone_id: targetZoneId })
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                let errorMsg = 'Erreur lors de la copie';
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson.error) {
+                        errorMsg = errorJson.error;
+                    }
+                } catch {
+                    errorMsg = errorText || errorMsg;
+                }
+                throw new Error(errorMsg);
+            }
+
+            // Sauvegarder les zones actuellement dépliées
+            const expandedZoneIds = Array.from(this.expandedZones);
+            
+            // Invalider le cache des géocaches
+            this.zoneGeocaches.clear();
+            
+            // Recharger les zones pour mettre à jour les compteurs
+            await this.refresh();
+            
+            // Recharger les géocaches des zones qui étaient dépliées
+            for (const zoneId of expandedZoneIds) {
+                if (this.expandedZones.has(zoneId)) {
+                    await this.loadGeocachesForZone(zoneId);
+                }
+            }
+            
+            this.messages.info(`Géocache ${geocache.gc_code} copiée vers la zone cible`);
+        } catch (e) {
+            console.error('Copy geocache error', e);
+            this.messages.error(`Erreur lors de la copie: ${e}`);
+        }
+    }
+
     protected showZoneContextMenu(zone: ZoneDto, event: React.MouseEvent): void {
         event.preventDefault();
         event.stopPropagation();
@@ -274,6 +321,15 @@ export class ZonesTreeWidget extends ReactWidget {
                 icon: '📦',
                 action: () => {
                     this.moveDialog = { geocache, zoneId };
+                    this.update();
+                },
+                disabled: this.zones.length <= 1
+            },
+            {
+                label: 'Copier vers...',
+                icon: '📋',
+                action: () => {
+                    this.copyDialog = { geocache, zoneId };
                     this.update();
                 },
                 disabled: this.zones.length <= 1
@@ -337,6 +393,11 @@ export class ZonesTreeWidget extends ReactWidget {
 
     protected closeMoveDialog(): void {
         this.moveDialog = null;
+        this.update();
+    }
+
+    protected closeCopyDialog(): void {
+        this.copyDialog = null;
         this.update();
     }
 
@@ -454,6 +515,22 @@ export class ZonesTreeWidget extends ReactWidget {
                             this.closeMoveDialog();
                         }}
                         onCancel={() => this.closeMoveDialog()}
+                    />
+                )}
+
+                {/* Dialog de copie */}
+                {this.copyDialog && (
+                    <MoveGeocacheDialog
+                        geocacheName={`${this.copyDialog.geocache.gc_code} - ${this.copyDialog.geocache.name}`}
+                        currentZoneId={this.copyDialog.zoneId}
+                        zones={this.zones}
+                        onMove={async (targetZoneId) => {
+                            await this.copyGeocache(this.copyDialog!.geocache, targetZoneId);
+                            this.closeCopyDialog();
+                        }}
+                        onCancel={() => this.closeCopyDialog()}
+                        title="Copier vers une zone"
+                        actionLabel="Copier"
                     />
                 )}
             </div>

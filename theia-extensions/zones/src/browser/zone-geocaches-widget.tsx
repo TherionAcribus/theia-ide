@@ -225,6 +225,44 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
+    protected async handleCopy(geocache: Geocache, targetZoneId: number): Promise<void> {
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocache.id}/copy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ target_zone_id: targetZoneId })
+            });
+            
+            if (!res.ok) {
+                const errorText = await res.text();
+                let errorMsg = 'Erreur lors de la copie';
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson.error) {
+                        errorMsg = errorJson.error;
+                    }
+                } catch {
+                    errorMsg = errorText || errorMsg;
+                }
+                throw new Error(errorMsg);
+            }
+            
+        this.messages.info(`Géocache ${geocache.gc_code} copiée vers la zone cible`);
+
+        // Rafraîchir le panneau des zones pour mettre à jour les compteurs
+        const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
+        if (zonesWidget && typeof zonesWidget.refresh === 'function') {
+            await zonesWidget.refresh();
+        }
+
+        await this.load();
+        } catch (e) {
+            console.error('Copy error', e);
+            this.messages.error(`Erreur lors de la copie: ${e}`);
+        }
+    }
+
     protected async handleImportGpx(file: File, updateExisting: boolean, onProgress?: (percentage: number, message: string) => void): Promise<void> {
         if (!this.zoneId) {
             this.messages.warn('Zone active manquante');
@@ -421,6 +459,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}
+                        onCopy={(geocache, targetZoneId) => this.handleCopy(geocache, targetZoneId)}
                         zones={this.zones}
                         currentZoneId={this.zoneId}
                     />

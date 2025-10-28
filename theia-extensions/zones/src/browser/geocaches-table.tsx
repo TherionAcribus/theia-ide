@@ -35,6 +35,7 @@ interface GeocachesTableProps {
     onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
     onMove?: (geocache: Geocache, targetZoneId: number) => void;
+    onCopy?: (geocache: Geocache, targetZoneId: number) => void;
     zones?: Array<{ id: number; name: string }>;
     currentZoneId?: number;
 }
@@ -47,6 +48,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onDelete,
     onRefresh,
     onMove,
+    onCopy,
     zones = [],
     currentZoneId
 }) => {
@@ -56,6 +58,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     const [globalFilter, setGlobalFilter] = React.useState('');
     const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
     const [moveDialog, setMoveDialog] = React.useState<Geocache | null>(null);
+    const [copyDialog, setCopyDialog] = React.useState<Geocache | null>(null);
 
     const columns = React.useMemo<ColumnDef<Geocache>[]>(
         () => [
@@ -245,6 +248,15 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             });
         }
 
+        // Ajouter l'option de copie si disponible
+        if (onCopy && zones.length > 1 && currentZoneId) {
+            items.push({
+                label: 'Copier vers...',
+                icon: '📋',
+                action: () => setCopyDialog(geocache)
+            });
+        }
+
         items.push({ separator: true });
         items.push({
             label: 'Supprimer',
@@ -404,6 +416,22 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         setMoveDialog(null);
                     }}
                     onCancel={() => setMoveDialog(null)}
+                />
+            )}
+
+            {/* Dialog de copie */}
+            {copyDialog && onCopy && currentZoneId && (
+                <MoveGeocacheDialog
+                    geocacheName={`${copyDialog.gc_code} - ${copyDialog.name}`}
+                    currentZoneId={currentZoneId}
+                    zones={zones}
+                    onMove={(targetZoneId) => {
+                        onCopy(copyDialog, targetZoneId);
+                        setCopyDialog(null);
+                    }}
+                    onCancel={() => setCopyDialog(null)}
+                    title="Copier vers une zone"
+                    actionLabel="Copier"
                 />
             )}
         </div>

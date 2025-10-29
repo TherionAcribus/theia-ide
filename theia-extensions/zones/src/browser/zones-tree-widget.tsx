@@ -7,6 +7,7 @@ import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { ContextMenu, ContextMenuItem } from './context-menu';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
+import { GeocacheIcon } from './geocache-icon';
 
 import '../../src/browser/style/zones-tree.css';
 
@@ -426,20 +427,7 @@ export class ZonesTreeWidget extends ReactWidget {
         }
     }
 
-    protected getGeocacheIcon(cacheType: string): string {
-        const icons: Record<string, string> = {
-            'Traditional Cache': '📍',
-            'Multi-cache': '🔢',
-            'Mystery Cache': '❓',
-            'Unknown Cache': '❓',
-            'EarthCache': '🌍',
-            'Letterbox Hybrid': '📬',
-            'Event Cache': '📅',
-            'Wherigo Cache': '📱',
-            'Virtual Cache': '👻',
-        };
-        return icons[cacheType] || '📍';
-    }
+    // Méthode supprimée - on utilise maintenant le composant GeocacheIcon directement
 
     protected render(): React.ReactNode {
         return (
@@ -649,8 +637,8 @@ export class ZonesTreeWidget extends ReactWidget {
                 title={`${geocache.gc_code} - ${geocache.name}\nD${geocache.difficulty} T${geocache.terrain}`}
             >
                 {/* Icône type de cache */}
-                <span style={{ marginRight: 6 }}>
-                    {this.getGeocacheIcon(geocache.cache_type)}
+                <span style={{ marginRight: 6, display: 'inline-flex', alignItems: 'center' }}>
+                    <GeocacheIcon type={geocache.cache_type} size={16} />
                 </span>
 
                 {/* Code GC */}

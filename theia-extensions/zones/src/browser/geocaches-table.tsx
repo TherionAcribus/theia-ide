@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-table';
 import { ContextMenu, ContextMenuItem } from './context-menu';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
+import { GeocacheIcon } from './geocache-icon';
 
 export interface Geocache {
     id: number;
@@ -118,12 +119,14 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                 cell: info => {
                     const type = info.getValue() as string;
                     return (
-                        <span style={{ fontSize: '0.85em' }} title={type}>
-                            {type}
-                        </span>
+                        <GeocacheIcon 
+                            type={type} 
+                            size={20}
+                            showLabel={false}
+                        />
                     );
                 },
-                size: 150,
+                size: 50,
             },
             {
                 accessorKey: 'difficulty',
@@ -152,7 +155,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
             },
             {
                 accessorKey: 'solved',
-                header: 'Statute',
+                header: 'Statut',
                 cell: info => {
                     const solved = info.getValue() as string;
                     return getStatusBadge(solved, (info.row.original as Geocache).found);

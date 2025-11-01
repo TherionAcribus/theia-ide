@@ -7,10 +7,11 @@ import Overlay from 'ol/Overlay';
 import 'ol/ol.css';
 import { MapLayerManager, MapGeocache } from './map-layer-manager';
 import { MapService } from './map-service';
-import { lonLatToMapCoordinate, calculateExtent } from './map-utils';
+import { lonLatToMapCoordinate, calculateExtent, mapCoordinateToLonLat, formatGeocachingCoordinates } from './map-utils';
 import { TILE_PROVIDERS } from './map-tile-providers';
 import { fromLonLat } from 'ol/proj';
 import { GeocacheFeatureProperties } from './map-geocache-style-sprite';
+import { ContextMenu, ContextMenuItem } from '../context-menu';
 
 export interface MapViewProps {
     mapService: MapService;
@@ -30,6 +31,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
     const [isInitialized, setIsInitialized] = React.useState(false);
     const [currentProvider, setCurrentProvider] = React.useState('osm');
     const [popupData, setPopupData] = React.useState<GeocacheFeatureProperties | null>(null);
+    const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
 
     // Initialisation de la carte
     React.useEffect(() => {
@@ -82,7 +84,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             overlayRef.current = overlay;
         }
 
-        // Ajouter le gestionnaire de clic (clic gauche et droit)
+        // Ajouter le gestionnaire de clic gauche
         map.on('click', (evt) => {
             const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
             if (feature) {
@@ -101,6 +103,53 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             }
         });
 
+        // Ajouter le gestionnaire de clic droit (menu contextuel)
+        const mapElement = mapRef.current;
+        const handleContextMenu = (event: MouseEvent) => {
+            event.preventDefault();
+            
+            // Obtenir les coordonnées du clic sur la carte
+            const pixel = map.getEventPixel(event);
+            const coordinate = map.getCoordinateFromPixel(pixel);
+            
+            if (coordinate) {
+                const [lon, lat] = mapCoordinateToLonLat(coordinate);
+                
+                // Créer les items du menu contextuel
+                const items: ContextMenuItem[] = [
+                    {
+                        label: '📍 Coordonnées',
+                        disabled: true
+                    },
+                    { separator: true },
+                    {
+                        label: `Format GC: ${formatGeocachingCoordinates(lon, lat)}`,
+                        icon: '🌍',
+                        action: () => {
+                            navigator.clipboard.writeText(formatGeocachingCoordinates(lon, lat));
+                            console.log('Coordonnées GC copiées');
+                        }
+                    },
+                    {
+                        label: `Décimal: ${lat.toFixed(6)}, ${lon.toFixed(6)}`,
+                        icon: '🔢',
+                        action: () => {
+                            navigator.clipboard.writeText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+                            console.log('Coordonnées décimales copiées');
+                        }
+                    }
+                ];
+                
+                setContextMenu({
+                    items,
+                    x: event.clientX,
+                    y: event.clientY
+                });
+            }
+        };
+        
+        mapElement.addEventListener('contextmenu', handleContextMenu);
+
         mapInstanceRef.current = map;
         layerManagerRef.current = layerManager;
         setIsInitialized(true);
@@ -111,6 +160,9 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
 
         // Cleanup lors du démontage
         return () => {
+            if (mapElement) {
+                mapElement.removeEventListener('contextmenu', handleContextMenu);
+            }
             if (layerManagerRef.current) {
                 layerManagerRef.current.dispose();
             }
@@ -353,6 +405,16 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     )}
                 </div>
             </div>
+
+            {/* Menu contextuel */}
+            {contextMenu && (
+                <ContextMenu
+                    items={contextMenu.items}
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    onClose={() => setContextMenu(null)}
+                />
+            )}
         </div>
     );
 };

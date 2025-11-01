@@ -540,6 +540,265 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
     );
 };
 
+/**
+ * Props pour le composant CoordinatesEditor
+ */
+interface CoordinatesEditorProps {
+    geocacheData: GeocacheDto;
+    geocacheId: number;
+    backendBaseUrl: string;
+    onUpdate: () => Promise<void>;
+    messages: MessageService;
+}
+
+/**
+ * Composant pour afficher et éditer les coordonnées d'une géocache
+ */
+const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geocacheId, backendBaseUrl, onUpdate, messages }) => {
+    const [isEditing, setIsEditing] = React.useState(false);
+    const [editedCoords, setEditedCoords] = React.useState('');
+    const [solvedStatus, setSolvedStatus] = React.useState<'not_solved' | 'in_progress' | 'solved'>(
+        geocacheData.solved || 'not_solved'
+    );
+
+    // Déterminer les coordonnées à afficher
+    const displayCoords = geocacheData.coordinates_raw || geocacheData.original_coordinates_raw || '';
+    const originalCoords = geocacheData.original_coordinates_raw || '';
+    const isCorrected = geocacheData.is_corrected === true;
+
+    // Mettre à jour le statut quand les données changent
+    React.useEffect(() => {
+        setSolvedStatus(geocacheData.solved || 'not_solved');
+    }, [geocacheData.solved]);
+
+    // Initialiser le formulaire d'édition
+    const startEdit = () => {
+        setEditedCoords(displayCoords);
+        setIsEditing(true);
+    };
+
+    const cancelEdit = () => {
+        setIsEditing(false);
+        setEditedCoords('');
+    };
+
+    const saveCoordinates = async () => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/coordinates`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ coordinates_raw: editedCoords })
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            await onUpdate();
+            setIsEditing(false);
+            messages.info('Coordonnées mises à jour');
+        } catch (e) {
+            console.error('Save coordinates error', e);
+            messages.error('Erreur lors de la mise à jour des coordonnées');
+        }
+    };
+
+    const resetToOriginal = async () => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/reset-coordinates`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            await onUpdate();
+            setIsEditing(false);
+            messages.info('Coordonnées réinitialisées');
+        } catch (e) {
+            console.error('Reset coordinates error', e);
+            messages.error('Erreur lors de la réinitialisation des coordonnées');
+        }
+    };
+
+    const updateSolvedStatus = async (newStatus: 'not_solved' | 'in_progress' | 'solved') => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/solved-status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ solved_status: newStatus })
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            setSolvedStatus(newStatus);
+            messages.info('Statut mis à jour');
+        } catch (e) {
+            console.error('Update solved status error', e);
+            messages.error('Erreur lors de la mise à jour du statut');
+        }
+    };
+
+    return (
+        <div style={{ display: 'grid', gap: 12 }}>
+            {/* Affichage des coordonnées */}
+            {!isEditing && (
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <strong>Coordonnées {isCorrected && '(corrigées)'}</strong>
+                        <button
+                            onClick={startEdit}
+                            style={{
+                                padding: '4px 12px',
+                                backgroundColor: 'var(--theia-button-background)',
+                                color: 'var(--theia-button-foreground)',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: 'pointer'
+                            }}
+                        >
+                            {isCorrected ? 'Modifier' : 'Corriger les coordonnées'}
+                        </button>
+                    </div>
+                    <div style={{ 
+                        padding: 8, 
+                        backgroundColor: 'var(--theia-editor-background)', 
+                        borderRadius: 4,
+                        fontFamily: 'monospace',
+                        fontSize: 14
+                    }}>
+                        {displayCoords || 'Aucune coordonnée'}
+                    </div>
+                    
+                    {/* Coordonnées originales si différentes */}
+                    {isCorrected && originalCoords && originalCoords !== displayCoords && (
+                        <div style={{ marginTop: 8 }}>
+                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Coordonnées originales</div>
+                            <div style={{ 
+                                padding: 8, 
+                                backgroundColor: 'var(--theia-editor-background)', 
+                                borderRadius: 4,
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                opacity: 0.8
+                            }}>
+                                {originalCoords}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Formulaire d'édition */}
+            {isEditing && (
+                <div>
+                    <div style={{ marginBottom: 8 }}>
+                        <strong>Modifier les coordonnées</strong>
+                    </div>
+                    <input
+                        type="text"
+                        value={editedCoords}
+                        onChange={(e) => setEditedCoords(e.target.value)}
+                        placeholder="N 48° 51.402 E 002° 21.048"
+                        style={{
+                            width: '100%',
+                            padding: 8,
+                            backgroundColor: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            border: '1px solid var(--theia-input-border)',
+                            borderRadius: 4,
+                            fontFamily: 'monospace',
+                            fontSize: 14
+                        }}
+                    />
+                    
+                    {/* Coordonnées originales en référence */}
+                    {originalCoords && (
+                        <div style={{ marginTop: 8 }}>
+                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Coordonnées originales (référence)</div>
+                            <div style={{ 
+                                padding: 8, 
+                                backgroundColor: 'var(--theia-editor-background)', 
+                                borderRadius: 4,
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                                opacity: 0.8
+                            }}>
+                                {originalCoords}
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                        <button
+                            onClick={saveCoordinates}
+                            style={{
+                                padding: '6px 16px',
+                                backgroundColor: 'var(--theia-button-background)',
+                                color: 'var(--theia-button-foreground)',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Enregistrer
+                        </button>
+                        <button
+                            onClick={cancelEdit}
+                            style={{
+                                padding: '6px 16px',
+                                backgroundColor: 'var(--theia-secondaryButton-background)',
+                                color: 'var(--theia-secondaryButton-foreground)',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: 'pointer'
+                            }}
+                        >
+                            Annuler
+                        </button>
+                        {isCorrected && originalCoords && (
+                            <button
+                                onClick={resetToOriginal}
+                                style={{
+                                    padding: '6px 16px',
+                                    backgroundColor: 'var(--theia-editorWarning-foreground)',
+                                    color: 'var(--theia-editor-background)',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    marginLeft: 'auto'
+                                }}
+                            >
+                                Revenir aux coordonnées originales
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Statut de résolution */}
+            <div>
+                <div style={{ marginBottom: 8 }}>
+                    <strong>Statut de résolution</strong>
+                </div>
+                <select
+                    value={solvedStatus}
+                    onChange={(e) => updateSolvedStatus(e.target.value as any)}
+                    style={{
+                        width: '100%',
+                        padding: 8,
+                        backgroundColor: 'var(--theia-input-background)',
+                        color: 'var(--theia-input-foreground)',
+                        border: '1px solid var(--theia-input-border)',
+                        borderRadius: 4
+                    }}
+                >
+                    <option value="not_solved">Non résolu</option>
+                    <option value="in_progress">En cours</option>
+                    <option value="solved">Résolu</option>
+                </select>
+            </div>
+        </div>
+    );
+};
+
 type GeocacheDto = {
     id: number;
     gc_code?: string;
@@ -556,6 +815,7 @@ type GeocacheDto = {
     is_corrected?: boolean;
     original_latitude?: number;
     original_longitude?: number;
+    original_coordinates_raw?: string;  // Coordonnées originales au format Geocaching
     placed_at?: string;
     status?: string;
     zone_id?: number;
@@ -567,6 +827,7 @@ type GeocacheDto = {
     images?: GeocacheImage[];
     found?: boolean;
     found_date?: string;
+    solved?: 'not_solved' | 'in_progress' | 'solved';
     waypoints?: GeocacheWaypoint[];
     checkers?: GeocacheChecker[];
 };
@@ -885,15 +1146,13 @@ export class GeocacheDetailsWidget extends ReactWidget {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <div>
                                 <h4 style={{ margin: '8px 0' }}>Coordonnées</h4>
-                                <table className='theia-table' style={{ maxWidth: 600 }}>
-                                    <tbody>
-                                        {this.renderRow('Affichées', d.coordinates_raw)}
-                                        {this.renderRow('Latitude', d.latitude?.toString())}
-                                        {this.renderRow('Longitude', d.longitude?.toString())}
-                                        {this.renderRow('Corrigées', d.is_corrected ? 'Oui' : (d.is_corrected === false ? 'Non' : undefined))}
-                                        {this.renderRow('Originales', (d.original_latitude !== undefined && d.original_longitude !== undefined) ? `${d.original_latitude}, ${d.original_longitude}` : undefined)}
-                                    </tbody>
-                                </table>
+                                <CoordinatesEditor
+                                    geocacheData={d}
+                                    geocacheId={this.geocacheId!}
+                                    backendBaseUrl={this.backendBaseUrl}
+                                    onUpdate={() => this.load()}
+                                    messages={this.messages}
+                                />
                             </div>
                             <div>
                                 <h4 style={{ margin: '8px 0' }}>Attributs</h4>

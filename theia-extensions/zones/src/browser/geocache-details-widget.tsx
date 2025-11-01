@@ -3,6 +3,7 @@ import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
+import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 
 type GeocacheAttribute = { name: string; is_negative?: boolean; base_filename?: string };
 type GeocacheImage = { url: string };
@@ -1161,21 +1162,56 @@ export class GeocacheDetailsWidget extends ReactWidget {
         );
     }
 
+    protected getAttributeIconUrlFromAttribute(attribute: GeocacheAttribute): string | undefined {
+        // base_filename contient déjà le suffixe -yes ou -no
+        const iconFilename = attribute.base_filename || `${attribute.name.toLowerCase().replace(/\s+/g, '')}-${attribute.is_negative ? 'no' : 'yes'}`;
+        const iconUrl = getAttributeIconUrl(iconFilename);
+        
+        if (!iconUrl) {
+            console.warn(`Attribute icon not found: ${iconFilename}.png`);
+        }
+        
+        return iconUrl;
+    }
+
     protected renderAttributes(attrs?: GeocacheAttribute[]): React.ReactNode {
         if (!attrs || attrs.length === 0) { return undefined; }
         return (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {attrs.map((a, idx) => (
-                    <span key={idx} style={{
-                        border: '1px solid var(--theia-foreground)',
-                        borderRadius: 4,
-                        padding: '2px 6px',
-                        fontSize: 12,
-                        opacity: a.is_negative ? 0.7 : 1
-                    }} title={a.base_filename || a.name}>
-                        {a.is_negative ? 'No ' : ''}{a.name}
-                    </span>
-                ))}
+                {attrs.map((a, idx) => {
+                    const iconUrl = this.getAttributeIconUrlFromAttribute(a);
+                    const tooltipText = `${a.is_negative ? 'No ' : ''}${a.name}`;
+                    
+                    if (!iconUrl) {
+                        // Fallback si l'image n'est pas trouvée
+                        return (
+                            <span key={idx} style={{
+                                border: '1px solid var(--theia-foreground)',
+                                borderRadius: 4,
+                                padding: '2px 6px',
+                                fontSize: 12,
+                                opacity: a.is_negative ? 0.7 : 1
+                            }} title={tooltipText}>
+                                {a.is_negative ? 'No ' : ''}{a.name}
+                            </span>
+                        );
+                    }
+                    
+                    return (
+                        <img 
+                            key={idx}
+                            src={iconUrl}
+                            alt={tooltipText}
+                            title={tooltipText}
+                            style={{
+                                width: 24,
+                                height: 24,
+                                opacity: a.is_negative ? 0.7 : 1,
+                                cursor: 'help'
+                            }}
+                        />
+                    );
+                })}
             </div>
         );
     }

@@ -17,12 +17,13 @@ export interface MapViewProps {
     mapService: MapService;
     geocaches: MapGeocache[];  // ✅ Données propres à cette carte
     onMapReady?: (map: Map) => void;
+    onAddWaypoint?: (gcCoords: string) => void;  // ✅ Callback pour ajouter un waypoint
 }
 
 /**
  * Composant React qui affiche la carte OpenLayers
  */
-export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady }) => {
+export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint }) => {
     const mapRef = React.useRef<HTMLDivElement>(null);
     const popupRef = React.useRef<HTMLDivElement>(null);
     const mapInstanceRef = React.useRef<any>(null);
@@ -116,6 +117,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                 const [lon, lat] = mapCoordinateToLonLat(coordinate);
                 
                 // Créer les items du menu contextuel
+                const gcCoords = formatGeocachingCoordinates(lon, lat);
                 const items: ContextMenuItem[] = [
                     {
                         label: '📍 Coordonnées',
@@ -123,10 +125,10 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     },
                     { separator: true },
                     {
-                        label: `Format GC: ${formatGeocachingCoordinates(lon, lat)}`,
+                        label: `Format GC: ${gcCoords}`,
                         icon: '🌍',
                         action: () => {
-                            navigator.clipboard.writeText(formatGeocachingCoordinates(lon, lat));
+                            navigator.clipboard.writeText(gcCoords);
                             console.log('Coordonnées GC copiées');
                         }
                     },
@@ -139,6 +141,18 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         }
                     }
                 ];
+                
+                // Ajouter l'option "Ajouter un waypoint" si le callback est disponible
+                if (onAddWaypoint) {
+                    items.push({ separator: true });
+                    items.push({
+                        label: 'Ajouter un waypoint',
+                        icon: '📌',
+                        action: () => {
+                            onAddWaypoint(gcCoords);
+                        }
+                    });
+                }
                 
                 setContextMenu({
                     items,

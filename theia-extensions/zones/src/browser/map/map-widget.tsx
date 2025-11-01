@@ -1,6 +1,7 @@
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
+import { ApplicationShell } from '@theia/core/lib/browser';
 import * as React from 'react';
 import { MapView } from './map-view';
 import { MapService } from './map-service';
@@ -30,6 +31,9 @@ export class MapWidget extends ReactWidget {
 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
+
+    @inject(ApplicationShell)
+    protected readonly shell!: ApplicationShell;
 
     constructor() {
         super();
@@ -101,14 +105,40 @@ export class MapWidget extends ReactWidget {
     }
 
     protected render(): React.ReactNode {
+        // Déterminer si on doit afficher l'option "Ajouter un waypoint"
+        const onAddWaypoint = this.context.type === 'geocache' && this.context.id
+            ? this.handleAddWaypoint
+            : undefined;
+
         return (
             <MapView 
                 mapService={this.mapService}
                 geocaches={this.geocaches}
                 onMapReady={this.handleMapReady}
+                onAddWaypoint={onAddWaypoint}
             />
         );
     }
+
+    /**
+     * Gère l'ajout d'un waypoint depuis le menu contextuel de la carte
+     */
+    private handleAddWaypoint = (gcCoords: string): void => {
+        if (this.context.type !== 'geocache' || !this.context.id) {
+            return;
+        }
+
+        // Trouver le widget de détails de la géocache correspondant
+        const detailsWidgetId = 'geocache.details.widget';
+        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+
+        if (detailsWidget && 'addWaypointWithCoordinates' in detailsWidget) {
+            // Appeler la méthode publique du widget de détails
+            (detailsWidget as any).addWaypointWithCoordinates(gcCoords);
+        } else {
+            this.messageService.warn('Veuillez ouvrir les détails de la géocache pour ajouter un waypoint');
+        }
+    };
 
     /**
      * Callback appelé quand la carte est initialisée

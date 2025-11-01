@@ -99,21 +99,56 @@ function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number
 }
 
 /**
- * Composant fonctionnel pour l'édition des waypoints
+ * Wrapper pour WaypointsEditor qui expose le callback startEdit
  */
-const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint, onSetAsCorrectedCoords }) => {
+interface WaypointsEditorWrapperProps extends WaypointsEditorProps {
+    onRegisterCallback: (callback: (prefilledCoords?: string) => void) => void;
+}
+
+const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) => {
+    const { onRegisterCallback, ...editorProps } = props;
+    const startEditRef = React.useRef<((waypoint?: GeocacheWaypoint, prefilledCoords?: string) => void) | null>(null);
+
+    // Enregistrer le callback au montage
+    React.useEffect(() => {
+        if (startEditRef.current) {
+            onRegisterCallback((prefilledCoords?: string) => {
+                if (startEditRef.current) {
+                    startEditRef.current(undefined, prefilledCoords);
+                }
+            });
+        }
+    }, [onRegisterCallback]);
+
+    // Créer une version modifiée du WaypointsEditor avec accès à startEdit
+    return (
+        <WaypointsEditorWithRef
+            {...editorProps}
+            onStartEditRef={(fn) => { startEditRef.current = fn; }}
+        />
+    );
+};
+
+/**
+ * Version modifiée de WaypointsEditor qui expose startEdit via une ref
+ */
+interface WaypointsEditorWithRefProps extends WaypointsEditorProps {
+    onStartEditRef: (fn: (waypoint?: GeocacheWaypoint, prefilledCoords?: string) => void) => void;
+}
+
+const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStartEditRef, ...props }) => {
+    const { waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint, onSetAsCorrectedCoords } = props;
     const [editingId, setEditingId] = React.useState<number | 'new' | null>(null);
     const [editForm, setEditForm] = React.useState<Partial<GeocacheWaypoint>>({});
     const [projectionParams, setProjectionParams] = React.useState({ distance: 100, unit: 'm', bearing: 0 });
     const [calculatedCoords, setCalculatedCoords] = React.useState<string>('');
 
-    const startEdit = (waypoint?: GeocacheWaypoint) => {
+    const startEdit = React.useCallback((waypoint?: GeocacheWaypoint, prefilledCoords?: string) => {
         if (waypoint) {
             setEditingId(waypoint.id ?? null);
             setEditForm({ ...waypoint });
         } else {
             setEditingId('new');
-            // ✅ Pré-remplir avec les coordonnées de la géocache
             setEditForm({
                 prefix: '',
                 lookup: '',
@@ -121,16 +156,19 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
                 type: '',
                 latitude: undefined,
                 longitude: undefined,
-                gc_coords: geocacheData?.coordinates_raw || '',  // ✅ Coordonnées de la géocache
+                gc_coords: prefilledCoords || geocacheData?.coordinates_raw || '',
                 note: ''
             });
         }
         setCalculatedCoords('');
-    };
+    }, [geocacheData?.coordinates_raw]);
 
-    /**
-     * Duplique un waypoint existant
-     */
+    // Exposer startEdit via le callback
+    React.useEffect(() => {
+        onStartEditRef(startEdit);
+    }, [startEdit, onStartEditRef]);
+
+    // Copier tout le reste du code de WaypointsEditor...
     const duplicateWaypoint = (waypoint: GeocacheWaypoint) => {
         setEditingId('new');
         setEditForm({
@@ -138,8 +176,8 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
             lookup: waypoint.lookup,
             name: waypoint.name ? `${waypoint.name} copy` : 'copy',
             type: waypoint.type,
-            latitude: undefined,  // Sera recalculé depuis gc_coords
-            longitude: undefined, // Sera recalculé depuis gc_coords
+            latitude: undefined,
+            longitude: undefined,
             gc_coords: waypoint.gc_coords,
             note: waypoint.note
         });
@@ -155,8 +193,6 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
     const saveWaypoint = async () => {
         if (!geocacheId) { return; }
         try {
-            // ✅ N'envoyer QUE les champs du formulaire, PAS latitude/longitude
-            // Le backend calculera lat/lon depuis gc_coords
             const dataToSave = {
                 prefix: editForm.prefix,
                 lookup: editForm.lookup,
@@ -214,7 +250,6 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
             messages.error('Veuillez saisir des coordonnées');
             return;
         }
-        // Créer un waypoint temporaire avec les coordonnées du formulaire
         const tempWaypoint: GeocacheWaypoint = {
             id: editingId === 'new' ? undefined : editingId as number,
             gc_coords: editForm.gc_coords,
@@ -222,10 +257,8 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
         };
         
         if (editingId === 'new') {
-            // Si c'est un nouveau waypoint, on doit d'abord le sauvegarder
             messages.info('Sauvegarde du waypoint en cours...');
             await saveWaypoint();
-            // Après sauvegarde, le waypoint sera dans la liste et on pourra l'utiliser
             messages.info('Veuillez maintenant cliquer sur le bouton 📍 du waypoint créé');
         } else if (tempWaypoint.id) {
             await onSetAsCorrectedCoords(tempWaypoint.id, tempWaypoint.name || 'ce waypoint');
@@ -279,6 +312,7 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
         }
     };
 
+    // Retourner le même JSX que WaypointsEditor
     return (
         <div style={{ display: 'grid', gap: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -840,6 +874,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected geocacheId?: number;
     protected data?: GeocacheDto;
     protected isLoading = false;
+    protected waypointEditorCallback?: (prefilledCoords?: string) => void;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -852,6 +887,21 @@ export class GeocacheDetailsWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-map-marker';
         this.addClass('theia-geocache-details-widget');
+    }
+
+    /**
+     * Ouvre le formulaire d'ajout de waypoint avec des coordonnées pré-remplies
+     * Méthode publique appelable depuis d'autres widgets (ex: carte)
+     */
+    public addWaypointWithCoordinates(gcCoords: string): void {
+        if (this.waypointEditorCallback) {
+            // Activer le widget pour le rendre visible
+            this.shell.activateWidget(this.id);
+            // Ouvrir le formulaire d'ajout de waypoint
+            this.waypointEditorCallback(gcCoords);
+        } else {
+            this.messages.warn('Le formulaire de waypoint n\'est pas encore chargé');
+        }
     }
 
     setGeocache(context: { geocacheId: number; name?: string }): void {
@@ -1176,7 +1226,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
                         {this.renderImages(d.images)}
 
                         <div>
-                            <WaypointsEditor
+                            <WaypointsEditorWrapper
                                 waypoints={d.waypoints}
                                 geocacheId={this.geocacheId}
                                 geocacheData={d}
@@ -1185,6 +1235,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                 messages={this.messages}
                                 onDeleteWaypoint={this.deleteWaypoint}
                                 onSetAsCorrectedCoords={this.setAsCorrectedCoords}
+                                onRegisterCallback={(callback) => { this.waypointEditorCallback = callback; }}
                             />
                         </div>
 

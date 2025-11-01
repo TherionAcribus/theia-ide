@@ -3,10 +3,12 @@ import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/c
 import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
 import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { MapWidget } from './map/map-widget';
 
 export const ZonesCommands = {
     OPEN: <Command>{ id: 'zones:open', label: 'Zones: Ouvrir' },
-    OPEN_ZONE: <Command>{ id: 'zones:open-zone', label: 'Zones: Ouvrir Zone' }
+    OPEN_ZONE: <Command>{ id: 'zones:open-zone', label: 'Zones: Ouvrir Zone' },
+    OPEN_MAP: <Command>{ id: 'geoapp.map.toggle', label: 'GeoApp: Afficher la carte' }
 };
 
 @injectable()
@@ -37,6 +39,17 @@ export class ZonesCommandContribution implements CommandContribution {
                 }
                 if (args?.zoneId) {
                     widget.setZone({ zoneId: args.zoneId, zoneName: args.zoneName });
+                }
+                this.shell.activateWidget(widget.id);
+            }
+        });
+
+        // Ouvre/ferme la carte dans le Bottom Layer
+        commands.registerCommand(ZonesCommands.OPEN_MAP, {
+            execute: async () => {
+                const widget = await this.widgetManager.getOrCreateWidget(MapWidget.ID);
+                if (!widget.isAttached) {
+                    this.shell.addWidget(widget, { area: 'bottom' });
                 }
                 this.shell.activateWidget(widget.id);
             }

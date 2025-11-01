@@ -2,6 +2,7 @@ import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
+import { ApplicationShell } from '@theia/core/lib/browser';
 
 type GeocacheAttribute = { name: string; is_negative?: boolean; base_filename?: string };
 type GeocacheImage = { url: string };
@@ -58,7 +59,10 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected data?: GeocacheDto;
     protected isLoading = false;
 
-    constructor(@inject(MessageService) protected readonly messages: MessageService) {
+    constructor(
+        @inject(MessageService) protected readonly messages: MessageService,
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell
+    ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
         this.title.label = 'Géocache';
@@ -79,6 +83,31 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
         this.update();
         this.load();
+    }
+
+    /**
+     * Appelé quand le widget devient actif
+     * Réactive automatiquement la carte correspondante
+     */
+    protected onActivateRequest(msg: any): void {
+        super.onActivateRequest(msg);
+        this.reactivateMap();
+    }
+
+    /**
+     * Réactive la carte correspondante à cette géocache
+     */
+    private reactivateMap(): void {
+        // Si on a une géocache chargée, réactiver sa carte
+        if (this.geocacheId && this.data?.gc_code) {
+            const mapId = `geoapp-map-geocache-${this.geocacheId}`;
+            const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
+            
+            if (existingMap) {
+                console.log('[GeocacheDetailsWidget] Réactivation de la carte géocache:', this.geocacheId);
+                this.shell.activateWidget(mapId);
+            }
+        }
     }
 
     protected async load(): Promise<void> {

@@ -6,6 +6,10 @@ import { ZonesFrontendContribution } from './zones-frontend-contribution';
 import { ZonesCommandContribution } from './zones-command-contribution';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
+import { MapWidget } from './map/map-widget';
+import { MapService } from './map/map-service';
+import { MapWidgetFactory } from './map/map-widget-factory';
+import { MapManagerWidget } from './map/map-manager-widget';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -24,6 +28,39 @@ export default new ContainerModule(bind => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheDetailsWidget.ID,
         createWidget: () => ctx.container.get(GeocacheDetailsWidget)
+    })).inSingletonScope();
+
+    bind(MapService).toSelf().inSingletonScope();
+    
+    // MapWidget n'est plus singleton pour permettre plusieurs instances
+    bind(MapWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: MapWidget.ID,
+        createWidget: () => {
+            // Créer un child container pour chaque widget
+            const child = ctx.container.createChild();
+            return child.get(MapWidget);
+        }
+    })).inSingletonScope();
+    
+    // MapWidgetFactory avec configuration du créateur
+    bind(MapWidgetFactory).toSelf().inSingletonScope().onActivation((context, factory) => {
+        // Configurer le créateur de widget avec accès au container
+        factory.setWidgetCreator((mapContext) => {
+            const child = context.container.createChild();
+            const widget = child.get(MapWidget);
+            if (mapContext) {
+                widget.setContext(mapContext);
+            }
+            return widget;
+        });
+        return factory;
+    });
+
+    bind(MapManagerWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: MapManagerWidget.ID,
+        createWidget: () => ctx.container.get(MapManagerWidget)
     })).inSingletonScope();
 
     bind(ZonesFrontendContribution).toSelf().inSingletonScope();

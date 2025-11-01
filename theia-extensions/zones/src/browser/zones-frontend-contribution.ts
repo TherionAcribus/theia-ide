@@ -2,6 +2,7 @@ import { injectable, inject } from 'inversify';
 import { FrontendApplication, FrontendApplicationContribution, WidgetManager, Widget } from '@theia/core/lib/browser';
 import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { MapManagerWidget } from './map/map-manager-widget';
 
 @injectable()
 export class ZonesFrontendContribution implements FrontendApplicationContribution {
@@ -10,11 +11,23 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
     protected readonly widgetManager: WidgetManager;
 
     async onStart(app: FrontendApplication): Promise<void> {
+        // Ajouter le widget des zones
         const widget = await this.getOrCreateWidget();
         if (!widget.isAttached) {
-            app.shell.addWidget(widget, { area: 'left' });
+            app.shell.addWidget(widget, { area: 'left', rank: 100 });
         }
         app.shell.activateWidget(widget.id);
+
+        // Ajouter le gestionnaire de cartes
+        console.log('[ZonesFrontendContribution] Création du MapManagerWidget...');
+        const mapManagerWidget = await this.widgetManager.getOrCreateWidget(MapManagerWidget.ID);
+        console.log('[ZonesFrontendContribution] MapManagerWidget créé:', mapManagerWidget.id);
+        if (!mapManagerWidget.isAttached) {
+            console.log('[ZonesFrontendContribution] Ajout du MapManagerWidget à la barre latérale gauche');
+            app.shell.addWidget(mapManagerWidget, { area: 'left', rank: 200 });
+        } else {
+            console.log('[ZonesFrontendContribution] MapManagerWidget déjà attaché');
+        }
 
         // Ecoute globale pour ouverture d'un onglet central de géocaches
         window.addEventListener('open-zone-geocaches', async (event: any) => {

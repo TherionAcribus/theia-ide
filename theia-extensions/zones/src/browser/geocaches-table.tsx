@@ -13,6 +13,18 @@ import { ContextMenu, ContextMenuItem } from './context-menu';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
 import { GeocacheIcon } from './geocache-icon';
 
+export interface GeocacheWaypoint {
+    id: number;
+    prefix: string | null;
+    lookup: string | null;
+    name: string | null;
+    type: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    gc_coords: string | null;
+    note: string | null;
+}
+
 export interface Geocache {
     id: number;
     gc_code: string;
@@ -26,6 +38,12 @@ export interface Geocache {
     found: boolean;
     favorites_count: number;
     hidden_date: string | null;
+    latitude?: number;
+    longitude?: number;
+    is_corrected?: boolean;
+    original_latitude?: number;
+    original_longitude?: number;
+    waypoints?: GeocacheWaypoint[];
 }
 
 interface GeocachesTableProps {

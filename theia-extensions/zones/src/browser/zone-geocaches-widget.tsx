@@ -7,6 +7,8 @@ import { MessageService } from '@theia/core';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
+import { MapService } from './map/map-service';
+import { MapWidgetFactory } from './map/map-widget-factory';
 
 @injectable()
 export class ZoneGeocachesWidget extends ReactWidget {
@@ -27,6 +29,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(MapService) protected readonly mapService: MapService,
+        @inject(MapWidgetFactory) protected readonly mapWidgetFactory: MapWidgetFactory,
     ) {
         super();
         this.id = ZoneGeocachesWidget.ID;
@@ -92,6 +96,41 @@ export class ZoneGeocachesWidget extends ReactWidget {
         this.load();
     }
 
+    /**
+     * Appelé quand le widget devient actif
+     * Réactive automatiquement la carte correspondante
+     */
+    protected onActivateRequest(msg: any): void {
+        super.onActivateRequest(msg);
+        this.reactivateMap();
+    }
+
+    /**
+     * Réactive la carte correspondante à cette zone
+     */
+    private reactivateMap(): void {
+        console.log('[ZoneGeocachesWidget] reactivateMap appelé, zoneId:', this.zoneId, 'zoneName:', this.zoneName);
+        
+        // Si on a une zone chargée, réactiver sa carte
+        if (this.zoneId && this.zoneName) {
+            const mapId = `geoapp-map-zone-${this.zoneId}`;
+            const bottomWidgets = this.shell.getWidgets('bottom');
+            console.log('[ZoneGeocachesWidget] Widgets dans bottom:', bottomWidgets.map(w => w.id));
+            
+            const existingMap = bottomWidgets.find(w => w.id === mapId);
+            console.log('[ZoneGeocachesWidget] Carte trouvée:', !!existingMap, 'ID recherché:', mapId);
+            
+            if (existingMap) {
+                console.log('[ZoneGeocachesWidget] Réactivation de la carte zone:', this.zoneId);
+                this.shell.activateWidget(mapId);
+            } else {
+                console.warn('[ZoneGeocachesWidget] Carte non trouvée dans le bottom layer');
+            }
+        } else {
+            console.warn('[ZoneGeocachesWidget] Pas de zone chargée');
+        }
+    }
+
     protected async load(): Promise<void> {
         if (!this.zoneId) { return; }
         this.loading = true;
@@ -106,6 +145,44 @@ export class ZoneGeocachesWidget extends ReactWidget {
             const zonesRes = await fetch(`${this.backendBaseUrl}/api/zones`, { credentials: 'include' });
             if (zonesRes.ok) {
                 this.zones = await zonesRes.json();
+            }
+            
+            // Charger les géocaches sur la carte (avec waypoints)
+            const geocachesWithCoords = this.rows.filter(gc => 
+                gc.latitude !== null && 
+                gc.latitude !== undefined && 
+                gc.longitude !== null && 
+                gc.longitude !== undefined
+            );
+            
+            console.log('[ZoneGeocachesWidget] Géocaches avec coordonnées:', geocachesWithCoords.length, '/', this.rows.length);
+            console.log('[ZoneGeocachesWidget] Première géocache:', geocachesWithCoords[0]);
+            
+            if (geocachesWithCoords.length > 0 && this.zoneId && this.zoneName) {
+                // Préparer les données pour la carte
+                const mapGeocaches = geocachesWithCoords.map(gc => ({
+                    id: gc.id,
+                    gc_code: gc.gc_code,
+                    name: gc.name,
+                    cache_type: gc.cache_type,
+                    latitude: gc.latitude!,
+                    longitude: gc.longitude!,
+                    difficulty: gc.difficulty,
+                    terrain: gc.terrain,
+                    found: gc.found,
+                    is_corrected: gc.is_corrected,
+                    original_latitude: gc.original_latitude,
+                    original_longitude: gc.original_longitude,
+                    waypoints: gc.waypoints || []
+                }));
+                
+                console.log('[ZoneGeocachesWidget] Ouverture carte pour zone:', this.zoneId, this.zoneName);
+                console.log('[ZoneGeocachesWidget] Données envoyées:', mapGeocaches.length, 'géocaches');
+                
+                // Ouvrir une carte spécifique à cette zone
+                this.mapWidgetFactory.openMapForZone(this.zoneId, this.zoneName, mapGeocaches);
+            } else {
+                console.warn('[ZoneGeocachesWidget] Aucune géocache avec coordonnées trouvée ou zone non définie');
             }
             
             // eslint-disable-next-line no-console
@@ -540,6 +617,38 @@ export class ZoneGeocachesWidget extends ReactWidget {
 
     protected async handleRowClick(geocache: Geocache): Promise<void> {
         try {
+            // Ouvrir une carte spécifique pour cette géocache si elle a des coordonnées
+            if (geocache.latitude !== null && geocache.latitude !== undefined && 
+                geocache.longitude !== null && geocache.longitude !== undefined) {
+                
+                // Préparer les données de la géocache
+                const geocacheData = {
+                    id: geocache.id,
+                    gc_code: geocache.gc_code,
+                    name: geocache.name,
+                    cache_type: geocache.cache_type,
+                    latitude: geocache.latitude,
+                    longitude: geocache.longitude,
+                    difficulty: geocache.difficulty,
+                    terrain: geocache.terrain,
+                    found: geocache.found,
+                    is_corrected: geocache.is_corrected,
+                    original_latitude: geocache.original_latitude,
+                    original_longitude: geocache.original_longitude,
+                    waypoints: geocache.waypoints || []
+                };
+
+                console.log('[ZoneGeocachesWidget] Ouverture carte pour géocache:', geocache.gc_code);
+                
+                // Ouvrir une carte spécifique pour cette géocache
+                await this.mapWidgetFactory.openMapForGeocache(
+                    geocache.id,
+                    geocache.gc_code,
+                    geocacheData
+                );
+            }
+
+            // Ouvrir les détails de la géocache
             const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
             widget.setGeocache({ geocacheId: geocache.id, name: geocache.name });
             if (!widget.isAttached) {

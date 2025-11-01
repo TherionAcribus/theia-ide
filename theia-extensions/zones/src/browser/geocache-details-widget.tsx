@@ -112,19 +112,36 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
             setEditForm({ ...waypoint });
         } else {
             setEditingId('new');
-            // ✅ NE PAS pré-remplir avec les coordonnées de la géocache
-            // Les coordonnées décimales seront calculées depuis gc_coords
+            // ✅ Pré-remplir avec les coordonnées de la géocache
             setEditForm({
                 prefix: '',
                 lookup: '',
                 name: '',
                 type: '',
-                latitude: undefined,  // ✅ Pas de pré-remplissage
-                longitude: undefined, // ✅ Pas de pré-remplissage
-                gc_coords: '',        // ✅ Vide pour forcer la saisie
+                latitude: undefined,
+                longitude: undefined,
+                gc_coords: geocacheData?.coordinates_raw || '',  // ✅ Coordonnées de la géocache
                 note: ''
             });
         }
+        setCalculatedCoords('');
+    };
+
+    /**
+     * Duplique un waypoint existant
+     */
+    const duplicateWaypoint = (waypoint: GeocacheWaypoint) => {
+        setEditingId('new');
+        setEditForm({
+            prefix: waypoint.prefix,
+            lookup: waypoint.lookup,
+            name: waypoint.name ? `${waypoint.name} copy` : 'copy',
+            type: waypoint.type,
+            latitude: undefined,  // Sera recalculé depuis gc_coords
+            longitude: undefined, // Sera recalculé depuis gc_coords
+            gc_coords: waypoint.gc_coords,
+            note: waypoint.note
+        });
         setCalculatedCoords('');
     };
 
@@ -445,6 +462,15 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
                                             title='Éditer'
                                         >
                                             ✏️
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={() => duplicateWaypoint(w)}
+                                            disabled={editingId !== null}
+                                            style={{ padding: '2px 8px', fontSize: 11 }}
+                                            title='Dupliquer'
+                                        >
+                                            📋
                                         </button>
                                         <button
                                             className='theia-button secondary'

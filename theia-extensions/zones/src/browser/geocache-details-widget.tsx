@@ -1174,6 +1174,24 @@ export class GeocacheDetailsWidget extends ReactWidget {
         return iconUrl;
     }
 
+    /**
+     * Affiche les étoiles de notation (difficulté ou terrain)
+     */
+    protected renderStars(rating?: number, color: string = 'gold'): React.ReactNode {
+        if (!rating) { return undefined; }
+        const fullStars = Math.floor(rating);
+        const hasHalfStar = rating % 1 >= 0.5;
+        const emptyStars = 5 - fullStars - (hasHalfStar ? 1 : 0);
+        
+        return (
+            <span style={{ color, fontSize: 16 }}>
+                {'★'.repeat(fullStars)}
+                {hasHalfStar && '◐'}
+                {emptyStars > 0 && <span style={{ opacity: 0.3 }}>{'☆'.repeat(emptyStars)}</span>}
+            </span>
+        );
+    }
+
     protected renderAttributes(attrs?: GeocacheAttribute[]): React.ReactNode {
         if (!attrs || attrs.length === 0) { return undefined; }
         return (
@@ -1250,26 +1268,64 @@ export class GeocacheDetailsWidget extends ReactWidget {
                 {!this.isLoading && !d && <div style={{ opacity: 0.7 }}>Aucune donnée</div>}
                 {!this.isLoading && d && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                        <h3 style={{ margin: 0 }}>{d.name}</h3>
-                        <table className='theia-table' style={{ maxWidth: 860 }}>
-                            <tbody>
-                                {this.renderRow('Code', d.gc_code)}
-                                {this.renderRow('Propriétaire', d.owner)}
-                                {this.renderRow('Type', d.type)}
-                                {this.renderRow('Taille', d.size)}
-                                {this.renderRow('Difficulté', d.difficulty?.toString())}
-                                {this.renderRow('Terrain', d.terrain?.toString())}
-                                {this.renderRow('Favoris', d.favorites_count?.toString())}
-                                {this.renderRow('Logs', d.logs_count?.toString())}
-                                {this.renderRow('Placée le', d.placed_at)}
-                                {this.renderRow('Statut', d.status)}
-                                {this.renderRow('Lien', d.url ? <a href={d.url} target='_blank' rel='noreferrer'>{d.url}</a> : undefined)}
-                            </tbody>
-                        </table>
+                        {/* En-tête */}
+                        <div style={{ marginBottom: 8 }}>
+                            <h3 style={{ margin: '0 0 8px 0' }}>{d.name}</h3>
+                            <div style={{ display: 'flex', gap: 16, opacity: 0.7, fontSize: 14 }}>
+                                <span>{d.gc_code}</span>
+                                <span>•</span>
+                                <span>{d.type}</span>
+                                <span>•</span>
+                                <span>Par {d.owner || 'Inconnu'}</span>
+                            </div>
+                        </div>
 
+                        {/* Informations principales : 2 colonnes */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                            <div>
-                                <h4 style={{ margin: '8px 0' }}>Coordonnées</h4>
+                            {/* Colonne gauche : Statistiques */}
+                            <div style={{ 
+                                background: 'var(--theia-editor-background)', 
+                                border: '1px solid var(--theia-panel-border)',
+                                borderRadius: 6, 
+                                padding: 16 
+                            }}>
+                                <h4 style={{ margin: '0 0 16px 0', fontSize: 16 }}>Statistiques</h4>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                    <div>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Difficulté</div>
+                                        <div>{this.renderStars(d.difficulty, '#fbbf24')}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Terrain</div>
+                                        <div>{this.renderStars(d.terrain, '#10b981')}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Taille</div>
+                                        <div style={{ color: '#60a5fa' }}>{d.size || 'N/A'}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Favoris</div>
+                                        <div style={{ color: '#a78bfa' }}>{d.favorites_count || 0}</div>
+                                    </div>
+                                </div>
+                                
+                                {/* Attributs */}
+                                {d.attributes && d.attributes.length > 0 && (
+                                    <div style={{ marginTop: 16 }}>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>Attributs</div>
+                                        {this.renderAttributes(d.attributes)}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Colonne droite : Coordonnées */}
+                            <div style={{ 
+                                background: 'var(--theia-editor-background)', 
+                                border: '1px solid var(--theia-panel-border)',
+                                borderRadius: 6, 
+                                padding: 16 
+                            }}>
+                                <h4 style={{ margin: '0 0 16px 0', fontSize: 16 }}>Coordonnées</h4>
                                 <CoordinatesEditor
                                     geocacheData={d}
                                     geocacheId={this.geocacheId!}
@@ -1278,11 +1334,32 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                     messages={this.messages}
                                 />
                             </div>
-                            <div>
-                                <h4 style={{ margin: '8px 0' }}>Attributs</h4>
-                                {this.renderAttributes(d.attributes)}
-                            </div>
                         </div>
+
+                        {/* Informations supplémentaires (table) */}
+                        <details style={{ 
+                            background: 'var(--theia-editor-background)', 
+                            border: '1px solid var(--theia-panel-border)',
+                            borderRadius: 6, 
+                            padding: 16 
+                        }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: 8 }}>Informations détaillées</summary>
+                            <table className='theia-table' style={{ width: '100%', marginTop: 8 }}>
+                                <tbody>
+                                    {this.renderRow('Code', d.gc_code)}
+                                    {this.renderRow('Propriétaire', d.owner)}
+                                    {this.renderRow('Type', d.type)}
+                                    {this.renderRow('Taille', d.size)}
+                                    {this.renderRow('Difficulté', d.difficulty?.toString())}
+                                    {this.renderRow('Terrain', d.terrain?.toString())}
+                                    {this.renderRow('Favoris', d.favorites_count?.toString())}
+                                    {this.renderRow('Logs', d.logs_count?.toString())}
+                                    {this.renderRow('Placée le', d.placed_at)}
+                                    {this.renderRow('Statut', d.status)}
+                                    {this.renderRow('Lien', d.url ? <a href={d.url} target='_blank' rel='noreferrer'>{d.url}</a> : undefined)}
+                                </tbody>
+                            </table>
+                        </details>
 
                         <div>
                             <h4 style={{ margin: '8px 0' }}>Description</h4>

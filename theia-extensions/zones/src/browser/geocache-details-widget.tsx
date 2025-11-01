@@ -2,7 +2,7 @@ import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
-import { ApplicationShell } from '@theia/core/lib/browser';
+import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
 
 type GeocacheAttribute = { name: string; is_negative?: boolean; base_filename?: string };
 type GeocacheImage = { url: string };
@@ -29,6 +29,7 @@ interface WaypointsEditorProps {
     backendBaseUrl: string;
     onUpdate: () => Promise<void>;
     messages: MessageService;
+    onDeleteWaypoint: (id: number, name: string) => Promise<void>;
 }
 
 /**
@@ -99,7 +100,7 @@ function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number
 /**
  * Composant fonctionnel pour l'édition des waypoints
  */
-const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages }) => {
+const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint }) => {
     const [editingId, setEditingId] = React.useState<number | 'new' | null>(null);
     const [editForm, setEditForm] = React.useState<Partial<GeocacheWaypoint>>({});
     const [projectionParams, setProjectionParams] = React.useState({ distance: 100, unit: 'm', bearing: 0 });
@@ -180,21 +181,9 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
         }
     };
 
-    const deleteWaypoint = async (id?: number) => {
-        if (!geocacheId || !id) { return; }
-        if (!confirm('Supprimer ce waypoint ?')) { return; }
-        try {
-            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/waypoints/${id}`, {
-                method: 'DELETE',
-                credentials: 'include'
-            });
-            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
-            await onUpdate();
-            messages.info('Waypoint supprimé');
-        } catch (e) {
-            console.error('Delete waypoint error', e);
-            messages.error('Erreur lors de la suppression du waypoint');
-        }
+    const deleteWaypoint = async (waypoint: GeocacheWaypoint) => {
+        if (!waypoint.id) { return; }
+        await onDeleteWaypoint(waypoint.id, waypoint.name || 'ce waypoint');
     };
 
     const handleCalculateAntipode = () => {
@@ -459,7 +448,7 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
                                         </button>
                                         <button
                                             className='theia-button secondary'
-                                            onClick={() => deleteWaypoint(w.id)}
+                                            onClick={() => deleteWaypoint(w)}
                                             disabled={editingId !== null}
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Supprimer'
@@ -665,6 +654,47 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
     }
 
+    /**
+     * Supprime un waypoint après confirmation
+     */
+    protected deleteWaypoint = async (waypointId: number, waypointName: string): Promise<void> => {
+        if (!this.geocacheId || !this.data) { return; }
+        
+        const dialog = new ConfirmDialog({
+            title: 'Supprimer le waypoint',
+            msg: `Voulez-vous vraiment supprimer le waypoint "${waypointName}" ?`,
+            ok: 'Supprimer',
+            cancel: 'Annuler'
+        });
+        
+        const confirmed = await dialog.open();
+        if (!confirmed) { return; }
+        
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/waypoints/${waypointId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            // ✅ Mettre à jour uniquement la liste des waypoints sans recharger toute la page
+            if (this.data.waypoints) {
+                this.data.waypoints = this.data.waypoints.filter(w => w.id !== waypointId);
+            }
+            
+            // ✅ Rafraîchir la carte avec les waypoints mis à jour
+            await this.refreshAssociatedMap();
+            
+            // ✅ Re-render le composant sans perdre la position de scroll
+            this.update();
+            
+            this.messages.info(`Waypoint "${waypointName}" supprimé`);
+        } catch (e) {
+            console.error('Delete waypoint error', e);
+            this.messages.error('Erreur lors de la suppression du waypoint');
+        }
+    };
+
     protected renderRow(label: string, value?: React.ReactNode): React.ReactNode {
         if (value === undefined || value === null || value === '') { return undefined; }
         return (
@@ -787,6 +817,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                 backendBaseUrl={this.backendBaseUrl}
                                 onUpdate={() => this.load()}
                                 messages={this.messages}
+                                onDeleteWaypoint={this.deleteWaypoint}
                             />
                         </div>
 

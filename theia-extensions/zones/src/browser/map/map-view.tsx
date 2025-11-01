@@ -74,11 +74,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         if (popupRef.current) {
             const overlay = new Overlay({
                 element: popupRef.current,
-                autoPan: {
-                    animation: {
-                        duration: 250,
-                    },
-                },
+                autoPan: false,  // ✅ Désactiver le recentrage automatique de la carte
                 positioning: 'bottom-center',
                 stopEvent: false,
                 offset: [0, -10]

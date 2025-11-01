@@ -111,14 +111,16 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
             setEditForm({ ...waypoint });
         } else {
             setEditingId('new');
+            // ✅ NE PAS pré-remplir avec les coordonnées de la géocache
+            // Les coordonnées décimales seront calculées depuis gc_coords
             setEditForm({
                 prefix: '',
                 lookup: '',
                 name: '',
                 type: '',
-                latitude: geocacheData?.latitude,
-                longitude: geocacheData?.longitude,
-                gc_coords: geocacheData?.coordinates_raw,
+                latitude: undefined,  // ✅ Pas de pré-remplissage
+                longitude: undefined, // ✅ Pas de pré-remplissage
+                gc_coords: '',        // ✅ Vide pour forcer la saisie
                 note: ''
             });
         }
@@ -134,22 +136,46 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
     const saveWaypoint = async () => {
         if (!geocacheId) { return; }
         try {
+            // ✅ N'envoyer QUE les champs du formulaire, PAS latitude/longitude
+            // Le backend calculera lat/lon depuis gc_coords
+            const dataToSave = {
+                prefix: editForm.prefix,
+                lookup: editForm.lookup,
+                name: editForm.name,
+                type: editForm.type,
+                gc_coords: editForm.gc_coords,
+                note: editForm.note
+            };
+            
+            console.log('[WaypointsEditor] 🔍 SAVE WAYPOINT');
+            console.log('[WaypointsEditor] Données à envoyer:', dataToSave);
+            console.log('[WaypointsEditor] gc_coords:', dataToSave.gc_coords);
+            
             const url = editingId === 'new'
                 ? `${backendBaseUrl}/api/geocaches/${geocacheId}/waypoints`
                 : `${backendBaseUrl}/api/geocaches/${geocacheId}/waypoints/${editingId}`;
             const method = editingId === 'new' ? 'POST' : 'PUT';
+            
+            console.log('[WaypointsEditor] URL:', url);
+            console.log('[WaypointsEditor] Method:', method);
+            
             const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify(editForm)
+                body: JSON.stringify(dataToSave)
             });
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            const result = await res.json();
+            console.log('[WaypointsEditor] ✅ Réponse du serveur:', result);
+            console.log('[WaypointsEditor] ✅ Coordonnées calculées par le backend:', result.latitude, result.longitude);
+            
             await onUpdate();
             cancelEdit();
             messages.info('Waypoint sauvegardé');
         } catch (e) {
-            console.error('Save waypoint error', e);
+            console.error('[WaypointsEditor] ❌ Save waypoint error', e);
             messages.error('Erreur lors de la sauvegarde du waypoint');
         }
     };

@@ -286,7 +286,9 @@ export class MapLayerManager {
             id: id,
             name: name,
             type: 'waypoint',
-            selected: false
+            selected: false,
+            isWaypoint: true,  // ✅ Marquer comme waypoint pour le menu contextuel
+            waypointId: typeof id === 'number' ? id : undefined  // ✅ ID numérique du waypoint (pas pour les waypoints "orig_")
         });
 
         this.waypointVectorSource.addFeature(feature);

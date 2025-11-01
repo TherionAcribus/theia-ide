@@ -15,6 +15,8 @@ export interface GeocacheFeatureProperties {
     terrain?: number;
     found?: boolean;
     selected?: boolean;
+    isWaypoint?: boolean;  // ✅ Indique si c'est un waypoint
+    waypointId?: number;   // ✅ ID du waypoint (si isWaypoint = true)
 }
 
 /**

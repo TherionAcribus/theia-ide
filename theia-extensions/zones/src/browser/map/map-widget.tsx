@@ -105,10 +105,11 @@ export class MapWidget extends ReactWidget {
     }
 
     protected render(): React.ReactNode {
-        // Déterminer si on doit afficher l'option "Ajouter un waypoint"
-        const onAddWaypoint = this.context.type === 'geocache' && this.context.id
-            ? this.handleAddWaypoint
-            : undefined;
+        // Déterminer si on doit afficher les options de waypoint
+        const isGeocacheMap = this.context.type === 'geocache' && this.context.id;
+        const onAddWaypoint = isGeocacheMap ? this.handleAddWaypoint : undefined;
+        const onDeleteWaypoint = isGeocacheMap ? this.handleDeleteWaypoint : undefined;
+        const onSetWaypointAsCorrectedCoords = isGeocacheMap ? this.handleSetWaypointAsCorrectedCoords : undefined;
 
         return (
             <MapView 
@@ -116,6 +117,8 @@ export class MapWidget extends ReactWidget {
                 geocaches={this.geocaches}
                 onMapReady={this.handleMapReady}
                 onAddWaypoint={onAddWaypoint}
+                onDeleteWaypoint={onDeleteWaypoint}
+                onSetWaypointAsCorrectedCoords={onSetWaypointAsCorrectedCoords}
             />
         );
     }
@@ -137,6 +140,46 @@ export class MapWidget extends ReactWidget {
             (detailsWidget as any).addWaypointWithCoordinates(gcCoords);
         } else {
             this.messageService.warn('Veuillez ouvrir les détails de la géocache pour ajouter un waypoint');
+        }
+    };
+
+    /**
+     * Gère la suppression d'un waypoint depuis le menu contextuel de la carte
+     */
+    private handleDeleteWaypoint = async (waypointId: number): Promise<void> => {
+        if (this.context.type !== 'geocache' || !this.context.id) {
+            return;
+        }
+
+        // Trouver le widget de détails de la géocache correspondant
+        const detailsWidgetId = 'geocache.details.widget';
+        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+
+        if (detailsWidget && 'deleteWaypointById' in detailsWidget) {
+            // Appeler la méthode publique du widget de détails
+            await (detailsWidget as any).deleteWaypointById(waypointId);
+        } else {
+            this.messageService.warn('Veuillez ouvrir les détails de la géocache pour supprimer le waypoint');
+        }
+    };
+
+    /**
+     * Gère la définition d'un waypoint comme coordonnées corrigées depuis le menu contextuel de la carte
+     */
+    private handleSetWaypointAsCorrectedCoords = async (waypointId: number): Promise<void> => {
+        if (this.context.type !== 'geocache' || !this.context.id) {
+            return;
+        }
+
+        // Trouver le widget de détails de la géocache correspondant
+        const detailsWidgetId = 'geocache.details.widget';
+        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+
+        if (detailsWidget && 'setWaypointAsCorrectedCoords' in detailsWidget) {
+            // Appeler la méthode publique du widget de détails
+            await (detailsWidget as any).setWaypointAsCorrectedCoords(waypointId);
+        } else {
+            this.messageService.warn('Veuillez ouvrir les détails de la géocache pour définir les coordonnées corrigées');
         }
     };
 

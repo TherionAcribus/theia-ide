@@ -904,6 +904,44 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
     }
 
+    /**
+     * Supprime un waypoint depuis un autre widget (ex: carte)
+     * Méthode publique appelable depuis d'autres widgets
+     */
+    public async deleteWaypointById(waypointId: number): Promise<void> {
+        if (!this.data?.waypoints) {
+            this.messages.error('Aucune donnée de géocache chargée');
+            return;
+        }
+
+        const waypoint = this.data.waypoints.find(w => w.id === waypointId);
+        if (!waypoint) {
+            this.messages.error('Waypoint introuvable');
+            return;
+        }
+
+        await this.deleteWaypoint(waypointId, waypoint.name || 'ce waypoint');
+    }
+
+    /**
+     * Définit un waypoint comme coordonnées corrigées depuis un autre widget (ex: carte)
+     * Méthode publique appelable depuis d'autres widgets
+     */
+    public async setWaypointAsCorrectedCoords(waypointId: number): Promise<void> {
+        if (!this.data?.waypoints) {
+            this.messages.error('Aucune donnée de géocache chargée');
+            return;
+        }
+
+        const waypoint = this.data.waypoints.find(w => w.id === waypointId);
+        if (!waypoint) {
+            this.messages.error('Waypoint introuvable');
+            return;
+        }
+
+        await this.setAsCorrectedCoords(waypointId, waypoint.name || 'ce waypoint');
+    }
+
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
         if (context.name) {

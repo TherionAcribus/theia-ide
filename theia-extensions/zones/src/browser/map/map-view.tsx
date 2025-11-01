@@ -18,12 +18,14 @@ export interface MapViewProps {
     geocaches: MapGeocache[];  // ✅ Données propres à cette carte
     onMapReady?: (map: Map) => void;
     onAddWaypoint?: (gcCoords: string) => void;  // ✅ Callback pour ajouter un waypoint
+    onDeleteWaypoint?: (waypointId: number) => void;  // ✅ Callback pour supprimer un waypoint
+    onSetWaypointAsCorrectedCoords?: (waypointId: number) => void;  // ✅ Callback pour définir comme coordonnées corrigées
 }
 
 /**
  * Composant React qui affiche la carte OpenLayers
  */
-export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint }) => {
+export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint, onDeleteWaypoint, onSetWaypointAsCorrectedCoords }) => {
     const mapRef = React.useRef<HTMLDivElement>(null);
     const popupRef = React.useRef<HTMLDivElement>(null);
     const mapInstanceRef = React.useRef<any>(null);
@@ -113,6 +115,54 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             const pixel = map.getEventPixel(event);
             const coordinate = map.getCoordinateFromPixel(pixel);
             
+            // Vérifier si on a cliqué sur une feature (géocache ou waypoint)
+            const feature = map.forEachFeatureAtPixel(pixel, (f) => f);
+            
+            if (feature) {
+                const props = feature.getProperties() as GeocacheFeatureProperties;
+                
+                // Si c'est un waypoint, afficher un menu contextuel spécifique
+                if (props.isWaypoint && props.waypointId !== undefined) {
+                    const items: ContextMenuItem[] = [
+                        {
+                            label: `📌 Waypoint: ${props.name || 'Sans nom'}`,
+                            disabled: true
+                        },
+                        { separator: true }
+                    ];
+                    
+                    // Option pour définir comme coordonnées corrigées
+                    if (onSetWaypointAsCorrectedCoords) {
+                        items.push({
+                            label: 'Définir comme coordonnées corrigées',
+                            icon: '📍',
+                            action: () => {
+                                onSetWaypointAsCorrectedCoords(props.waypointId!);
+                            }
+                        });
+                    }
+                    
+                    // Option pour supprimer le waypoint
+                    if (onDeleteWaypoint) {
+                        items.push({
+                            label: 'Supprimer le waypoint',
+                            icon: '🗑️',
+                            action: () => {
+                                onDeleteWaypoint(props.waypointId!);
+                            }
+                        });
+                    }
+                    
+                    setContextMenu({
+                        items,
+                        x: event.clientX,
+                        y: event.clientY
+                    });
+                    return;
+                }
+            }
+            
+            // Menu contextuel par défaut (coordonnées)
             if (coordinate) {
                 const [lon, lat] = mapCoordinateToLonLat(coordinate);
                 
@@ -332,7 +382,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     fontSize: '12px',
                     color: 'var(--theia-foreground)'
                 }}>
-                    Fond de cartestttt:
+                    Fond de carteszzzz:
                 </label>
                 <select 
                     value={currentProvider}

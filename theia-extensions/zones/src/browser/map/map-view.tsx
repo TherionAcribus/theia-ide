@@ -266,7 +266,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     fontSize: '12px',
                     color: 'var(--theia-foreground)'
                 }}>
-                    Fond de carte:
+                    Fond de cartessss:
                 </label>
                 <select 
                     value={currentProvider}

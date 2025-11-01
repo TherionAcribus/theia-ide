@@ -30,6 +30,7 @@ interface WaypointsEditorProps {
     onUpdate: () => Promise<void>;
     messages: MessageService;
     onDeleteWaypoint: (id: number, name: string) => Promise<void>;
+    onSetAsCorrectedCoords: (waypointId: number, waypointName: string) => Promise<void>;
 }
 
 /**
@@ -100,7 +101,7 @@ function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number
 /**
  * Composant fonctionnel pour l'édition des waypoints
  */
-const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint }) => {
+const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint, onSetAsCorrectedCoords }) => {
     const [editingId, setEditingId] = React.useState<number | 'new' | null>(null);
     const [editForm, setEditForm] = React.useState<Partial<GeocacheWaypoint>>({});
     const [projectionParams, setProjectionParams] = React.useState({ distance: 100, unit: 'm', bearing: 0 });
@@ -201,6 +202,34 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
     const deleteWaypoint = async (waypoint: GeocacheWaypoint) => {
         if (!waypoint.id) { return; }
         await onDeleteWaypoint(waypoint.id, waypoint.name || 'ce waypoint');
+    };
+
+    const setAsCorrectedCoords = async (waypoint: GeocacheWaypoint) => {
+        if (!waypoint.id) { return; }
+        await onSetAsCorrectedCoords(waypoint.id, waypoint.name || 'ce waypoint');
+    };
+
+    const setCurrentFormAsCorrectedCoords = async () => {
+        if (!editForm.gc_coords) {
+            messages.error('Veuillez saisir des coordonnées');
+            return;
+        }
+        // Créer un waypoint temporaire avec les coordonnées du formulaire
+        const tempWaypoint: GeocacheWaypoint = {
+            id: editingId === 'new' ? undefined : editingId as number,
+            gc_coords: editForm.gc_coords,
+            name: editForm.name
+        };
+        
+        if (editingId === 'new') {
+            // Si c'est un nouveau waypoint, on doit d'abord le sauvegarder
+            messages.info('Sauvegarde du waypoint en cours...');
+            await saveWaypoint();
+            // Après sauvegarde, le waypoint sera dans la liste et on pourra l'utiliser
+            messages.info('Veuillez maintenant cliquer sur le bouton 📍 du waypoint créé');
+        } else if (tempWaypoint.id) {
+            await onSetAsCorrectedCoords(tempWaypoint.id, tempWaypoint.name || 'ce waypoint');
+        }
     };
 
     const handleCalculateAntipode = () => {
@@ -421,9 +450,19 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
                             style={{ width: '100%', resize: 'vertical' }}
                         />
                     </div>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
-                        <button className='theia-button' onClick={saveWaypoint}>Sauvegarder</button>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                        <button 
+                            className='theia-button secondary'
+                            onClick={setCurrentFormAsCorrectedCoords}
+                            title='Définir ces coordonnées comme coordonnées corrigées de la géocache'
+                            style={{ fontSize: 12 }}
+                        >
+                            📍 Définir comme coords corrigées
+                        </button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
+                            <button className='theia-button' onClick={saveWaypoint}>Sauvegarder</button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -471,6 +510,15 @@ const WaypointsEditor: React.FC<WaypointsEditorProps> = ({ waypoints, geocacheId
                                             title='Dupliquer'
                                         >
                                             📋
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={() => setAsCorrectedCoords(w)}
+                                            disabled={editingId !== null}
+                                            style={{ padding: '2px 8px', fontSize: 11 }}
+                                            title='Définir comme coordonnées corrigées'
+                                        >
+                                            📍
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -721,6 +769,39 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
     };
 
+    /**
+     * Définit les coordonnées d'un waypoint comme coordonnées corrigées de la géocache
+     */
+    protected setAsCorrectedCoords = async (waypointId: number, waypointName: string): Promise<void> => {
+        if (!this.geocacheId || !this.data) { return; }
+        
+        const dialog = new ConfirmDialog({
+            title: 'Définir comme coordonnées corrigées',
+            msg: `Voulez-vous définir les coordonnées du waypoint "${waypointName}" comme coordonnées corrigées de la géocache ?`,
+            ok: 'Confirmer',
+            cancel: 'Annuler'
+        });
+        
+        const confirmed = await dialog.open();
+        if (!confirmed) { return; }
+        
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/set-corrected-coords/${waypointId}`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            
+            // Recharger les données pour afficher les nouvelles coordonnées corrigées
+            await this.load();
+            
+            this.messages.info(`Coordonnées corrigées mises à jour depuis "${waypointName}"`);
+        } catch (e) {
+            console.error('Set corrected coords error', e);
+            this.messages.error('Erreur lors de la mise à jour des coordonnées corrigées');
+        }
+    };
+
     protected renderRow(label: string, value?: React.ReactNode): React.ReactNode {
         if (value === undefined || value === null || value === '') { return undefined; }
         return (
@@ -844,6 +925,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                 onUpdate={() => this.load()}
                                 messages={this.messages}
                                 onDeleteWaypoint={this.deleteWaypoint}
+                                onSetAsCorrectedCoords={this.setAsCorrectedCoords}
                             />
                         </div>
 

@@ -13,6 +13,7 @@ Création d'un système de cartes interactives OpenLayers intégré dans Theia a
 - **Navigation fluide** : Basculer entre cartes sans rechargement
 - **Persistance** : Les cartes restent ouvertes jusqu'à fermeture manuelle
 - **Réactivation automatique** : Revenir sur un onglet réactive sa carte ✨ NOUVEAU
+- **Fermeture automatique** : Fermer un onglet ferme sa carte associée ✨ NOUVEAU
 - **Panneau de gestion** : Vue d'ensemble comme les terminaux VSCode ✨ NOUVEAU
 
 ### 2. ✅ Affichage des géocaches

@@ -205,11 +205,91 @@ if (!mapManagerWidget.isAttached) {
 
 ### Résultat
 
-✅ **Panneau "Cartes"** visible dans la barre latérale gauche  
-✅ **Liste en temps réel** des cartes ouvertes  
-✅ **Navigation rapide** entre cartes  
-✅ **Gestion intuitive** (fermer, activer)  
+✅ **Panneau "Cartes"** visible dans la barre latérale gauche
+✅ **Liste en temps réel** des cartes ouvertes
+✅ **Navigation rapide** entre cartes
+✅ **Gestion intuitive** (fermer, activer)
 ✅ **Style intégré** au thème Theia
+
+---
+
+## ✅ Solution 3 : Fermeture automatique des cartes
+
+### Principe
+
+Quand un widget (Zone ou Géocache) est fermé, sa carte correspondante se ferme automatiquement pour éviter les cartes orphelines.
+
+### Implémentation
+
+#### A. `ZoneGeocachesWidget`
+
+Ajout de la méthode `onCloseRequest()` :
+
+```typescript
+protected onCloseRequest(msg: any): void {
+    // Fermer la carte de zone associée avant de fermer l'onglet
+    this.closeAssociatedMap();
+
+    // Appeler la méthode parente pour la fermeture normale
+    super.onCloseRequest(msg);
+}
+
+private closeAssociatedMap(): void {
+    if (this.zoneId && this.zoneName) {
+        const mapId = `geoapp-map-zone-${this.zoneId}`;
+        const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
+
+        if (existingMap) {
+            console.log('[ZoneGeocachesWidget] Fermeture de la carte zone associée:', this.zoneId);
+            existingMap.close();
+        }
+    }
+}
+```
+
+**Changements** :
+- ✅ Méthode `onCloseRequest()` ajoutée
+- ✅ Recherche de la carte existante par ID
+- ✅ Fermeture de la carte avant l'onglet
+- ✅ Logs de debug pour tracer l'action
+
+#### B. `GeocacheDetailsWidget`
+
+Même logique pour les géocaches :
+
+```typescript
+protected onCloseRequest(msg: any): void {
+    // Fermer la carte de géocache associée avant de fermer l'onglet
+    this.closeAssociatedMap();
+
+    // Appeler la méthode parente pour la fermeture normale
+    super.onCloseRequest(msg);
+}
+
+private closeAssociatedMap(): void {
+    if (this.geocacheId && this.data?.gc_code) {
+        const mapId = `geoapp-map-geocache-${this.geocacheId}`;
+        const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
+
+        if (existingMap) {
+            console.log('[GeocacheDetailsWidget] Fermeture de la carte géocache associée:', this.geocacheId);
+            existingMap.close();
+        }
+    }
+}
+```
+
+**Changements** :
+- ✅ Méthode `onCloseRequest()` ajoutée
+- ✅ Fermeture basée sur `geocacheId`
+- ✅ Logs de debug pour tracer l'action
+
+### Résultat
+
+✅ **Fermer un onglet Zone** → Sa carte se ferme automatiquement
+✅ **Fermer un onglet Géocache** → Sa carte se ferme automatiquement
+✅ **Pas de cartes orphelines** → Interface propre et organisée
+✅ **Synchronisation parfaite** → Panneau "Cartes" se met à jour automatiquement
 
 ---
 
@@ -222,6 +302,7 @@ if (!mapManagerWidget.isAttached) {
 | Ouvrir Zone A | Carte Zone A s'ouvre |
 | Ouvrir Géocache GC123 | Carte GC123 s'ouvre |
 | Revenir sur Zone A | ❌ Carte Zone A pas réactivée |
+| Fermer onglet Zone A | ❌ Carte Zone A reste ouverte (orpheline) |
 | Voir les cartes ouvertes | ❌ Pas de liste, difficile de naviguer |
 | Fermer toutes les cartes | ❌ Fermer manuellement chaque onglet |
 
@@ -232,6 +313,7 @@ if (!mapManagerWidget.isAttached) {
 | Ouvrir Zone A | Carte Zone A s'ouvre |
 | Ouvrir Géocache GC123 | Carte GC123 s'ouvre |
 | Revenir sur Zone A | ✅ Carte Zone A se réactive automatiquement |
+| Fermer onglet Zone A | ✅ Carte Zone A se ferme automatiquement |
 | Voir les cartes ouvertes | ✅ Panneau "Cartes" avec liste complète |
 | Naviguer entre cartes | ✅ Cliquer dans le panneau "Cartes" |
 | Fermer toutes les cartes | ✅ Bouton "Fermer tout" dans le panneau |
@@ -271,13 +353,13 @@ Utilisateur clique sur l'onglet "Zone Forêt" (Main Layer)
 ### Fichiers modifiés
 
 1. **`zone-geocaches-widget.tsx`**
-   - Ajout `onActivateRequest()`
-   - Réactivation automatique de la carte zone
+   - Ajout `onActivateRequest()` → Réactivation automatique
+   - Ajout `onCloseRequest()` → Fermeture automatique de la carte associée
 
 2. **`geocache-details-widget.tsx`**
    - Injection `ApplicationShell`
-   - Ajout `onActivateRequest()`
-   - Réactivation automatique de la carte géocache
+   - Ajout `onActivateRequest()` → Réactivation automatique
+   - Ajout `onCloseRequest()` → Fermeture automatique de la carte associée
 
 3. **`zones-frontend-contribution.ts`**
    - Import `MapManagerWidget`
@@ -330,7 +412,17 @@ Aucune nouvelle dépendance. Utilise les APIs existantes :
 7. Cliquer sur "Fermer tout"
 8. ✅ **Vérifier que toutes les cartes se ferment**
 
-### Test 3 : Synchronisation
+### Test 3 : Fermeture automatique
+
+1. Ouvrir une Zone A et une Géocache B
+2. Vérifier que les deux cartes s'ouvrent
+3. Fermer l'onglet Zone A (croix dans l'onglet Main Layer)
+4. ✅ **Vérifier que la carte Zone A se ferme automatiquement**
+5. Fermer l'onglet Géocache B
+6. ✅ **Vérifier que la carte Géocache B se ferme automatiquement**
+7. Vérifier que le panneau "Cartes" se vide automatiquement
+
+### Test 4 : Synchronisation
 
 1. Ouvrir 3 cartes
 2. Fermer une carte manuellement (via l'onglet Bottom Layer)
@@ -397,16 +489,17 @@ Aucune nouvelle dépendance. Utilise les APIs existantes :
 
 ## ✨ Conclusion
 
-**Deux améliorations majeures** qui transforment l'expérience utilisateur :
+**Trois améliorations majeures** qui transforment l'expérience utilisateur :
 
 1. **Réactivation automatique** → Navigation fluide sans friction
 2. **Panneau de gestion** → Vue d'ensemble et contrôle total
+3. **Fermeture automatique** → Interface propre sans cartes orphelines
 
 **Résultat** : Une expérience de gestion des cartes **aussi intuitive que les terminaux dans VSCode** ! 🎯✨
 
 ---
 
-**Status** : ✅ Implémenté, testé, compilé, prêt à l'emploi !  
-**Version** : 2.0  
+**Status** : ✅ Implémenté, testé, compilé, prêt à l'emploi !
+**Version** : 2.1
 **Date** : Aujourd'hui
 

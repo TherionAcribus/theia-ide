@@ -95,6 +95,33 @@ export class GeocacheDetailsWidget extends ReactWidget {
     }
 
     /**
+     * Appelé quand le widget va être fermé
+     * Ferme automatiquement la carte correspondante
+     */
+    protected onCloseRequest(msg: any): void {
+        // Fermer la carte de géocache associée avant de fermer l'onglet
+        this.closeAssociatedMap();
+
+        // Appeler la méthode parente pour la fermeture normale
+        super.onCloseRequest(msg);
+    }
+
+    /**
+     * Ferme la carte associée à cette géocache
+     */
+    private closeAssociatedMap(): void {
+        if (this.geocacheId && this.data?.gc_code) {
+            const mapId = `geoapp-map-geocache-${this.geocacheId}`;
+            const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
+
+            if (existingMap) {
+                console.log('[GeocacheDetailsWidget] Fermeture de la carte géocache associée:', this.geocacheId);
+                existingMap.close();
+            }
+        }
+    }
+
+    /**
      * Réactive la carte correspondante à cette géocache
      */
     private reactivateMap(): void {

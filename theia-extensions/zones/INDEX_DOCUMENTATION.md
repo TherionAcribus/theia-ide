@@ -115,6 +115,7 @@ Cette documentation complète décrit le système de cartes interactives OpenLay
 - **Sujets** :
   - ✅ Réactivation automatique des cartes
   - 🗂️ Panneau de gestion des cartes (style VSCode)
+  - 🔄 Fermeture automatique des cartes
   - 🎨 UX améliorée
   - 📊 Comparaison avant/après
 

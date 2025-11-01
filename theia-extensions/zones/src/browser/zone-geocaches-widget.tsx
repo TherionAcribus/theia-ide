@@ -106,6 +106,33 @@ export class ZoneGeocachesWidget extends ReactWidget {
     }
 
     /**
+     * Appelé quand le widget va être fermé
+     * Ferme automatiquement la carte correspondante
+     */
+    protected onCloseRequest(msg: any): void {
+        // Fermer la carte de zone associée avant de fermer l'onglet
+        this.closeAssociatedMap();
+
+        // Appeler la méthode parente pour la fermeture normale
+        super.onCloseRequest(msg);
+    }
+
+    /**
+     * Ferme la carte associée à cette zone
+     */
+    private closeAssociatedMap(): void {
+        if (this.zoneId && this.zoneName) {
+            const mapId = `geoapp-map-zone-${this.zoneId}`;
+            const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
+
+            if (existingMap) {
+                console.log('[ZoneGeocachesWidget] Fermeture de la carte zone associée:', this.zoneId);
+                existingMap.close();
+            }
+        }
+    }
+
+    /**
      * Réactive la carte correspondante à cette zone
      */
     private reactivateMap(): void {

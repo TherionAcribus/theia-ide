@@ -11,6 +11,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { PluginsService } from '../common/plugin-protocol';
 import { Plugin, PluginFilters } from '../common/plugin-protocol';
+import { PluginExecutorContribution } from './plugins-contribution';
 
 /**
  * Widget pour naviguer dans les plugins disponibles.
@@ -26,6 +27,9 @@ export class PluginsBrowserWidget extends ReactWidget {
     
     @inject(MessageService)
     protected readonly messageService!: MessageService;
+    
+    @inject(PluginExecutorContribution)
+    protected readonly pluginExecutorContribution!: PluginExecutorContribution;
     
     // État du widget
     protected plugins: Plugin[] = [];
@@ -195,12 +199,11 @@ export class PluginsBrowserWidget extends ReactWidget {
     };
     
     /**
-     * Gère le clic sur un plugin.
+     * Gère le clic sur un plugin - Ouvre le Plugin Executor avec le plugin pré-sélectionné.
      */
     protected handlePluginClick = (plugin: Plugin): void => {
-        // TODO: Ouvrir le détail du plugin ou le plugin executor
-        console.log('Plugin clicked:', plugin.name);
-        this.messageService.info(`Plugin: ${plugin.name} v${plugin.version}`);
+        console.log('Opening plugin executor for:', plugin.name);
+        this.pluginExecutorContribution.openWithPlugin(plugin.name);
     };
     
     /**
@@ -278,7 +281,7 @@ export class PluginsBrowserWidget extends ReactWidget {
                 </div>
                 
                 <div className="filter-group">
-                    <label>Catégorie:</label>
+                    <label>Catégorieeeeee:</label>
                     <select
                         className="theia-select"
                         value={this.categoryFilter}

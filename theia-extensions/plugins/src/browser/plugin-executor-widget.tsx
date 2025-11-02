@@ -63,6 +63,7 @@ export class PluginExecutorWidget extends ReactWidget {
     protected readonly messageService!: MessageService;
 
     private geocacheContext: GeocacheContext | null = null;
+    private selectedPluginName: string | null = null;
 
     @postConstruct()
     protected init(): void {
@@ -79,18 +80,33 @@ export class PluginExecutorWidget extends ReactWidget {
      */
     public setGeocacheContext(context: GeocacheContext): void {
         this.geocacheContext = context;
+        this.selectedPluginName = null; // Reset le plugin sélectionné
+        this.update();
+    }
+
+    /**
+     * Ouvre le widget avec un plugin pré-sélectionné (sans contexte géocache)
+     */
+    public setSelectedPlugin(pluginName: string): void {
+        this.selectedPluginName = pluginName;
+        // Créer un contexte vide
+        this.geocacheContext = {
+            gcCode: '',
+            name: 'Aucune géocache'
+        };
         this.update();
     }
 
     protected render(): React.ReactNode {
-        if (!this.geocacheContext) {
-            return <div className='theia-widget-noInfo'>
-                <div className='noInfo'>Aucune géocache sélectionnée</div>
-            </div>;
-        }
+        // Contexte par défaut si pas de géocache
+        const context = this.geocacheContext || {
+            gcCode: '',
+            name: 'Aucune géocache'
+        };
 
         return <PluginExecutorComponent
-            context={this.geocacheContext}
+            context={context}
+            initialPlugin={this.selectedPluginName}
             pluginsService={this.pluginsService}
             tasksService={this.tasksService}
             messageService={this.messageService}
@@ -103,10 +119,11 @@ export class PluginExecutorWidget extends ReactWidget {
  */
 const PluginExecutorComponent: React.FC<{
     context: GeocacheContext;
+    initialPlugin?: string | null;
     pluginsService: PluginsService;
     tasksService: TasksService;
     messageService: MessageService;
-}> = ({ context, pluginsService, tasksService, messageService }) => {
+}> = ({ context, initialPlugin, pluginsService, tasksService, messageService }) => {
     const [state, setState] = React.useState<ExecutorState>({
         plugins: [],
         selectedPlugin: null,
@@ -134,6 +151,14 @@ const PluginExecutorComponent: React.FC<{
             setState(prev => ({
                 ...prev,
                 formInputs: { ...prev.formInputs, text: textContent }
+            }));
+        }
+        
+        // Pré-sélectionner le plugin si fourni
+        if (initialPlugin) {
+            setState(prev => ({
+                ...prev,
+                selectedPlugin: initialPlugin
             }));
         }
     }, []);
@@ -268,15 +293,21 @@ const PluginExecutorComponent: React.FC<{
             {/* En-tête avec contexte géocache */}
             <div className='plugin-executor-header'>
                 <h3>🎯 Exécuter un plugin</h3>
-                <div className='geocache-context'>
-                    <strong>{context.gcCode}</strong> - {context.name}
-                    {context.coordinates && (
-                        <div className='geocache-coords'>
-                            📍 {context.coordinates.coordinatesRaw || 
-                                `${context.coordinates.latitude}, ${context.coordinates.longitude}`}
-                        </div>
-                    )}
-                </div>
+                {context.gcCode ? (
+                    <div className='geocache-context'>
+                        <strong>{context.gcCode}</strong> - {context.name}
+                        {context.coordinates && (
+                            <div className='geocache-coords'>
+                                📍 {context.coordinates.coordinatesRaw || 
+                                    `${context.coordinates.latitude}, ${context.coordinates.longitude}`}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className='geocache-context' style={{ opacity: 0.7, fontSize: '14px' }}>
+                        <em>Pas de géocache associée - Exécution libre</em>
+                    </div>
+                )}
             </div>
 
             {/* Zone de texte pour la description/énigme */}

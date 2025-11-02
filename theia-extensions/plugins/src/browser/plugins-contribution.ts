@@ -123,6 +123,14 @@ export class PluginExecutorContribution extends AbstractViewContribution<PluginE
         const widget = await this.openView({ activate: true });
         widget.setGeocacheContext(context);
     }
+    
+    /**
+     * Ouvre l'executor avec un plugin pré-sélectionné.
+     */
+    async openWithPlugin(pluginName: string): Promise<void> {
+        const widget = await this.openView({ activate: true });
+        widget.setSelectedPlugin(pluginName);
+    }
 }
 
 /**

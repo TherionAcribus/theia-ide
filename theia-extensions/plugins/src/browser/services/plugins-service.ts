@@ -1,0 +1,155 @@
+/**
+ * Service de communication avec l'API backend pour les plugins.
+ * 
+ * Ce service encapsule toutes les requêtes HTTP vers le backend Flask
+ * pour la gestion des plugins.
+ */
+
+import { injectable } from '@theia/core/shared/inversify';
+import axios, { AxiosInstance } from 'axios';
+import {
+    Plugin,
+    PluginFilters,
+    PluginInputs,
+    PluginResult,
+    PluginsStatus,
+    PluginsService as IPluginsService
+} from '../../common/plugin-protocol';
+
+@injectable()
+export class PluginsServiceImpl implements IPluginsService {
+    
+    private readonly client: AxiosInstance;
+    private readonly baseUrl: string;
+    
+    constructor() {
+        // URL du backend Flask
+        // TODO: Rendre configurable via les préférences Theia
+        this.baseUrl = 'http://localhost:8000';
+        
+        this.client = axios.create({
+            baseURL: this.baseUrl,
+            timeout: 30000, // 30 secondes
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+    }
+    
+    /**
+     * Récupère la liste des plugins.
+     */
+    async listPlugins(filters?: PluginFilters): Promise<Plugin[]> {
+        try {
+            const params: Record<string, string> = {};
+            
+            if (filters?.source) {
+                params.source = filters.source;
+            }
+            if (filters?.category) {
+                params.category = filters.category;
+            }
+            if (filters?.enabled !== undefined) {
+                params.enabled = filters.enabled.toString();
+            }
+            
+            const response = await this.client.get('/api/plugins', { params });
+            
+            // L'API retourne { plugins: Plugin[], total: number, filters: {} }
+            return response.data.plugins || [];
+            
+        } catch (error) {
+            console.error('Erreur lors de la récupération des plugins:', error);
+            throw new Error(`Impossible de récupérer les plugins: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Récupère les détails d'un plugin.
+     */
+    async getPlugin(name: string): Promise<Plugin> {
+        try {
+            const response = await this.client.get(`/api/plugins/${name}`);
+            return response.data;
+            
+        } catch (error) {
+            console.error(`Erreur lors de la récupération du plugin ${name}:`, error);
+            throw new Error(`Plugin ${name} introuvable: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Exécute un plugin de manière synchrone.
+     */
+    async executePlugin(name: string, inputs: PluginInputs): Promise<PluginResult> {
+        try {
+            const response = await this.client.post(`/api/plugins/${name}/execute`, {
+                inputs
+            });
+            
+            return response.data;
+            
+        } catch (error) {
+            console.error(`Erreur lors de l'exécution du plugin ${name}:`, error);
+            throw new Error(`Échec de l'exécution du plugin ${name}: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Récupère le statut de tous les plugins.
+     */
+    async getPluginsStatus(): Promise<PluginsStatus> {
+        try {
+            const response = await this.client.get('/api/plugins/status');
+            return response.data;
+            
+        } catch (error) {
+            console.error('Erreur lors de la récupération du statut des plugins:', error);
+            throw new Error(`Impossible de récupérer le statut: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Demande au backend de redécouvrir les plugins.
+     */
+    async discoverPlugins(): Promise<void> {
+        try {
+            await this.client.post('/api/plugins/discover');
+            
+        } catch (error) {
+            console.error('Erreur lors de la découverte des plugins:', error);
+            throw new Error(`Échec de la découverte: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Recharge un plugin spécifique.
+     */
+    async reloadPlugin(name: string): Promise<void> {
+        try {
+            await this.client.post(`/api/plugins/${name}/reload`);
+            
+        } catch (error) {
+            console.error(`Erreur lors du rechargement du plugin ${name}:`, error);
+            throw new Error(`Échec du rechargement: ${this.getErrorMessage(error)}`);
+        }
+    }
+    
+    /**
+     * Extrait le message d'erreur depuis une erreur Axios.
+     */
+    private getErrorMessage(error: any): string {
+        if (axios.isAxiosError(error)) {
+            if (error.response) {
+                // Erreur retournée par le serveur
+                const data = error.response.data;
+                return data?.message || data?.error || error.message;
+            } else if (error.request) {
+                // Pas de réponse du serveur
+                return 'Le backend ne répond pas. Vérifiez que le serveur Flask est démarré.';
+            }
+        }
+        
+        return error.message || 'Erreur inconnue';
+    }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@mysterai/theia-plugins",
+  "version": "1.0.0",
+  "description": "MysterAI Plugins Extension for Theia IDE",
+  "keywords": [
+    "theia-extension",
+    "plugins",
+    "geocaching",
+    "mysterai"
+  ],
+  "license": "MIT",
+  "main": "lib/browser/plugins-frontend-module.js",
+  "typings": "lib/browser/plugins-frontend-module.d.ts",
+  "dependencies": {
+    "axios": "^1.6.0"
+  },
+  "scripts": {
+    "prepare": "yarn run clean && yarn run build",
+    "clean": "rimraf lib",
+    "build": "tsc && yarn run copy:assets",
+    "copy:assets": "node -e \"require('fs-extra').copySync('src/browser/style', 'lib/browser/style')\"",
+    "watch": "tsc -w"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "typescript": "^5.0.0",
+    "fs-extra": "^11.0.0",
+    "@types/react": "^18.2.0",
+    "@theia/core": "1.65.1",
+    "@theia/filesystem": "1.65.1",
+    "@theia/workspace": "1.65.1",
+    "react": "^16.8.0"
+  },
+  "peerDependencies": {
+    "@theia/core": "1.65.1",
+    "@theia/filesystem": "1.65.1",
+    "@theia/workspace": "1.65.1",
+    "react": "^16.8.0"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/plugins-frontend-module"
+    }
+  ]
+}

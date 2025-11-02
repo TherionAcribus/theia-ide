@@ -12,10 +12,7 @@ const CopyWebpackPlugin = require('copy-webpack-plugin');
  * Expose bundled modules on window.theia.moduleName namespace, e.g.
  * window['theia']['@theia/core/lib/common/uri'].
  * Such syntax can be used by external code, for instance, for testing.
-configs[0].module.rules.push({
-    test: /\.js$/,
-    loader: require.resolve('@theia/application-manager/lib/expose-loader')
-}); */
+ */
 
 // serve favico from root
 // @ts-ignore
@@ -30,6 +27,11 @@ configs[0].plugins.push(
         ]
     })
 );
+
+// Workaround pour keytar: le marquer comme external pour éviter les erreurs de compilation
+// keytar sert au stockage sécurisé des mots de passe, non critique pour le dev
+nodeConfig.config.externals = nodeConfig.config.externals || {};
+nodeConfig.config.externals['keytar'] = 'commonjs keytar';
 
 module.exports = [
     ...configs,

@@ -116,7 +116,8 @@
     "@theia/workspace": "1.65.1",
     "fs-extra": "^9.0.1",
     "theia-ide-product-ext": "1.65.100",
-    "theia-ide-zones-ext": "file:../../theia-extensions/zones"
+    "theia-ide-zones-ext": "file:../../theia-extensions/zones",
+    "@mysterai/theia-plugins": "1.0.0"
   },
   "devDependencies": {
     "@theia/cli": "1.65.1",

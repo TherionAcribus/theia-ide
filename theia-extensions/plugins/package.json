@@ -28,14 +28,12 @@
     "@types/react": "^18.2.0",
     "@theia/core": "1.65.1",
     "@theia/filesystem": "1.65.1",
-    "@theia/workspace": "1.65.1",
-    "react": "^16.8.0"
+    "@theia/workspace": "1.65.1"
   },
   "peerDependencies": {
     "@theia/core": "1.65.1",
     "@theia/filesystem": "1.65.1",
-    "@theia/workspace": "1.65.1",
-    "react": "^16.8.0"
+    "@theia/workspace": "1.65.1"
   },
   "theiaExtensions": [
     {

@@ -42,6 +42,15 @@ export interface Plugin {
     /** Catégories du plugin */
     categories?: string[];
     
+    /** Catégorie principale (première catégorie de la liste) */
+    category?: string;
+    
+    /** Schéma JSON d'entrée du plugin */
+    input_schema?: PluginSchema;
+    
+    /** Schéma JSON de sortie du plugin */
+    output_schema?: PluginSchema;
+    
     /** Types d'entrée supportés */
     input_types?: Record<string, PluginInputType>;
     
@@ -65,6 +74,34 @@ export interface Plugin {
     
     /** Date de dernière mise à jour */
     updated_at?: string;
+}
+
+/**
+ * Schéma JSON pour les entrées/sorties d'un plugin.
+ */
+export interface PluginSchema {
+    /** Type du schéma */
+    type?: string;
+    
+    /** Propriétés du schéma */
+    properties?: Record<string, any>;
+    
+    /** Champs obligatoires */
+    required?: string[];
+    
+    /** Autres propriétés JSON Schema */
+    [key: string]: any;
+}
+
+/**
+ * Détails complets d'un plugin (inclut les schémas).
+ */
+export interface PluginDetails extends Plugin {
+    /** Schéma d'entrée (obligatoire pour les détails) */
+    input_schema: PluginSchema;
+    
+    /** Schéma de sortie */
+    output_schema?: PluginSchema;
 }
 
 /**
@@ -117,8 +154,38 @@ export interface PluginResult {
     /** Message d'erreur (si status = error) */
     error?: string;
     
+    /** Résumé du résultat */
+    summary?: string;
+    
     /** Résultats de l'exécution */
     results?: PluginResultItem[];
+    
+    /** Sortie texte principale (compatibilité) */
+    text_output?: string;
+    
+    /** Coordonnées principales (compatibilité) */
+    coordinates?: {
+        latitude: number;
+        longitude: number;
+    };
+    
+    /** Temps d'exécution en ms (compatibilité) */
+    execution_time_ms?: number;
+    
+    /** Informations sur le plugin exécuté */
+    plugin_info?: {
+        /** Nom du plugin */
+        name: string;
+        
+        /** Version du plugin */
+        version: string;
+        
+        /** Temps d'exécution en ms */
+        execution_time_ms?: number;
+        
+        /** Autres métadonnées */
+        [key: string]: any;
+    };
     
     /** Métadonnées de l'exécution */
     metadata?: {
@@ -204,7 +271,7 @@ export interface PluginsService {
     /**
      * Récupère les détails d'un plugin.
      */
-    getPlugin(name: string): Promise<Plugin>;
+    getPlugin(name: string): Promise<PluginDetails>;
     
     /**
      * Exécute un plugin de manière synchrone.

@@ -9,6 +9,7 @@ import { injectable } from '@theia/core/shared/inversify';
 import axios, { AxiosInstance } from 'axios';
 import {
     Plugin,
+    PluginDetails,
     PluginFilters,
     PluginInputs,
     PluginResult,
@@ -56,7 +57,15 @@ export class PluginsServiceImpl implements IPluginsService {
             const response = await this.client.get('/api/plugins', { params });
             
             // L'API retourne { plugins: Plugin[], total: number, filters: {} }
-            return response.data.plugins || [];
+            const plugins: Plugin[] = response.data.plugins || [];
+            
+            // Ajouter la catégorie principale si elle existe
+            return plugins.map(plugin => ({
+                ...plugin,
+                category: plugin.categories && plugin.categories.length > 0 
+                    ? plugin.categories[0] 
+                    : undefined
+            }));
             
         } catch (error) {
             console.error('Erreur lors de la récupération des plugins:', error);
@@ -67,10 +76,17 @@ export class PluginsServiceImpl implements IPluginsService {
     /**
      * Récupère les détails d'un plugin.
      */
-    async getPlugin(name: string): Promise<Plugin> {
+    async getPlugin(name: string): Promise<PluginDetails> {
         try {
             const response = await this.client.get(`/api/plugins/${name}`);
-            return response.data;
+            const plugin = response.data;
+            
+            // Ajouter la catégorie principale si elle existe
+            if (plugin.categories && plugin.categories.length > 0 && !plugin.category) {
+                plugin.category = plugin.categories[0];
+            }
+            
+            return plugin;
             
         } catch (error) {
             console.error(`Erreur lors de la récupération du plugin ${name}:`, error);

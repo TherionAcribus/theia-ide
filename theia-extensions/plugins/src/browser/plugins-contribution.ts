@@ -9,6 +9,7 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry } from '@theia/core/lib/common';
 import { AbstractViewContribution, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { PluginsBrowserWidget } from './plugins-browser-widget';
+import { PluginExecutorWidget, GeocacheContext } from './plugin-executor-widget';
 import { CommonMenus } from '@theia/core/lib/browser';
 
 /**
@@ -28,6 +29,11 @@ export namespace PluginsCommands {
     export const DISCOVER_PLUGINS = {
         id: 'plugins.discover',
         label: 'Plugins: Redécouvrir les plugins'
+    };
+    
+    export const OPEN_PLUGIN_EXECUTOR = {
+        id: 'plugins.openExecutor',
+        label: 'Plugins: Exécuter un plugin'
     };
 }
 
@@ -90,6 +96,32 @@ export class PluginsBrowserContribution extends AbstractViewContribution<Plugins
             label: 'Plugins Browser',
             order: '5'
         });
+    }
+}
+
+/**
+ * Contribution pour le widget Plugin Executor.
+ */
+@injectable()
+export class PluginExecutorContribution extends AbstractViewContribution<PluginExecutorWidget> {
+    
+    constructor() {
+        super({
+            widgetId: PluginExecutorWidget.ID,
+            widgetName: PluginExecutorWidget.LABEL,
+            defaultWidgetOptions: {
+                area: 'main'
+            },
+            toggleCommandId: PluginsCommands.OPEN_PLUGIN_EXECUTOR.id
+        });
+    }
+    
+    /**
+     * Ouvre l'executor avec un contexte de géocache.
+     */
+    async openWithContext(context: GeocacheContext): Promise<void> {
+        const widget = await this.openView({ activate: true });
+        widget.setGeocacheContext(context);
     }
 }
 

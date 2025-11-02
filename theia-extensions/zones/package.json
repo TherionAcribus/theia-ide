@@ -20,7 +20,8 @@
     "@theia/workspace": "1.65.1",
     "inversify": "^6.0.1",
     "@tanstack/react-table": "^8.10.7",
-    "ol": "^9.0.0"
+    "ol": "^9.0.0",
+    "@mysterai/theia-plugins": "1.0.0"
   },
   "peerDependencies": {
     "react": "^16.8.0"

@@ -5,7 +5,7 @@
  * permet de voir les détails et de rafraîchir la liste.
  */
 
-import * as React from 'react';
+import * as React from '@theia/core/shared/react';
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';

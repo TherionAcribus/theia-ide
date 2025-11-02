@@ -4,6 +4,8 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
+import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
+import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
 
 type GeocacheAttribute = { name: string; is_negative?: boolean; base_filename?: string };
 type GeocacheImage = { url: string };
@@ -879,7 +881,8 @@ export class GeocacheDetailsWidget extends ReactWidget {
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
-        @inject(ApplicationShell) protected readonly shell: ApplicationShell
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
+        @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
@@ -942,6 +945,34 @@ export class GeocacheDetailsWidget extends ReactWidget {
 
         await this.setAsCorrectedCoords(waypointId, waypoint.name || 'ce waypoint');
     }
+
+    /**
+     * Ouvre le Plugin Executor avec le contexte de la géocache actuelle
+     */
+    protected analyzeWithPlugins = (): void => {
+        if (!this.data) {
+            this.messages.warn('Aucune géocache chargée');
+            return;
+        }
+
+        // Créer le contexte de la géocache pour le plugin executor
+        const context: GeocacheContext = {
+            gcCode: this.data.gc_code || `GC${this.data.id}`,
+            name: this.data.name,
+            coordinates: this.data.latitude && this.data.longitude ? {
+                latitude: this.data.latitude,
+                longitude: this.data.longitude,
+                coordinatesRaw: this.data.coordinates_raw
+            } : undefined,
+            description: this.data.description_html,
+            hint: this.data.hints,
+            difficulty: this.data.difficulty,
+            terrain: this.data.terrain
+        };
+
+        // Ouvrir le Plugin Executor avec ce contexte
+        this.pluginExecutorContribution.openWithContext(context);
+    };
 
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
@@ -1270,7 +1301,17 @@ export class GeocacheDetailsWidget extends ReactWidget {
                     <div style={{ display: 'grid', gap: 12 }}>
                         {/* En-tête */}
                         <div style={{ marginBottom: 8 }}>
-                            <h3 style={{ margin: '0 0 8px 0' }}>{d.name}</h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                <h3 style={{ margin: 0 }}>{d.name}</h3>
+                                <button
+                                    className='theia-button secondary'
+                                    onClick={this.analyzeWithPlugins}
+                                    style={{ fontSize: 12, padding: '4px 12px' }}
+                                    title='Analyser cette géocache avec les plugins'
+                                >
+                                    🔌 Analyser avec plugins
+                                </button>
+                            </div>
                             <div style={{ display: 'flex', gap: 16, opacity: 0.7, fontSize: 14 }}>
                                 <span>{d.gc_code}</span>
                                 <span>•</span>

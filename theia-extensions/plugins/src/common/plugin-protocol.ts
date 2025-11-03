@@ -102,6 +102,12 @@ export interface PluginDetails extends Plugin {
     
     /** Schéma de sortie */
     output_schema?: PluginSchema;
+    
+    /** Métadonnées complètes du plugin (contient input_types, output_types, etc.) */
+    metadata?: Record<string, any>;
+    
+    /** Types de sortie */
+    output_types?: Record<string, any>;
 }
 
 /**

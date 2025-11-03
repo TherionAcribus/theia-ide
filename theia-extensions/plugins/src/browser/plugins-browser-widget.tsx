@@ -281,7 +281,7 @@ export class PluginsBrowserWidget extends ReactWidget {
                 </div>
                 
                 <div className="filter-group">
-                    <label>Catégorieeeeee:</label>
+                    <label>Catégorie4:</label>
                     <select
                         className="theia-select"
                         value={this.categoryFilter}

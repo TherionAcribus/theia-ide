@@ -1,12 +1,20 @@
 /**
- * Widget pour exécuter des plugins sur une géocache spécifique.
+ * Widget pour exécuter des plugins.
  * 
- * Fonctionnalités :
- * - Sélection du plugin à exécuter
- * - Génération dynamique du formulaire d'entrée basé sur le schéma du plugin
- * - Pré-remplissage avec les données de la géocache
- * - Exécution synchrone ou asynchrone
- * - Affichage des résultats
+ * Deux modes d'utilisation :
+ * 
+ * MODE PLUGIN (depuis Panel Plugins) :
+ * - Plugin pré-sélectionné, non modifiable
+ * - Options Encoder/Décoder disponibles
+ * - Association géocache optionnelle
+ * - Focus sur l'exécution d'UN plugin spécifique
+ * 
+ * MODE GEOCACHE (depuis Geocache Details) :
+ * - Géocache associée, non modifiable
+ * - Sélecteur de plugin visible
+ * - Décoder uniquement (pas d'option encoder)
+ * - Peut enchaîner les plugins
+ * - Focus sur l'analyse de la géocache
  */
 
 import * as React from '@theia/core/shared/react';
@@ -15,6 +23,11 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { PluginsService, Plugin, PluginDetails, PluginResult } from '../common/plugin-protocol';
 import { TasksService, Task } from '../common/task-protocol';
+
+/**
+ * Mode d'exécution du Plugin Executor
+ */
+export type PluginExecutorMode = 'plugin' | 'geocache';
 
 /**
  * Contexte de géocache passé au widget
@@ -34,6 +47,21 @@ export interface GeocacheContext {
 }
 
 /**
+ * Configuration initiale du widget
+ */
+export interface PluginExecutorConfig {
+    mode: PluginExecutorMode;
+    
+    // Mode PLUGIN
+    pluginName?: string;           // Plugin pré-sélectionné
+    allowModeSelection?: boolean;  // Permettre encode/decode
+    
+    // Mode GEOCACHE
+    geocacheContext?: GeocacheContext;  // Contexte géocache
+    allowPluginChaining?: boolean;      // Permettre l'enchaînement
+}
+
+/**
  * État du composant d'exécution
  */
 interface ExecutorState {
@@ -46,6 +74,14 @@ interface ExecutorState {
     error: string | null;
     executionMode: 'sync' | 'async';
     task: Task | null;
+    
+    // État lié au mode
+    mode: PluginExecutorMode;
+    canSelectPlugin: boolean;      // Peut changer de plugin
+    canChangeMode: boolean;        // Peut choisir encode/decode
+    
+    // Historique pour l'enchaînement (mode geocache)
+    resultsHistory: PluginResult[];
 }
 
 @injectable()
@@ -62,8 +98,7 @@ export class PluginExecutorWidget extends ReactWidget {
     @inject(MessageService)
     protected readonly messageService!: MessageService;
 
-    private geocacheContext: GeocacheContext | null = null;
-    private selectedPluginName: string | null = null;
+    private config: PluginExecutorConfig | null = null;
 
     @postConstruct()
     protected init(): void {
@@ -76,37 +111,51 @@ export class PluginExecutorWidget extends ReactWidget {
     }
 
     /**
-     * Définit le contexte de la géocache pour l'exécution
+     * Initialise le widget en MODE PLUGIN
+     * Utilisé quand l'utilisateur clique sur un plugin dans le panel
      */
-    public setGeocacheContext(context: GeocacheContext): void {
-        this.geocacheContext = context;
-        this.selectedPluginName = null; // Reset le plugin sélectionné
+    public initializePluginMode(pluginName: string): void {
+        this.config = {
+            mode: 'plugin',
+            pluginName,
+            allowModeSelection: true  // Permet encode/decode
+        };
+        this.title.label = `Plugin: ${pluginName}`;
+        this.title.iconClass = 'fa fa-puzzle-piece';
+        console.log(`[Plugin Executor] Initialized in PLUGIN mode:`, pluginName);
         this.update();
     }
 
     /**
-     * Ouvre le widget avec un plugin pré-sélectionné (sans contexte géocache)
+     * Initialise le widget en MODE GEOCACHE
+     * Utilisé quand l'utilisateur clique "Analyser" depuis une géocache
      */
-    public setSelectedPlugin(pluginName: string): void {
-        this.selectedPluginName = pluginName;
-        // Créer un contexte vide
-        this.geocacheContext = {
-            gcCode: '',
-            name: 'Aucune géocache'
+    public initializeGeocacheMode(context: GeocacheContext): void {
+        this.config = {
+            mode: 'geocache',
+            geocacheContext: context,
+            allowPluginChaining: true  // Permet d'enchaîner les plugins
         };
+        this.title.label = `Analyse: ${context.gcCode}`;
+        this.title.iconClass = 'fa fa-search';
+        console.log(`[Plugin Executor] Initialized in GEOCACHE mode:`, context.gcCode);
         this.update();
     }
 
     protected render(): React.ReactNode {
-        // Contexte par défaut si pas de géocache
-        const context = this.geocacheContext || {
-            gcCode: '',
-            name: 'Aucune géocache'
-        };
+        if (!this.config) {
+            return (
+                <div className='plugin-executor-container' style={{ padding: '20px', textAlign: 'center' }}>
+                    <div>⏳ Initialisation...</div>
+                    <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '10px' }}>
+                        En attente de configuration
+                    </div>
+                </div>
+            );
+        }
 
         return <PluginExecutorComponent
-            context={context}
-            initialPlugin={this.selectedPluginName}
+            config={this.config}
             pluginsService={this.pluginsService}
             tasksService={this.tasksService}
             messageService={this.messageService}
@@ -118,29 +167,81 @@ export class PluginExecutorWidget extends ReactWidget {
  * Composant React pour l'interface d'exécution
  */
 const PluginExecutorComponent: React.FC<{
-    context: GeocacheContext;
-    initialPlugin?: string | null;
+    config: PluginExecutorConfig;
     pluginsService: PluginsService;
     tasksService: TasksService;
     messageService: MessageService;
-}> = ({ context, initialPlugin, pluginsService, tasksService, messageService }) => {
-    const [state, setState] = React.useState<ExecutorState>({
-        plugins: [],
-        selectedPlugin: null,
-        pluginDetails: null,
-        formInputs: {},
-        isExecuting: false,
-        result: null,
-        error: null,
-        executionMode: 'sync',
-        task: null
-    });
-
-    // Charger la liste des plugins au montage et initialiser le champ texte
-    React.useEffect(() => {
-        loadPlugins();
+}> = ({ config, pluginsService, tasksService, messageService }) => {
+    // Initialisation de l'état basée sur le mode
+    const [state, setState] = React.useState<ExecutorState>(() => {
+        const initialPlugin = config.mode === 'plugin' ? config.pluginName || null : null;
+        const canSelectPlugin = config.mode === 'geocache';
+        const canChangeMode = config.mode === 'plugin' && config.allowModeSelection !== false;
         
-        // Pré-remplir le champ text avec la description de la géocache
+        console.log(`[Plugin Executor Component] Initializing in ${config.mode} mode`);
+        
+        return {
+            plugins: [],
+            selectedPlugin: initialPlugin,
+            pluginDetails: null,
+            formInputs: {},
+            isExecuting: false,
+            result: null,
+            error: null,
+            executionMode: 'sync',
+            task: null,
+            mode: config.mode,
+            canSelectPlugin,
+            canChangeMode,
+            resultsHistory: []
+        };
+    });
+    
+    // État pour savoir si on charge le plugin initial (mode PLUGIN uniquement)
+    const [isLoadingInitial, setIsLoadingInitial] = React.useState<boolean>(
+        config.mode === 'plugin' && !!config.pluginName
+    );
+
+    // Récupérer le contexte géocache (si disponible)
+    const context = config.geocacheContext || {
+        gcCode: '',
+        name: 'Aucune géocache'
+    };
+    
+    // Réinitialiser l'état quand la config change (changement de plugin ou de mode)
+    React.useEffect(() => {
+        console.log('[Plugin Executor] Config changed, reinitializing state');
+        const initialPlugin = config.mode === 'plugin' ? config.pluginName || null : null;
+        const canSelectPlugin = config.mode === 'geocache';
+        const canChangeMode = config.mode === 'plugin' && config.allowModeSelection !== false;
+        
+        setState(prev => ({
+            plugins: prev.plugins, // Garder la liste des plugins déjà chargée
+            selectedPlugin: initialPlugin,
+            pluginDetails: null,
+            formInputs: {},
+            isExecuting: false,
+            result: null,
+            error: null,
+            executionMode: 'sync',
+            task: null,
+            mode: config.mode,
+            canSelectPlugin,
+            canChangeMode,
+            resultsHistory: []
+        }));
+        
+        setIsLoadingInitial(config.mode === 'plugin' && !!config.pluginName);
+    }, [config.mode, config.pluginName, config.geocacheContext?.gcCode]);
+    
+    // Charger la liste des plugins au montage
+    React.useEffect(() => {
+        console.log('[Plugin Executor] Chargement de la liste des plugins');
+        loadPlugins();
+    }, []);
+    
+    // Pré-remplir le texte avec le contexte géocache
+    React.useEffect(() => {
         const initialText = context.description || context.hint || context.coordinates?.coordinatesRaw || '';
         if (initialText) {
             // Retirer les balises HTML si présentes
@@ -153,22 +254,26 @@ const PluginExecutorComponent: React.FC<{
                 formInputs: { ...prev.formInputs, text: textContent }
             }));
         }
-        
-        // Pré-sélectionner le plugin si fourni
-        if (initialPlugin) {
-            setState(prev => ({
-                ...prev,
-                selectedPlugin: initialPlugin
-            }));
-        }
-    }, []);
-
-    // Charger les détails du plugin sélectionné
+    }, [context]);
+    
+    // Charger le plugin initial en mode PLUGIN
     React.useEffect(() => {
-        if (state.selectedPlugin) {
+        if (config.mode === 'plugin' && config.pluginName) {
+            setIsLoadingInitial(true);
+            console.log('[Plugin Executor] Chargement du plugin initial:', config.pluginName);
+            loadPluginDetails(config.pluginName).finally(() => {
+                setIsLoadingInitial(false);
+            });
+        }
+    }, [config.mode, config.pluginName]);
+
+    // Charger les détails du plugin sélectionné (mode GEOCACHE uniquement)
+    React.useEffect(() => {
+        if (config.mode === 'geocache' && state.selectedPlugin) {
+            console.log('[Plugin Executor] Sélection du plugin (mode geocache):', state.selectedPlugin);
             loadPluginDetails(state.selectedPlugin);
         }
-    }, [state.selectedPlugin]);
+    }, [state.selectedPlugin, config.mode]);
 
     // Debug: Logger quand le résultat change
     React.useEffect(() => {
@@ -190,20 +295,35 @@ const PluginExecutorComponent: React.FC<{
         }
     };
 
-    const loadPluginDetails = async (pluginName: string) => {
+    const loadPluginDetails = async (pluginName: string): Promise<void> => {
         try {
+            console.log('[Plugin Executor] Chargement du plugin:', pluginName);
             const details = await pluginsService.getPlugin(pluginName);
+            console.log('[Plugin Executor] Détails reçus:', details);
+            console.log('[Plugin Executor] input_schema:', details.input_schema);
+            console.log('[Plugin Executor] metadata:', details.metadata);
+            
             const initialInputs = generateInitialInputs(details);
-            setState(prev => ({
-                ...prev,
-                pluginDetails: details,
-                // Fusionner les nouveaux inputs sans écraser le champ "text" déjà rempli
-                formInputs: { ...initialInputs, ...prev.formInputs },
-                result: null,
-                error: null
-            }));
+            console.log('[Plugin Executor] Inputs initiaux générés:', initialInputs);
+            
+            setState(prev => {
+                // Conserver uniquement le champ "text" s'il existe déjà
+                const textValue = prev.formInputs.text || '';
+                
+                return {
+                    ...prev,
+                    pluginDetails: details,
+                    // Réinitialiser complètement les inputs avec les nouveaux, mais garder le texte
+                    formInputs: { ...initialInputs, text: textValue },
+                    result: null,
+                    error: null
+                };
+            });
+            console.log('[Plugin Executor] État mis à jour avec pluginDetails');
         } catch (error) {
+            console.error('[Plugin Executor] Erreur lors du chargement:', error);
             messageService.error(`Erreur lors du chargement du plugin: ${error}`);
+            throw error;
         }
     };
 
@@ -255,13 +375,22 @@ const PluginExecutorComponent: React.FC<{
 
     const handleExecute = async () => {
         if (!state.selectedPlugin || !state.pluginDetails) {
+            messageService.warn('Veuillez sélectionner un plugin');
             return;
         }
 
         console.log('=== DEBUG Plugin Executor ===');
         console.log('Plugin sélectionné:', state.selectedPlugin);
+        console.log('Plugin details name:', state.pluginDetails.name);
         console.log('Inputs du formulaire:', state.formInputs);
         console.log('Schéma du plugin:', state.pluginDetails.input_schema);
+        
+        // Vérification de cohérence
+        if (state.selectedPlugin !== state.pluginDetails.name) {
+            console.error('INCOHÉRENCE: selectedPlugin !== pluginDetails.name');
+            messageService.error('Erreur: incohérence du plugin sélectionné. Veuillez réessayer.');
+            return;
+        }
 
         setState(prev => ({ ...prev, isExecuting: true, error: null, result: null }));
 
@@ -288,12 +417,50 @@ const PluginExecutorComponent: React.FC<{
         }
     };
 
+    /**
+     * Enchaîne avec un autre plugin (mode GEOCACHE uniquement)
+     * Utilise le résultat précédent comme texte d'entrée
+     */
+    const handleChainPlugin = () => {
+        if (!state.result) return;
+        
+        // Extraire le texte du résultat
+        let resultText = '';
+        if (state.result.results && state.result.results.length > 0) {
+            // Prendre le premier résultat
+            resultText = state.result.results[0].text_output || '';
+        } else if (state.result.text_output) {
+            // Format ancien
+            resultText = state.result.text_output;
+        }
+        
+        if (!resultText) {
+            messageService.warn('Aucun texte trouvé dans le résultat pour enchaîner');
+            return;
+        }
+        
+        console.log('[Plugin Executor] Enchaînement avec texte:', resultText);
+        
+        // Archiver le résultat actuel dans l'historique
+        setState(prev => ({
+            ...prev,
+            resultsHistory: [...prev.resultsHistory, prev.result!],
+            selectedPlugin: null,
+            pluginDetails: null,
+            formInputs: { text: resultText },
+            result: null,
+            error: null
+        }));
+        
+        messageService.info('Résultat utilisé comme entrée. Sélectionnez un nouveau plugin.');
+    };
+
     return (
         <div className='plugin-executor-container'>
-            {/* En-tête avec contexte géocache */}
-            <div className='plugin-executor-header'>
-                <h3>🎯 Exécuter un plugin</h3>
-                {context.gcCode ? (
+            {/* En-tête MODE GEOCACHE */}
+            {config.mode === 'geocache' && (
+                <div className='plugin-executor-header'>
+                    <h3>🎯 Analyse de géocache</h3>
                     <div className='geocache-context'>
                         <strong>{context.gcCode}</strong> - {context.name}
                         {context.coordinates && (
@@ -303,50 +470,100 @@ const PluginExecutorComponent: React.FC<{
                             </div>
                         )}
                     </div>
-                ) : (
-                    <div className='geocache-context' style={{ opacity: 0.7, fontSize: '14px' }}>
-                        <em>Pas de géocache associée - Exécution libre</em>
-                    </div>
-                )}
-            </div>
-
-            {/* Zone de texte pour la description/énigme */}
-            <div className='plugin-form'>
-                <h4>📝 Texte à analyser</h4>
-                <div className='form-field'>
-                    <label>
-                        Description / Énigme
-                        <span style={{ fontSize: '12px', opacity: 0.7, marginLeft: '8px' }}>
-                            (Modifiez le texte avant d'exécuter le plugin)
-                        </span>
-                    </label>
-                    <textarea
-                        value={state.formInputs.text || ''}
-                        onChange={(e) => handleInputChange('text', e.target.value)}
-                        disabled={state.isExecuting}
-                        rows={8}
-                        placeholder="Collez ici le texte à analyser ou extraire de l'énigme..."
-                        style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
-                    />
                 </div>
-            </div>
+            )}
 
-            {/* Sélection du plugin */}
-            <div className='plugin-selector'>
-                <label>Plugin:</label>
-                <select
-                    value={state.selectedPlugin || ''}
-                    onChange={(e) => setState(prev => ({ ...prev, selectedPlugin: e.target.value || null }))}
-                    disabled={state.isExecuting}
-                >
-                    <option value="">-- Sélectionner un plugin --</option>
-                    {state.plugins.map(plugin => (
-                        <option key={plugin.name} value={plugin.name}>
-                            {plugin.name} (v{plugin.version}){plugin.category ? ` - ${plugin.category}` : ''}
-                        </option>
-                    ))}
-                </select>
-            </div>
+            {/* En-tête MODE PLUGIN */}
+            {config.mode === 'plugin' && (
+                <div className='plugin-executor-header'>
+                    <h3>🧩 Exécution de plugin</h3>
+                    {context.gcCode && (
+                        <div className='geocache-context' style={{ fontSize: '13px', opacity: 0.8 }}>
+                            Associé à : <strong>{context.gcCode}</strong> - {context.name}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Sélecteur de plugin (MODE GEOCACHE uniquement) */}
+            {config.mode === 'geocache' && (
+                <div className='plugin-form'>
+                    <h4>🔌 Choix du plugin</h4>
+                    <select
+                        value={state.selectedPlugin || ''}
+                        onChange={(e) => setState(prev => ({ ...prev, selectedPlugin: e.target.value || null }))}
+                        disabled={state.isExecuting}
+                        className='theia-select'
+                    >
+                        <option value="">-- Sélectionner un plugin --</option>
+                        {state.plugins.map(plugin => (
+                            <option key={plugin.name} value={plugin.name}>
+                                {plugin.name} - {plugin.description}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+            
+            {/* Indicateur de chargement (MODE PLUGIN) */}
+            {config.mode === 'plugin' && isLoadingInitial && (
+                <div className='plugin-form' style={{ padding: '20px', textAlign: 'center' }}>
+                    <div style={{ marginBottom: '10px' }}>⏳ Chargement du plugin...</div>
+                </div>
+            )}
+            
+            {/* Info du plugin (MODE PLUGIN) */}
+            {config.mode === 'plugin' && state.pluginDetails && !isLoadingInitial && (
+                <div className='plugin-form'>
+                    <h4>📦 Plugin: {state.pluginDetails.name}</h4>
+                    <p style={{ margin: '5px 0', fontSize: '13px', opacity: 0.8 }}>{state.pluginDetails.description}</p>
+                </div>
+            )}
+
+            {/* Sélecteur de mode encode/decode (MODE PLUGIN uniquement) */}
+            {config.mode === 'plugin' && state.canChangeMode && state.pluginDetails && (
+                <div className='plugin-form'>
+                    <h4>🎯 Mode d'exécution</h4>
+                    <div className='form-field'>
+                        <label>Action</label>
+                        <select
+                            value={state.formInputs.mode || 'decode'}
+                            onChange={(e) => handleInputChange('mode', e.target.value)}
+                            disabled={state.isExecuting}
+                            className='theia-select'
+                        >
+                            <option value='decode'>🔓 Décoder (par défaut)</option>
+                            <option value='encode'>🔐 Encoder</option>
+                            {state.pluginDetails.metadata?.input_types?.mode?.options?.includes('detect') && (
+                                <option value='detect'>🔍 Détecter</option>
+                            )}
+                        </select>
+                    </div>
+                </div>
+            )}
+
+            {/* Zone de texte - Affichée si plugin chargé et pas en mode encode */}
+            {state.pluginDetails && (!state.formInputs.mode || state.formInputs.mode !== 'encode') && (
+                <div className='plugin-form'>
+                    <h4>📝 Texte à analyser</h4>
+                    <div className='form-field'>
+                        <label>
+                            {context.gcCode ? 'Description / Énigme' : 'Texte à décoder'}
+                            <span style={{ fontSize: '12px', opacity: 0.7, marginLeft: '8px' }}>
+                                (Modifiez le texte avant d'exécuter le plugin)
+                            </span>
+                        </label>
+                        <textarea
+                            value={state.formInputs.text || ''}
+                            onChange={(e) => handleInputChange('text', e.target.value)}
+                            rows={8}
+                            placeholder='Collez ici le texte à analyser...'
+                            disabled={state.isExecuting}
+                            style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Formulaire dynamique */}
             {state.pluginDetails && (
@@ -401,6 +618,30 @@ const PluginExecutorComponent: React.FC<{
                 <div className='plugin-results'>
                     <h4>✅ Résultats</h4>
                     <PluginResultDisplay result={state.result} />
+                    
+                    {/* Bouton d'enchaînement (MODE GEOCACHE uniquement) */}
+                    {config.mode === 'geocache' && config.allowPluginChaining && (
+                        <div style={{ marginTop: '15px', borderTop: '1px solid var(--theia-panel-border)', paddingTop: '15px' }}>
+                            <button
+                                className='theia-button secondary'
+                                onClick={handleChainPlugin}
+                                title='Utiliser ce résultat comme entrée pour un autre plugin'
+                                style={{ width: '100%' }}
+                            >
+                                ↪ Enchaîner avec un autre plugin
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+            
+            {/* Historique des enchaînements (MODE GEOCACHE) */}
+            {config.mode === 'geocache' && state.resultsHistory.length > 0 && (
+                <div className='plugin-history' style={{ marginTop: '10px', padding: '10px', background: 'var(--theia-editor-background)', borderRadius: '4px' }}>
+                    <h5 style={{ margin: '0 0 8px 0', fontSize: '13px', opacity: 0.8 }}>📜 Historique des enchaînements</h5>
+                    <div style={{ fontSize: '12px', opacity: 0.7 }}>
+                        {state.resultsHistory.length} plugin(s) exécuté(s) précédemment
+                    </div>
                 </div>
             )}
 
@@ -426,6 +667,7 @@ const PluginExecutorComponent: React.FC<{
 
 /**
  * Génère le formulaire dynamique basé sur le schéma JSON
+ * Filtre les champs techniques déjà gérés ailleurs (mode, text, input_text)
  */
 function renderDynamicForm(
     schema: any,
@@ -437,7 +679,17 @@ function renderDynamicForm(
         return <div>Aucun paramètre requis</div>;
     }
 
-    return Object.entries(schema.properties).map(([key, propSchema]) => {
+    // Filtrer les champs techniques déjà gérés ailleurs
+    const technicalFields = ['mode', 'text', 'input_text'];
+    const filteredEntries = Object.entries(schema.properties).filter(
+        ([key]) => !technicalFields.includes(key)
+    );
+    
+    if (filteredEntries.length === 0) {
+        return <div style={{ fontSize: '13px', opacity: 0.7 }}>Aucun paramètre supplémentaire requis</div>;
+    }
+
+    return filteredEntries.map(([key, propSchema]) => {
         const prop = propSchema as any;
         const value = values[key];
         const isRequired = schema.required?.includes(key);

@@ -571,12 +571,57 @@ const PluginExecutorComponent: React.FC<{
             {/* Formulaire dynamique */}
             {state.pluginDetails && (
                 <div className='plugin-form'>
-                    <h4>Paramètres</h4>
+                    <h4>⚙️ Paramètres</h4>
                     {renderDynamicForm(
                         state.pluginDetails.input_schema,
                         state.formInputs,
                         handleInputChange,
                         state.isExecuting
+                    )}
+                </div>
+            )}
+            
+            {/* Options avancées : Brute-force et Scoring */}
+            {state.pluginDetails && (state.pluginDetails.metadata?.brute_force || state.pluginDetails.metadata?.enable_scoring) && (
+                <div className='plugin-form'>
+                    <h4>🔧 Options avancées</h4>
+                    
+                    {/* Option Brute-force */}
+                    {state.pluginDetails.metadata?.brute_force && (
+                        <div className='form-field' style={{ marginBottom: '10px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                <input
+                                    type='checkbox'
+                                    checked={state.formInputs.brute_force || false}
+                                    onChange={(e) => handleInputChange('brute_force', e.target.checked)}
+                                    disabled={state.isExecuting}
+                                    style={{ marginRight: '8px' }}
+                                />
+                                <span>💥 Utiliser le mode force brute</span>
+                            </label>
+                            <div className='field-description' style={{ marginLeft: '24px', fontSize: '12px', opacity: 0.7 }}>
+                                Teste toutes les possibilités et retourne tous les résultats
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Option Scoring */}
+                    {state.pluginDetails.metadata?.enable_scoring && (
+                        <div className='form-field'>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                <input
+                                    type='checkbox'
+                                    checked={state.formInputs.enable_scoring !== false}
+                                    onChange={(e) => handleInputChange('enable_scoring', e.target.checked)}
+                                    disabled={state.isExecuting}
+                                    style={{ marginRight: '8px' }}
+                                />
+                                <span>🎯 Activer le scoring automatique</span>
+                            </label>
+                            <div className='field-description' style={{ marginLeft: '24px', fontSize: '12px', opacity: 0.7 }}>
+                                Évalue et classe les résultats par pertinence
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
@@ -797,6 +842,15 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
     };
+    
+    // Trier les résultats par confiance (décroissante) si disponible
+    const sortedResults = result.results ? [...result.results].sort((a, b) => {
+        const confA = a.confidence ?? 0;
+        const confB = b.confidence ?? 0;
+        return confB - confA;
+    }) : [];
+    
+    const isBruteForce = sortedResults.length > 5; // Considérer comme brute-force si plus de 5 résultats
 
     return (
         <div className='result-display'>
@@ -810,22 +864,71 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
                     {result.summary}
                 </div>
             )}
+            
+            {/* Indicateur de mode brute-force */}
+            {isBruteForce && (
+                <div style={{ 
+                    padding: '8px 12px', 
+                    background: 'var(--theia-editor-background)', 
+                    borderLeft: '3px solid var(--theia-focusBorder)',
+                    marginBottom: '15px',
+                    fontSize: '13px'
+                }}>
+                    💥 <strong>Mode force brute activé</strong> - {sortedResults.length} résultats trouvés (triés par pertinence)
+                </div>
+            )}
 
             {/* Afficher tous les résultats du tableau */}
-            {result.results && result.results.length > 0 && (
+            {sortedResults.length > 0 && (
                 <div>
-                    {result.results.map((item, index) => (
-                        <div key={item.id || index} style={{ marginBottom: '15px' }}>
+                    {sortedResults.map((item, index) => (
+                        <div 
+                            key={item.id || index} 
+                            style={{ 
+                                marginBottom: '15px',
+                                padding: '12px',
+                                background: index === 0 && isBruteForce ? 'var(--theia-list-hoverBackground)' : 'transparent',
+                                border: '1px solid var(--theia-panel-border)',
+                                borderRadius: '4px',
+                                position: 'relative'
+                            }}
+                        >
+                            {/* Badge de confiance en haut à droite */}
+                            {item.confidence !== undefined && (
+                                <div style={{ 
+                                    position: 'absolute', 
+                                    top: '8px', 
+                                    right: '8px',
+                                    padding: '4px 8px',
+                                    background: item.confidence > 0.7 ? 'var(--theia-button-background)' : 'var(--theia-editor-background)',
+                                    borderRadius: '3px',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold'
+                                }}>
+                                    🎯 {Math.round(item.confidence * 100)}%
+                                </div>
+                            )}
+                            
                             {item.text_output && (
                                 <div className='result-text'>
-                                    <strong>Résultat {result.results!.length > 1 ? `#${index + 1}` : ''}:</strong>
-                                    <div className='output-content'>
-                                        <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{item.text_output}</pre>
+                                    <strong>
+                                        {isBruteForce ? `#${index + 1}` : 'Résultat'}
+                                        {item.parameters?.shift !== undefined && ` (décalage: ${item.parameters.shift})`}
+                                        {index === 0 && isBruteForce && ' 🏆'}
+                                    </strong>
+                                    <div className='output-content' style={{ position: 'relative', marginTop: '8px' }}>
+                                        <pre style={{ 
+                                            whiteSpace: 'pre-wrap', 
+                                            margin: 0,
+                                            paddingRight: '40px',
+                                            fontFamily: 'monospace',
+                                            fontSize: '13px'
+                                        }}>{item.text_output}</pre>
                                         <button
                                             className='theia-button secondary'
                                             onClick={() => copyToClipboard(item.text_output!)}
                                             title='Copier'
-                                            style={{ position: 'absolute', top: '5px', right: '5px' }}
+                                            style={{ position: 'absolute', top: '5px', right: '5px', padding: '4px 8px' }}
                                         >
                                             📋
                                         </button>
@@ -834,16 +937,10 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
                             )}
 
                             {item.coordinates && (
-                                <div className='result-coordinates'>
+                                <div className='result-coordinates' style={{ marginTop: '8px' }}>
                                     <strong>Coordonnées:</strong>
                                     <div>Latitude: {item.coordinates.latitude}</div>
                                     <div>Longitude: {item.coordinates.longitude}</div>
-                                </div>
-                            )}
-
-                            {item.confidence !== undefined && (
-                                <div style={{ fontSize: '12px', opacity: 0.7 }}>
-                                    Confiance: {Math.round(item.confidence * 100)}%
                                 </div>
                             )}
 

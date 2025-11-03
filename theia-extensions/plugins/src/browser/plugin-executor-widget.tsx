@@ -372,6 +372,50 @@ const PluginExecutorComponent: React.FC<{
             formInputs: { ...prev.formInputs, [key]: value }
         }));
     };
+    
+    /**
+     * Détecte les coordonnées GPS dans les résultats d'un plugin
+     */
+    const detectCoordinatesInResults = async (result: PluginResult) => {
+        if (!result.results || result.results.length === 0) {
+            return;
+        }
+        
+        console.log('[Coordinates Detection] Analyse de', result.results.length, 'résultat(s)');
+        
+        // Récupérer les coordonnées d'origine si en mode GEOCACHE
+        const originCoords = config.mode === 'geocache' && config.geocacheContext?.coordinates 
+            ? {
+                ddm_lat: `N ${config.geocacheContext.coordinates.latitude}`,
+                ddm_lon: `E ${config.geocacheContext.coordinates.longitude}`
+              }
+            : undefined;
+        
+        // Parcourir chaque résultat et détecter les coordonnées
+        for (const item of result.results) {
+            if (item.text_output) {
+                try {
+                    console.log('[Coordinates Detection] Analyse du texte:', item.text_output.substring(0, 50), '...');
+                    const coords = await pluginsService.detectCoordinates(item.text_output, {
+                        includeNumericOnly: false,
+                        originCoords
+                    });
+                    
+                    if (coords.exist) {
+                        console.log('[Coordinates Detection] Coordonnées détectées!', coords);
+                        // Ajouter les coordonnées au résultat
+                        item.coordinates = {
+                            latitude: coords.ddm_lat || '',
+                            longitude: coords.ddm_lon || '',
+                            formatted: coords.ddm || ''
+                        };
+                    }
+                } catch (error) {
+                    console.error('[Coordinates Detection] Erreur:', error);
+                }
+            }
+        }
+    };
 
     const handleExecute = async () => {
         if (!state.selectedPlugin || !state.pluginDetails) {
@@ -399,6 +443,13 @@ const PluginExecutorComponent: React.FC<{
                 console.log('Exécution synchrone avec inputs:', state.formInputs);
                 const result = await pluginsService.executePlugin(state.selectedPlugin, state.formInputs);
                 console.log('Résultat reçu:', result);
+                
+                // Détecter les coordonnées si l'option est activée
+                if (state.formInputs.detect_coordinates && result.results) {
+                    console.log('[Coordinates Detection] Détection activée, analyse des résultats...');
+                    await detectCoordinatesInResults(result);
+                }
+                
                 setState(prev => ({ ...prev, result, isExecuting: false }));
                 messageService.info('Plugin exécuté avec succès');
             } else {
@@ -623,6 +674,23 @@ const PluginExecutorComponent: React.FC<{
                             </div>
                         </div>
                     )}
+                    
+                    {/* Option Détection de coordonnées */}
+                    <div className='form-field' style={{ marginTop: '10px' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                            <input
+                                type='checkbox'
+                                checked={state.formInputs.detect_coordinates || false}
+                                onChange={(e) => handleInputChange('detect_coordinates', e.target.checked)}
+                                disabled={state.isExecuting}
+                                style={{ marginRight: '8px' }}
+                            />
+                            <span>📍 Détecter les coordonnées GPS</span>
+                        </label>
+                        <div className='field-description' style={{ marginLeft: '24px', fontSize: '12px', opacity: 0.7 }}>
+                            Recherche automatique de coordonnées dans les résultats (peut ralentir l'affichage)
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -937,10 +1005,29 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
                             )}
 
                             {item.coordinates && (
-                                <div className='result-coordinates' style={{ marginTop: '8px' }}>
-                                    <strong>Coordonnées:</strong>
-                                    <div>Latitude: {item.coordinates.latitude}</div>
-                                    <div>Longitude: {item.coordinates.longitude}</div>
+                                <div className='result-coordinates' style={{ 
+                                    marginTop: '8px',
+                                    padding: '10px',
+                                    background: 'var(--theia-editor-background)',
+                                    border: '1px solid var(--theia-focusBorder)',
+                                    borderRadius: '4px'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <strong>📍 Coordonnées détectées :</strong>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={() => copyToClipboard(item.coordinates?.formatted || 
+                                                `${item.coordinates?.latitude} ${item.coordinates?.longitude}`)}
+                                            title='Copier les coordonnées'
+                                            style={{ padding: '4px 8px', fontSize: '11px' }}
+                                        >
+                                            📋 Copier
+                                        </button>
+                                    </div>
+                                    <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
+                                        {item.coordinates.formatted || `${item.coordinates.latitude} ${item.coordinates.longitude}`}
+                                    </div>
+                                    {/* TODO: Ajouter boutons d'action (Ajouter waypoint, Ouvrir sur carte, etc.) */}
                                 </div>
                             )}
 

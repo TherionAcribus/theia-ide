@@ -152,6 +152,34 @@ export class PluginsServiceImpl implements IPluginsService {
     }
     
     /**
+     * Détecte les coordonnées GPS dans un texte.
+     */
+    async detectCoordinates(text: string, options?: {
+        includeNumericOnly?: boolean;
+        originCoords?: { ddm_lat: string; ddm_lon: string };
+    }): Promise<{
+        exist: boolean;
+        ddm_lat?: string;
+        ddm_lon?: string;
+        ddm?: string;
+    }> {
+        try {
+            const response = await this.client.post('/api/detect_coordinates', {
+                text,
+                include_numeric_only: options?.includeNumericOnly || false,
+                origin_coords: options?.originCoords
+            });
+            
+            return response.data;
+            
+        } catch (error) {
+            console.error('Erreur lors de la détection des coordonnées:', error);
+            // Ne pas throw d'erreur, retourner simplement "pas de coordonnées"
+            return { exist: false };
+        }
+    }
+    
+    /**
      * Extrait le message d'erreur depuis une erreur Axios.
      */
     private getErrorMessage(error: any): string {

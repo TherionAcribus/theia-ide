@@ -218,8 +218,9 @@ export interface PluginResultItem {
     
     /** Coordonnées résultats */
     coordinates?: {
-        latitude: number;
-        longitude: number;
+        latitude: number | string;
+        longitude: number | string;
+        formatted?: string;
     };
     
     /** Score de confiance (0-1) */
@@ -298,4 +299,17 @@ export interface PluginsService {
      * Recharge un plugin spécifique.
      */
     reloadPlugin(name: string): Promise<void>;
+    
+    /**
+     * Détecte les coordonnées GPS dans un texte.
+     */
+    detectCoordinates(text: string, options?: {
+        includeNumericOnly?: boolean;
+        originCoords?: { ddm_lat: string; ddm_lon: string };
+    }): Promise<{
+        exist: boolean;
+        ddm_lat?: string;
+        ddm_lon?: string;
+        ddm?: string;
+    }>;
 }

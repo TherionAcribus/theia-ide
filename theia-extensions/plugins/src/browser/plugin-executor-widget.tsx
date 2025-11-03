@@ -542,13 +542,14 @@ const PluginExecutorComponent: React.FC<{
                 </div>
             )}
 
-            {/* Zone de texte - Affichée si plugin chargé et pas en mode encode */}
-            {state.pluginDetails && (!state.formInputs.mode || state.formInputs.mode !== 'encode') && (
+            {/* Zone de texte - Toujours affichée si plugin chargé */}
+            {state.pluginDetails && (
                 <div className='plugin-form'>
-                    <h4>📝 Texte à analyser</h4>
+                    <h4>📝 Texte à traiter</h4>
                     <div className='form-field'>
                         <label>
-                            {context.gcCode ? 'Description / Énigme' : 'Texte à décoder'}
+                            {state.formInputs.mode === 'encode' ? 'Texte à encoder' : 
+                             context.gcCode ? 'Description / Énigme' : 'Texte à décoder'}
                             <span style={{ fontSize: '12px', opacity: 0.7, marginLeft: '8px' }}>
                                 (Modifiez le texte avant d'exécuter le plugin)
                             </span>
@@ -557,7 +558,9 @@ const PluginExecutorComponent: React.FC<{
                             value={state.formInputs.text || ''}
                             onChange={(e) => handleInputChange('text', e.target.value)}
                             rows={8}
-                            placeholder='Collez ici le texte à analyser...'
+                            placeholder={state.formInputs.mode === 'encode' ? 
+                                'Entrez le texte à encoder...' : 
+                                'Collez ici le texte à analyser...'}
                             disabled={state.isExecuting}
                             style={{ width: '100%', fontFamily: 'monospace', fontSize: '13px' }}
                         />

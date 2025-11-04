@@ -26,10 +26,10 @@ Implémentation d'un système de synchronisation automatique entre l'édition de
 │  │  - Recharge les données   │ │
 │  │  - Appelle refresh...()   │ │
 │  └───────────┬───────────────┘ │
-└──────────────┼─────────────────┘
-               │
-               │ refreshAssociatedMap()
-               ▼
+└──────────────┼─────────────────┬───────────────────────────────┐
+               │                 │                               │
+               │ refreshAssociatedMap()        geoapp-plugin-add-waypoint
+               ▼                 │                               │
 ┌─────────────────────────────────┐
 │   MapWidget (carte géocache)    │
 │                                 │
@@ -40,6 +40,28 @@ Implémentation d'un système de synchronisation automatique entre l'édition de
 │  └───────────────────────────┘ │
 └─────────────────────────────────┘
 ```
+
+### Nouvel événement « plugin → waypoint »
+
+1. Le **Plugin Executor** détecte des coordonnées pertinentes.
+2. L'utilisateur clique sur **➕ Ajouter comme waypoint** directement dans le résultat du plugin.
+3. Le widget émet un `CustomEvent` :
+
+   ```typescript
+   window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
+       detail: {
+           gcCoords: 'N 48° 33.787, E 006° 38.803',
+           pluginName: 'caesar',
+           geocache: { gcCode: 'GC123AB', name: 'Demo cache' },
+           waypointTitle: 'Caesar shift +1',
+           waypointNote: 'HELLO WORLD N …',
+           sourceResultText: 'HELLO WORLD N …'
+       }
+   }));
+   ```
+
+4. `GeocacheDetailsWidget` écoute cet événement et appelle `addWaypointWithCoordinates()` pour ouvrir le formulaire Waypoints avec les coordonnées préremplies **et** une proposition de titre/note (« Résultat <plugin> » + texte du plugin).
+5. L'utilisateur n'a plus qu'à valider la création du waypoint ; la synchronisation carte ↔ widget se déroule ensuite comme décrit ci-dessous.
 
 ### Flux de données
 

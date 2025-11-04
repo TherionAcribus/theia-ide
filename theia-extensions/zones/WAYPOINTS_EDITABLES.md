@@ -3,6 +3,14 @@
 ## Vue d'ensemble
 
 Implémentation d'un système complet de gestion des waypoints dans les détails des géocaches, permettant l'ajout, la modification et la suppression de waypoints avec des outils de calcul géographique intégrés.
+- Sauvegarde automatique après ajout/modification.
+- Synchronisation carte ↔ widget.
+- Bouton « ➕ Ajouter comme waypoint » côté Plugin Executor qui pré-remplit automatiquement le formulaire (événement `geoapp-plugin-add-waypoint`).
+  - Titre proposé : « Résultat <nom du plugin> »
+  - Note proposée : texte brut du résultat du plugin
+- Calculs intégrés : antipode, projections (distance + azimut) avec conversion automatique au format Geocaching.
+- Définition rapide d'un waypoint comme coordonnées corrigées de la géocache.
+- Création instantanée d'un waypoint depuis le **Plugin Executor** quand une coordonnée est détectée, avec titre et note préremplis.
 
 ## Fonctionnalités Implémentées
 

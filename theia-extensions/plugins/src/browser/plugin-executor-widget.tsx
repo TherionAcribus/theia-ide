@@ -46,6 +46,18 @@ export interface GeocacheContext {
     terrain?: number;
 }
 
+interface AddWaypointEventDetail {
+    gcCoords: string;
+    pluginName?: string;
+    geocache?: {
+        gcCode: string;
+        name?: string;
+    };
+    sourceResultText?: string;
+    waypointTitle?: string;
+    waypointNote?: string;
+}
+
 /**
  * Configuration initiale du widget
  */
@@ -233,29 +245,22 @@ const PluginExecutorComponent: React.FC<{
         
         setIsLoadingInitial(config.mode === 'plugin' && !!config.pluginName);
     }, [config.mode, config.pluginName, config.geocacheContext?.gcCode]);
-    
-    // Charger la liste des plugins au montage
+
+    const loadPlugins = async () => {
+        try {
+            const plugins = await pluginsService.listPlugins({ enabled: true });
+            setState(prev => ({ ...prev, plugins }));
+        } catch (error) {
+            messageService.error(`Erreur lors du chargement des plugins: ${error}`);
+        }
+    };
+
+    // Chargement initial des plugins
     React.useEffect(() => {
         console.log('[Plugin Executor] Chargement de la liste des plugins');
         loadPlugins();
     }, []);
-    
-    // Pré-remplir le texte avec le contexte géocache
-    React.useEffect(() => {
-        const initialText = context.description || context.hint || context.coordinates?.coordinatesRaw || '';
-        if (initialText) {
-            // Retirer les balises HTML si présentes
-            const div = document.createElement('div');
-            div.innerHTML = initialText;
-            const textContent = div.textContent || div.innerText || initialText;
-            
-            setState(prev => ({
-                ...prev,
-                formInputs: { ...prev.formInputs, text: textContent }
-            }));
-        }
-    }, [context]);
-    
+
     // Charger le plugin initial en mode PLUGIN
     React.useEffect(() => {
         if (config.mode === 'plugin' && config.pluginName) {
@@ -273,6 +278,7 @@ const PluginExecutorComponent: React.FC<{
             console.log('[Plugin Executor] Sélection du plugin (mode geocache):', state.selectedPlugin);
             loadPluginDetails(state.selectedPlugin);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [state.selectedPlugin, config.mode]);
 
     // Debug: Logger quand le résultat change
@@ -285,15 +291,6 @@ const PluginExecutorComponent: React.FC<{
             console.log('First result:', state.result.results?.[0]);
         }
     }, [state.result]);
-
-    const loadPlugins = async () => {
-        try {
-            const plugins = await pluginsService.listPlugins({ enabled: true });
-            setState(prev => ({ ...prev, plugins }));
-        } catch (error) {
-            messageService.error(`Erreur lors du chargement des plugins: ${error}`);
-        }
-    };
 
     const loadPluginDetails = async (pluginName: string): Promise<void> => {
         try {
@@ -506,6 +503,18 @@ const PluginExecutorComponent: React.FC<{
         messageService.info('Résultat utilisé comme entrée. Sélectionnez un nouveau plugin.');
     };
 
+    const handleRequestAddWaypoint = React.useCallback((detail: AddWaypointEventDetail) => {
+        if (config.mode !== 'geocache' || !config.geocacheContext) {
+            return;
+        }
+
+        const event = new CustomEvent<AddWaypointEventDetail>('geoapp-plugin-add-waypoint', {
+            detail
+        });
+        window.dispatchEvent(event);
+        messageService.info('Coordonnées envoyées au widget Waypoints');
+    }, [config.mode, config.geocacheContext, messageService]);
+
     return (
         <div className='plugin-executor-container'>
             {/* En-tête MODE GEOCACHE */}
@@ -560,6 +569,9 @@ const PluginExecutorComponent: React.FC<{
             {config.mode === 'plugin' && isLoadingInitial && (
                 <div className='plugin-form' style={{ padding: '20px', textAlign: 'center' }}>
                     <div style={{ marginBottom: '10px' }}>⏳ Chargement du plugin...</div>
+                    <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '10px' }}>
+                        En attente de configuration
+                    </div>
                 </div>
             )}
             
@@ -733,7 +745,13 @@ const PluginExecutorComponent: React.FC<{
             {state.result && (
                 <div className='plugin-results'>
                     <h4>✅ Résultats</h4>
-                    <PluginResultDisplay result={state.result} />
+                    <PluginResultDisplay
+                        result={state.result}
+                        configMode={config.mode}
+                        geocacheContext={config.geocacheContext}
+                        pluginName={state.pluginDetails?.name || state.selectedPlugin}
+                        onRequestAddWaypoint={handleRequestAddWaypoint}
+                    />
                     
                     {/* Bouton d'enchaînement (MODE GEOCACHE uniquement) */}
                     {config.mode === 'geocache' && config.allowPluginChaining && (
@@ -901,12 +919,19 @@ function renderInputField(
 /**
  * Composant d'affichage des résultats
  */
-const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => {
+const PluginResultDisplay: React.FC<{
+    result: PluginResult;
+    configMode: PluginExecutorMode;
+    geocacheContext?: GeocacheContext;
+    pluginName?: string | null;
+    onRequestAddWaypoint?: (detail: AddWaypointEventDetail) => void;
+}> = ({ result, configMode, geocacheContext, pluginName, onRequestAddWaypoint }) => {
     console.log('=== PluginResultDisplay RENDER ===');
     console.log('Received result:', result);
     console.log('result.results:', result.results);
     console.log('result.summary:', result.summary);
-    
+
+    // Fonction pour copier du texte dans le presse-papier
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
     };
@@ -917,8 +942,38 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
         const confB = b.confidence ?? 0;
         return confB - confA;
     }) : [];
-    
+
     const isBruteForce = sortedResults.length > 5; // Considérer comme brute-force si plus de 5 résultats
+    const canRequestWaypoint = configMode === 'geocache' && !!geocacheContext && !!onRequestAddWaypoint;
+
+    const buildGcCoords = (coords?: {
+        latitude?: number | string;
+        longitude?: number | string;
+        formatted?: string;
+    }): string | null => {
+        if (!coords) {
+            return null;
+        }
+        if (coords.latitude && coords.longitude) {
+            return `${coords.latitude}, ${coords.longitude}`;
+        }
+        if (coords.formatted) {
+            // Assurer un séparateur virgule pour WaypointsEditor
+            const formatted = coords.formatted.trim();
+            if (formatted.includes(',')) {
+                return formatted;
+            }
+            const compact = formatted.replace(/\s+/g, ' ').trim();
+            const tokens = compact.split(' ');
+            if (tokens.length >= 4) {
+                const latPart = tokens.slice(0, 2).join(' ');
+                const lonPart = tokens.slice(2).join(' ');
+                return `${latPart}, ${lonPart}`;
+            }
+            return formatted;
+        }
+        return null;
+    };
 
     return (
         <div className='result-display'>
@@ -1012,7 +1067,7 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
                                     border: '1px solid var(--theia-focusBorder)',
                                     borderRadius: '4px'
                                 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                                         <strong>📍 Coordonnées détectées :</strong>
                                         <button
                                             className='theia-button secondary'
@@ -1023,6 +1078,32 @@ const PluginResultDisplay: React.FC<{ result: PluginResult }> = ({ result }) => 
                                         >
                                             📋 Copier
                                         </button>
+                                        {canRequestWaypoint && buildGcCoords(item.coordinates) && (
+                                            <button
+                                                className='theia-button'
+                                                onClick={() => {
+                                                    const gcCoords = buildGcCoords(item.coordinates);
+                                                    if (!gcCoords) {
+                                                        return;
+                                                    }
+                                                    onRequestAddWaypoint?.({
+                                                        gcCoords,
+                                                        pluginName: pluginName || result.plugin_info?.name,
+                                                        geocache: geocacheContext ? {
+                                                            gcCode: geocacheContext.gcCode,
+                                                            name: geocacheContext.name
+                                                        } : undefined,
+                                                        sourceResultText: item.text_output,
+                                                        waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
+                                                        waypointNote: item.text_output
+                                                    });
+                                                }}
+                                                title='Ajouter ces coordonnées comme nouveau waypoint'
+                                                style={{ padding: '4px 8px', fontSize: '11px' }}
+                                            >
+                                                ➕ Ajouter comme waypoint
+                                            </button>
+                                        )}
                                     </div>
                                     <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
                                         {item.coordinates.formatted || `${item.coordinates.latitude} ${item.coordinates.longitude}`}

@@ -7,6 +7,24 @@ import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
 
+interface PluginAddWaypointDetail {
+    gcCoords: string;
+    pluginName?: string;
+    geocache?: {
+        gcCode: string;
+        name?: string;
+    };
+    sourceResultText?: string;
+    waypointTitle?: string;
+    waypointNote?: string;
+}
+
+interface WaypointPrefillPayload {
+    coords?: string;
+    title?: string;
+    note?: string;
+}
+
 type GeocacheAttribute = { name: string; is_negative?: boolean; base_filename?: string };
 type GeocacheImage = { url: string };
 type GeocacheWaypoint = {
@@ -105,19 +123,19 @@ function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number
  * Wrapper pour WaypointsEditor qui expose le callback startEdit
  */
 interface WaypointsEditorWrapperProps extends WaypointsEditorProps {
-    onRegisterCallback: (callback: (prefilledCoords?: string) => void) => void;
+    onRegisterCallback: (callback: (prefill?: WaypointPrefillPayload) => void) => void;
 }
 
 const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) => {
     const { onRegisterCallback, ...editorProps } = props;
-    const startEditRef = React.useRef<((waypoint?: GeocacheWaypoint, prefilledCoords?: string) => void) | null>(null);
+    const startEditRef = React.useRef<((waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => void) | null>(null);
 
     // Enregistrer le callback au montage
     React.useEffect(() => {
         if (startEditRef.current) {
-            onRegisterCallback((prefilledCoords?: string) => {
+            onRegisterCallback((prefill?: WaypointPrefillPayload) => {
                 if (startEditRef.current) {
-                    startEditRef.current(undefined, prefilledCoords);
+                    startEditRef.current(undefined, prefill);
                 }
             });
         }
@@ -136,7 +154,7 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
  * Version modifiée de WaypointsEditor qui expose startEdit via une ref
  */
 interface WaypointsEditorWithRefProps extends WaypointsEditorProps {
-    onStartEditRef: (fn: (waypoint?: GeocacheWaypoint, prefilledCoords?: string) => void) => void;
+    onStartEditRef: (fn: (waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => void) => void;
 }
 
 const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStartEditRef, ...props }) => {
@@ -146,7 +164,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
     const [projectionParams, setProjectionParams] = React.useState({ distance: 100, unit: 'm', bearing: 0 });
     const [calculatedCoords, setCalculatedCoords] = React.useState<string>('');
 
-    const startEdit = React.useCallback((waypoint?: GeocacheWaypoint, prefilledCoords?: string) => {
+    const startEdit = React.useCallback((waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => {
         if (waypoint) {
             setEditingId(waypoint.id ?? null);
             setEditForm({ ...waypoint });
@@ -155,12 +173,12 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             setEditForm({
                 prefix: '',
                 lookup: '',
-                name: '',
+                name: prefill?.title || '',
                 type: '',
                 latitude: undefined,
                 longitude: undefined,
-                gc_coords: prefilledCoords || geocacheData?.coordinates_raw || '',
-                note: ''
+                gc_coords: prefill?.coords || geocacheData?.coordinates_raw || '',
+                note: prefill?.note || ''
             });
         }
         setCalculatedCoords('');
@@ -877,7 +895,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected geocacheId?: number;
     protected data?: GeocacheDto;
     protected isLoading = false;
-    protected waypointEditorCallback?: (prefilledCoords?: string) => void;
+    protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -893,16 +911,66 @@ export class GeocacheDetailsWidget extends ReactWidget {
         this.addClass('theia-geocache-details-widget');
     }
 
+    protected onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        this.addEventListeners();
+    }
+
+    protected onBeforeDetach(msg: any): void {
+        this.removeEventListeners();
+        super.onBeforeDetach(msg);
+    }
+
+    private handlePluginAddWaypointEvent = (event: CustomEvent<PluginAddWaypointDetail>): void => {
+        if (!event.detail?.gcCoords) {
+            return;
+        }
+
+        // Vérifier que l'événement concerne bien cette géocache (si info fournie)
+        const eventGcCode = event.detail.geocache?.gcCode;
+        if (eventGcCode && this.data?.gc_code && eventGcCode !== this.data.gc_code) {
+            return;
+        }
+
+        this.addWaypointWithCoordinates(event.detail.gcCoords, {
+            title: event.detail.waypointTitle || (event.detail.pluginName ? `Résultat ${event.detail.pluginName}` : undefined),
+            note: event.detail.waypointNote || event.detail.sourceResultText
+        });
+        const source = event.detail.pluginName ? ` (plugin ${event.detail.pluginName})` : '';
+        this.messages.info(`Waypoint prérempli depuis le Plugin Executor${source}`);
+    };
+
+    private addEventListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        window.removeEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
+        window.addEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
+    }
+
+    private removeEventListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        window.removeEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
+    }
+
     /**
      * Ouvre le formulaire d'ajout de waypoint avec des coordonnées pré-remplies
      * Méthode publique appelable depuis d'autres widgets (ex: carte)
      */
-    public addWaypointWithCoordinates(gcCoords: string): void {
+    public addWaypointWithCoordinates(gcCoords: string, options?: { title?: string; note?: string }): void {
         if (this.waypointEditorCallback) {
             // Activer le widget pour le rendre visible
             this.shell.activateWidget(this.id);
             // Ouvrir le formulaire d'ajout de waypoint
-            this.waypointEditorCallback(gcCoords);
+            this.waypointEditorCallback({
+                coords: gcCoords,
+                title: options?.title,
+                note: options?.note
+            });
         } else {
             this.messages.warn('Le formulaire de waypoint n\'est pas encore chargé');
         }
@@ -1006,6 +1074,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
 
         // Appeler la méthode parente pour la fermeture normale
         super.onCloseRequest(msg);
+        this.removeEventListeners();
     }
 
     /**

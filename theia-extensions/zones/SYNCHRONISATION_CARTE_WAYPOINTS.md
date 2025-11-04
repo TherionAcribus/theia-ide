@@ -55,13 +55,16 @@ Implémentation d'un système de synchronisation automatique entre l'édition de
            geocache: { gcCode: 'GC123AB', name: 'Demo cache' },
            waypointTitle: 'Caesar shift +1',
            waypointNote: 'HELLO WORLD N …',
-           sourceResultText: 'HELLO WORLD N …'
+           sourceResultText: 'HELLO WORLD N …',
+           autoSave: false // vrai lorsque l'on clique sur "✅ Ajouter et valider"
        }
    }));
    ```
 
-4. `GeocacheDetailsWidget` écoute cet événement et appelle `addWaypointWithCoordinates()` pour ouvrir le formulaire Waypoints avec les coordonnées préremplies **et** une proposition de titre/note (« Résultat <plugin> » + texte du plugin).
-5. L'utilisateur n'a plus qu'à valider la création du waypoint ; la synchronisation carte ↔ widget se déroule ensuite comme décrit ci-dessous.
+4. `GeocacheDetailsWidget` écoute cet événement et :
+   - si `autoSave === true`, appelle directement l'API `POST /api/geocaches/{id}/waypoints`, recharge les données puis rafraîchit la carte ;
+   - sinon, ouvre `addWaypointWithCoordinates()` avec coordonnées + titre + note préremplis.
+5. Dans le cas manuel, l'utilisateur valide la création du waypoint puis la synchronisation carte ↔ widget se déroule comme décrit ci-dessous. Dans le cas auto-validé, la liste et la carte sont mises à jour immédiatement.
 
 ### Flux de données
 

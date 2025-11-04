@@ -56,6 +56,7 @@ interface AddWaypointEventDetail {
     sourceResultText?: string;
     waypointTitle?: string;
     waypointNote?: string;
+    autoSave?: boolean;
 }
 
 /**
@@ -1079,30 +1080,57 @@ const PluginResultDisplay: React.FC<{
                                             📋 Copier
                                         </button>
                                         {canRequestWaypoint && buildGcCoords(item.coordinates) && (
-                                            <button
-                                                className='theia-button'
-                                                onClick={() => {
-                                                    const gcCoords = buildGcCoords(item.coordinates);
-                                                    if (!gcCoords) {
-                                                        return;
-                                                    }
-                                                    onRequestAddWaypoint?.({
-                                                        gcCoords,
-                                                        pluginName: pluginName || result.plugin_info?.name,
-                                                        geocache: geocacheContext ? {
-                                                            gcCode: geocacheContext.gcCode,
-                                                            name: geocacheContext.name
-                                                        } : undefined,
-                                                        sourceResultText: item.text_output,
-                                                        waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
-                                                        waypointNote: item.text_output
-                                                    });
-                                                }}
-                                                title='Ajouter ces coordonnées comme nouveau waypoint'
-                                                style={{ padding: '4px 8px', fontSize: '11px' }}
-                                            >
-                                                ➕ Ajouter comme waypoint
-                                            </button>
+                                            <>
+                                                <button
+                                                    className='theia-button'
+                                                    onClick={() => {
+                                                        const gcCoords = buildGcCoords(item.coordinates);
+                                                        if (!gcCoords) {
+                                                            return;
+                                                        }
+                                                        onRequestAddWaypoint?.({
+                                                            gcCoords,
+                                                            pluginName: pluginName || result.plugin_info?.name,
+                                                            geocache: geocacheContext ? {
+                                                                gcCode: geocacheContext.gcCode,
+                                                                name: geocacheContext.name
+                                                            } : undefined,
+                                                            sourceResultText: item.text_output,
+                                                            waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
+                                                            waypointNote: item.text_output
+                                                        });
+                                                    }}
+                                                    title='Ajouter ces coordonnées comme nouveau waypoint'
+                                                    style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                >
+                                                    ➕ Ajouter comme waypoint
+                                                </button>
+                                                <button
+                                                    className='theia-button'
+                                                    onClick={() => {
+                                                        const gcCoords = buildGcCoords(item.coordinates);
+                                                        if (!gcCoords) {
+                                                            return;
+                                                        }
+                                                        onRequestAddWaypoint?.({
+                                                            gcCoords,
+                                                            pluginName: pluginName || result.plugin_info?.name,
+                                                            geocache: geocacheContext ? {
+                                                                gcCode: geocacheContext.gcCode,
+                                                                name: geocacheContext.name
+                                                            } : undefined,
+                                                            sourceResultText: item.text_output,
+                                                            waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
+                                                            waypointNote: item.text_output,
+                                                            autoSave: true
+                                                        });
+                                                    }}
+                                                    title='Créer immédiatement un waypoint validé'
+                                                    style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                >
+                                                    ✅ Ajouter et valider
+                                                </button>
+                                            </>
                                         )}
                                     </div>
                                     <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>

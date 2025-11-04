@@ -17,6 +17,7 @@ interface PluginAddWaypointDetail {
     sourceResultText?: string;
     waypointTitle?: string;
     waypointNote?: string;
+    autoSave?: boolean;
 }
 
 interface WaypointPrefillPayload {
@@ -896,6 +897,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected data?: GeocacheDto;
     protected isLoading = false;
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
+    protected isSavingWaypoint = false;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -932,9 +934,19 @@ export class GeocacheDetailsWidget extends ReactWidget {
             return;
         }
 
+        const title = event.detail.waypointTitle || (event.detail.pluginName ? `Résultat ${event.detail.pluginName}` : undefined);
+        const note = event.detail.waypointNote || event.detail.sourceResultText;
+
+        if (event.detail.autoSave) {
+            this.autoSaveWaypoint(event.detail.gcCoords, title, note).catch(error => {
+                console.error('[GeocacheDetailsWidget] autoSaveWaypoint error', error);
+            });
+            return;
+        }
+
         this.addWaypointWithCoordinates(event.detail.gcCoords, {
-            title: event.detail.waypointTitle || (event.detail.pluginName ? `Résultat ${event.detail.pluginName}` : undefined),
-            note: event.detail.waypointNote || event.detail.sourceResultText
+            title,
+            note
         });
         const source = event.detail.pluginName ? ` (plugin ${event.detail.pluginName})` : '';
         this.messages.info(`Waypoint prérempli depuis le Plugin Executor${source}`);
@@ -973,6 +985,47 @@ export class GeocacheDetailsWidget extends ReactWidget {
             });
         } else {
             this.messages.warn('Le formulaire de waypoint n\'est pas encore chargé');
+        }
+    }
+
+    private async autoSaveWaypoint(gcCoords: string, title?: string, note?: string): Promise<void> {
+        if (!this.geocacheId) {
+            this.messages.error('Aucune géocache chargée pour créer le waypoint');
+            return;
+        }
+        if (this.isSavingWaypoint) {
+            this.messages.warn('Création de waypoint déjà en cours');
+            return;
+        }
+
+        this.isSavingWaypoint = true;
+        try {
+            const payload = {
+                name: title || 'Waypoint détecté',
+                gc_coords: gcCoords,
+                note: note || ''
+            };
+
+            const response = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/waypoints`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            await this.load();
+            this.messages.info('Waypoint créé automatiquement depuis le plugin');
+        } catch (error) {
+            console.error('[GeocacheDetailsWidget] autoSaveWaypoint failed', error);
+            this.messages.error('Impossible de créer automatiquement le waypoint');
+        } finally {
+            this.isSavingWaypoint = false;
         }
     }
 

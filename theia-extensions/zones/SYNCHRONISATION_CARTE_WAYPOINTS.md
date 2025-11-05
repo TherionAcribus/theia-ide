@@ -56,6 +56,8 @@ Implémentation d'un système de synchronisation automatique entre l'édition de
            waypointTitle: 'Caesar shift +1',
            waypointNote: 'HELLO WORLD N …',
            sourceResultText: 'HELLO WORLD N …',
+           decimalLatitude: 48.563117,
+           decimalLongitude: 6.646717,
            autoSave: false // vrai lorsque l'on clique sur "✅ Ajouter et valider"
        }
    }));
@@ -65,6 +67,17 @@ Implémentation d'un système de synchronisation automatique entre l'édition de
    - si `autoSave === true`, appelle directement l'API `POST /api/geocaches/{id}/waypoints`, recharge les données puis rafraîchit la carte ;
    - sinon, ouvre `addWaypointWithCoordinates()` avec coordonnées + titre + note préremplis.
 5. Dans le cas manuel, l'utilisateur valide la création du waypoint puis la synchronisation carte ↔ widget se déroule comme décrit ci-dessous. Dans le cas auto-validé, la liste et la carte sont mises à jour immédiatement.
+6. **Nouveau :** dès l'émission de l'événement, un second `CustomEvent('geoapp-map-highlight-coordinate')` est envoyé avec les coordonnées décimales. `MapService` le reçoit et demande à la carte d'afficher un marqueur temporaire centré sur la position détectée.
+
+### Mise en évidence des coordonnées détectées
+
+- **Conversion centralisée côté backend** : la route `POST /api/detect_coordinates` calcule désormais toujours `decimal_latitude` et `decimal_longitude` lorsqu'une coordonnée est trouvée (utilise `convert_ddm_to_decimal`). Le frontend n'a plus besoin de recalculer les valeurs.
+- **Événement carte immédiat** : `plugin-executor-widget.tsx` émet `geoapp-map-highlight-coordinate` dès la détection d'un résultat, avant toute création de waypoint. Le payload inclut `gcCode`, `pluginName`, les coordonnées décimales et un drapeau `replaceExisting` (actuellement `false`).
+- **Marker temporaire dédié** : `MapLayerManager` ajoute un layer `detected-coordinate` stylé différemment des waypoints. `MapView` zoome automatiquement sur le point à la réception de l'événement.
+- **Logs de diagnostic** :
+  - `[Plugin Executor]` / `[Coordinates Detection]` pour les conversions et dispatch d'événements,
+  - `[MapService]` pour les événements reçus et la gestion du cache de la dernière coordonnée.
+- **Nettoyage** : `MapService.clearHighlightedCoordinate()` supprime le marker (éventuellement déclenché par de futurs événements `geoapp-map-highlight-clear`).
 
 ### Flux de données
 

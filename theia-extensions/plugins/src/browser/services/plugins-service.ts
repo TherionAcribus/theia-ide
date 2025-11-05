@@ -162,6 +162,8 @@ export class PluginsServiceImpl implements IPluginsService {
         ddm_lat?: string;
         ddm_lon?: string;
         ddm?: string;
+        decimal_latitude?: number;
+        decimal_longitude?: number;
     }> {
         try {
             const response = await this.client.post('/api/detect_coordinates', {

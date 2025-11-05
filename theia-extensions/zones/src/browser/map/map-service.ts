@@ -1,5 +1,5 @@
 import { injectable } from '@theia/core/shared/inversify';
-import { Emitter, Event } from '@theia/core/lib/common/event';
+import { Emitter, Event as TheiaEvent } from '@theia/core/lib/common/event';
 import { Coordinate } from 'ol/coordinate';
 import { MapGeocache } from './map-layer-manager';
 
@@ -23,6 +23,28 @@ export interface SelectedGeocache {
     cache_type: string;
 }
 
+export interface DetectedCoordinateHighlight {
+    latitude: number;
+    longitude: number;
+    formatted?: string;
+    gcCode?: string;
+    pluginName?: string;
+    autoSaved?: boolean;
+    replaceExisting?: boolean;
+}
+
+interface DetectedCoordinateHighlightEventDetail {
+    gcCode?: string;
+    pluginName?: string;
+    coordinates?: {
+        latitude?: number;
+        longitude?: number;
+        formatted?: string;
+    };
+    autoSaved?: boolean;
+    replaceExisting?: boolean;
+}
+
 /**
  * Service singleton pour gérer l'état partagé de la carte
  * 
@@ -35,29 +57,79 @@ export interface SelectedGeocache {
 export class MapService {
     // Événements pour la sélection de géocaches
     private readonly onDidSelectGeocacheEmitter = new Emitter<SelectedGeocache>();
-    readonly onDidSelectGeocache: Event<SelectedGeocache> = this.onDidSelectGeocacheEmitter.event;
+    readonly onDidSelectGeocache: TheiaEvent<SelectedGeocache> = this.onDidSelectGeocacheEmitter.event;
 
     // Événements pour la désélection
     private readonly onDidDeselectGeocacheEmitter = new Emitter<void>();
-    readonly onDidDeselectGeocache: Event<void> = this.onDidDeselectGeocacheEmitter.event;
+    readonly onDidDeselectGeocache: TheiaEvent<void> = this.onDidDeselectGeocacheEmitter.event;
 
     // Événements pour le changement de vue
     private readonly onDidChangeViewEmitter = new Emitter<MapViewState>();
-    readonly onDidChangeView: Event<MapViewState> = this.onDidChangeViewEmitter.event;
+    readonly onDidChangeView: TheiaEvent<MapViewState> = this.onDidChangeViewEmitter.event;
 
     // Événements pour le chargement de géocaches
     private readonly onDidLoadGeocachesEmitter = new Emitter<MapGeocache[]>();
-    readonly onDidLoadGeocaches: Event<MapGeocache[]> = this.onDidLoadGeocachesEmitter.event;
+    readonly onDidLoadGeocaches: TheiaEvent<MapGeocache[]> = this.onDidLoadGeocachesEmitter.event;
 
     // Événements pour le changement de fond de carte
     private readonly onDidChangeTileProviderEmitter = new Emitter<string>();
-    readonly onDidChangeTileProvider: Event<string> = this.onDidChangeTileProviderEmitter.event;
+    readonly onDidChangeTileProvider: TheiaEvent<string> = this.onDidChangeTileProviderEmitter.event;
+
+    // Événement pour mettre en avant une coordonnée détectée (Plugin Executor → Carte)
+    private readonly onDidHighlightCoordinateEmitter = new Emitter<DetectedCoordinateHighlight | undefined>();
+    readonly onDidHighlightCoordinate: TheiaEvent<DetectedCoordinateHighlight | undefined> = this.onDidHighlightCoordinateEmitter.event;
 
     // État interne
     private selectedGeocache: SelectedGeocache | null = null;
     private currentView: MapViewState | null = null;
     private loadedGeocaches: MapGeocache[] = [];
     private currentTileProvider: string = 'osm';
+    private lastHighlightedCoordinate: DetectedCoordinateHighlight | undefined;
+
+    constructor() {
+        if (typeof window !== 'undefined') {
+            window.addEventListener('geoapp-map-highlight-coordinate', this.handleHighlightCoordinateEvent as EventListener);
+            window.addEventListener('geoapp-map-highlight-clear', this.handleHighlightClearEvent as EventListener);
+        }
+    }
+
+    private handleHighlightCoordinateEvent = (event: Event): void => {
+        const customEvent = event as CustomEvent<DetectedCoordinateHighlightEventDetail>;
+        const detail = customEvent.detail;
+
+        if (!detail?.coordinates) {
+            console.warn('[MapService] Highlight event ignoré: detail.coordinates absent', detail);
+            return;
+        }
+
+        const { latitude, longitude, formatted } = detail.coordinates;
+        if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+            console.warn('[MapService] Highlight event ignoré: latitude/longitude non numériques', detail.coordinates);
+            return;
+        }
+
+        console.log('[MapService] Reçu geoapp-map-highlight-coordinate', {
+            gcCode: detail.gcCode,
+            pluginName: detail.pluginName,
+            coordinates: detail.coordinates,
+            autoSaved: detail.autoSaved
+        });
+
+        this.highlightDetectedCoordinate({
+            latitude,
+            longitude,
+            formatted,
+            gcCode: detail.gcCode,
+            pluginName: detail.pluginName,
+            autoSaved: detail.autoSaved,
+            replaceExisting: detail.replaceExisting
+        });
+    };
+
+    private handleHighlightClearEvent = (): void => {
+        console.log('[MapService] Reçu geoapp-map-highlight-clear');
+        this.clearHighlightedCoordinate();
+    };
 
     /**
      * Sélectionne une géocache et notifie tous les écouteurs
@@ -155,6 +227,31 @@ export class MapService {
     }
 
     /**
+     * Met en évidence une coordonnée détectée sur la carte et notifie les listeners.
+     */
+    highlightDetectedCoordinate(coordinate: DetectedCoordinateHighlight): void {
+        this.lastHighlightedCoordinate = coordinate;
+        console.log('[MapService] Highlight coordonnée mise à jour', coordinate);
+        this.onDidHighlightCoordinateEmitter.fire(coordinate);
+    }
+
+    /**
+     * Efface la coordonnée détectée actuellement mise en évidence.
+     */
+    clearHighlightedCoordinate(): void {
+        this.lastHighlightedCoordinate = undefined;
+        console.log('[MapService] Highlight coordonnée effacée');
+        this.onDidHighlightCoordinateEmitter.fire(undefined);
+    }
+
+    /**
+     * Récupère la dernière coordonnée détectée mise en évidence (si disponible).
+     */
+    getLastHighlightedCoordinate(): DetectedCoordinateHighlight | undefined {
+        return this.lastHighlightedCoordinate;
+    }
+
+    /**
      * Centre la carte sur une géocache spécifique
      * Cette méthode est utilisée par le tableau pour centrer la carte
      */
@@ -202,6 +299,11 @@ export class MapService {
         this.onDidChangeViewEmitter.dispose();
         this.onDidLoadGeocachesEmitter.dispose();
         this.onDidChangeTileProviderEmitter.dispose();
+
+        if (typeof window !== 'undefined') {
+            window.removeEventListener('geoapp-map-highlight-coordinate', this.handleHighlightCoordinateEvent as EventListener);
+            window.removeEventListener('geoapp-map-highlight-clear', this.handleHighlightClearEvent as EventListener);
+        }
     }
 }
 

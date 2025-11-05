@@ -6,7 +6,7 @@ import { defaults as defaultInteractions } from 'ol/interaction';
 import Overlay from 'ol/Overlay';
 import 'ol/ol.css';
 import { MapLayerManager, MapGeocache } from './map-layer-manager';
-import { MapService } from './map-service';
+import { MapService, DetectedCoordinateHighlight } from './map-service';
 import { lonLatToMapCoordinate, calculateExtent, mapCoordinateToLonLat, formatGeocachingCoordinates } from './map-utils';
 import { TILE_PROVIDERS } from './map-tile-providers';
 import { fromLonLat } from 'ol/proj';
@@ -299,6 +299,51 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         });
 
         return () => disposable.dispose();
+    }, [isInitialized, mapService]);
+
+    // Écoute des événements de mise en évidence d'une coordonnée détectée
+    React.useEffect(() => {
+        if (!mapInstanceRef.current || !layerManagerRef.current) {
+            return;
+        }
+
+        const applyHighlight = (highlight?: DetectedCoordinateHighlight) => {
+            if (!layerManagerRef.current) {
+                return;
+            }
+
+            if (!highlight) {
+                layerManagerRef.current.clearDetectedCoordinate();
+                return;
+            }
+
+            layerManagerRef.current.showDetectedCoordinate(highlight);
+
+            const coordinate = lonLatToMapCoordinate(highlight.longitude, highlight.latitude);
+            const view = mapInstanceRef.current?.getView();
+            if (view) {
+                const currentZoom = view.getZoom() ?? 13;
+                view.animate({
+                    center: coordinate,
+                    duration: 400,
+                    zoom: currentZoom < 15 ? 15 : currentZoom
+                });
+            }
+        };
+
+        const disposable = mapService.onDidHighlightCoordinate(highlight => {
+            applyHighlight(highlight);
+        });
+
+        const lastHighlight = mapService.getLastHighlightedCoordinate();
+        if (lastHighlight) {
+            applyHighlight(lastHighlight);
+        }
+
+        return () => {
+            applyHighlight(undefined);
+            disposable.dispose();
+        };
     }, [isInitialized, mapService]);
 
     // ✅ Réagit aux changements de géocaches passées en props

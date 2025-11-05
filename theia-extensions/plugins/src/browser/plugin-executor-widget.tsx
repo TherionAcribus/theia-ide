@@ -57,7 +57,115 @@ interface AddWaypointEventDetail {
     waypointTitle?: string;
     waypointNote?: string;
     autoSave?: boolean;
+    decimalLatitude?: number;
+    decimalLongitude?: number;
 }
+
+const parseDdMCoordinate = (value?: string): number | null => {
+    if (!value) {
+        return null;
+    }
+    const normalized = value.trim().replace(/[,']/g, '.');
+    const match = normalized.match(/^([NSEW])\s*(\d+)[°\s]+([\d.]+)/i);
+    if (!match) {
+        return null;
+    }
+    const direction = match[1].toUpperCase();
+    const degrees = Number(match[2]);
+    const minutes = Number(match[3]);
+    if (Number.isNaN(degrees) || Number.isNaN(minutes)) {
+        return null;
+    }
+    let decimal = degrees + minutes / 60;
+    if (direction === 'S' || direction === 'W') {
+        decimal = -decimal;
+    }
+    return decimal;
+};
+
+const convertDdMPairToDecimal = (latStr?: string, lonStr?: string): { latitude: number; longitude: number } | null => {
+    const lat = parseDdMCoordinate(latStr);
+    const lon = parseDdMCoordinate(lonStr);
+
+    if (lat === null || lon === null) {
+        return null;
+    }
+
+    return { latitude: lat, longitude: lon };
+};
+
+const convertCombinedCoordsToDecimal = (formatted?: string): { latitude: number; longitude: number } | null => {
+    if (!formatted) {
+        return null;
+    }
+    const trimmed = formatted.trim();
+
+    // Format décimal simple "48.8566, 2.3522" ou "48.8566 2.3522"
+    const decimalMatch = trimmed.match(/(-?\d+\.?\d*)[\s,]+(-?\d+\.?\d*)/);
+    if (decimalMatch && !/[NSEW]/i.test(trimmed)) {
+        const lat = Number(decimalMatch[1]);
+        const lon = Number(decimalMatch[2]);
+        if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+            return { latitude: lat, longitude: lon };
+        }
+    }
+
+    // Format DDM combiné "N 48° 51.396 E 002° 21.132"
+    const ddmMatch = trimmed.match(/([NS][^EW]*?\d[^EW]*)(?:\s+|,)([EW].+)/i);
+    if (ddmMatch) {
+        return convertDdMPairToDecimal(ddmMatch[1], ddmMatch[2]);
+    }
+
+    // Si déjà séparé par une virgule, tenter une conversion directe
+    const parts = trimmed.split(',');
+    if (parts.length === 2) {
+        return convertDdMPairToDecimal(parts[0], parts[1]);
+    }
+
+    return null;
+};
+
+const extractDecimalCoordinates = (
+    coordinates: any,
+    fallbackFormatted?: string
+): { latitude: number; longitude: number } | null => {
+    if (!coordinates) {
+        return convertCombinedCoordsToDecimal(fallbackFormatted);
+    }
+
+    if (typeof coordinates.latitude === 'number' && typeof coordinates.longitude === 'number') {
+        return {
+            latitude: coordinates.latitude,
+            longitude: coordinates.longitude
+        };
+    }
+
+    const backendDecimalLat = Number(
+        coordinates.decimalLatitude ??
+        coordinates.decimal_latitude ??
+        coordinates.latitude_decimal ??
+        coordinates.lat_decimal
+    );
+    const backendDecimalLon = Number(
+        coordinates.decimalLongitude ??
+        coordinates.decimal_longitude ??
+        coordinates.longitude_decimal ??
+        coordinates.lon_decimal
+    );
+    if (!Number.isNaN(backendDecimalLat) && !Number.isNaN(backendDecimalLon)) {
+        return {
+            latitude: backendDecimalLat,
+            longitude: backendDecimalLon
+        };
+    }
+
+    const fromStrings = convertDdMPairToDecimal(coordinates.latitude, coordinates.longitude);
+    if (fromStrings) {
+        return fromStrings;
+    }
+
+    return convertCombinedCoordsToDecimal(fallbackFormatted);
+};
 
 /**
  * Configuration initiale du widget
@@ -401,12 +509,45 @@ const PluginExecutorComponent: React.FC<{
                     
                     if (coords.exist) {
                         console.log('[Coordinates Detection] Coordonnées détectées!', coords);
-                        // Ajouter les coordonnées au résultat
                         item.coordinates = {
                             latitude: coords.ddm_lat || '',
                             longitude: coords.ddm_lon || '',
                             formatted: coords.ddm || ''
                         };
+
+                        const decimalCoordinates = extractDecimalCoordinates({
+                            latitude: (coords as any).decimal_latitude ?? item.coordinates.latitude,
+                            longitude: (coords as any).decimal_longitude ?? item.coordinates.longitude,
+                            decimalLatitude: (coords as any).decimal_latitude,
+                            decimalLongitude: (coords as any).decimal_longitude
+                        }, coords.ddm);
+                        if (decimalCoordinates) {
+                            console.log('[Coordinates Detection] Dispatch map highlight', {
+                                gcCode: context.gcCode,
+                                pluginName: state.selectedPlugin || result.plugin_info?.name,
+                                latitude: decimalCoordinates.latitude,
+                                longitude: decimalCoordinates.longitude,
+                                formatted: coords.ddm || item.coordinates.formatted
+                            });
+                            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+                                detail: {
+                                    gcCode: context.gcCode,
+                                    pluginName: state.selectedPlugin || result.plugin_info?.name,
+                                    coordinates: {
+                                        latitude: decimalCoordinates.latitude,
+                                        longitude: decimalCoordinates.longitude,
+                                        formatted: coords.ddm || item.coordinates.formatted
+                                    },
+                                    autoSaved: false,
+                                    replaceExisting: false
+                                }
+                            }));
+                        } else {
+                            console.warn('[Coordinates Detection] Impossible de convertir les coordonnées détectées en décimal', {
+                                coords,
+                                itemCoordinates: item.coordinates
+                            });
+                        }
                     }
                 } catch (error) {
                     console.error('[Coordinates Detection] Erreur:', error);
@@ -1081,55 +1222,45 @@ const PluginResultDisplay: React.FC<{
                                         </button>
                                         {canRequestWaypoint && buildGcCoords(item.coordinates) && (
                                             <>
-                                                <button
-                                                    className='theia-button'
-                                                    onClick={() => {
-                                                        const gcCoords = buildGcCoords(item.coordinates);
-                                                        if (!gcCoords) {
-                                                            return;
-                                                        }
-                                                        onRequestAddWaypoint?.({
-                                                            gcCoords,
-                                                            pluginName: pluginName || result.plugin_info?.name,
-                                                            geocache: geocacheContext ? {
-                                                                gcCode: geocacheContext.gcCode,
-                                                                name: geocacheContext.name
-                                                            } : undefined,
-                                                            sourceResultText: item.text_output,
-                                                            waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
-                                                            waypointNote: item.text_output
-                                                        });
-                                                    }}
-                                                    title='Ajouter ces coordonnées comme nouveau waypoint'
-                                                    style={{ padding: '4px 8px', fontSize: '11px' }}
-                                                >
-                                                    ➕ Ajouter comme waypoint
-                                                </button>
-                                                <button
-                                                    className='theia-button'
-                                                    onClick={() => {
-                                                        const gcCoords = buildGcCoords(item.coordinates);
-                                                        if (!gcCoords) {
-                                                            return;
-                                                        }
-                                                        onRequestAddWaypoint?.({
-                                                            gcCoords,
-                                                            pluginName: pluginName || result.plugin_info?.name,
-                                                            geocache: geocacheContext ? {
-                                                                gcCode: geocacheContext.gcCode,
-                                                                name: geocacheContext.name
-                                                            } : undefined,
-                                                            sourceResultText: item.text_output,
-                                                            waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
-                                                            waypointNote: item.text_output,
-                                                            autoSave: true
-                                                        });
-                                                    }}
-                                                    title='Créer immédiatement un waypoint validé'
-                                                    style={{ padding: '4px 8px', fontSize: '11px' }}
-                                                >
-                                                    ✅ Ajouter et valider
-                                                </button>
+                                                {['manual', 'auto'].map(mode => (
+                                                    <button
+                                                        key={mode}
+                                                        className='theia-button'
+                                                        onClick={() => {
+                                                            const gcCoords = buildGcCoords(item.coordinates);
+                                                            if (!gcCoords) {
+                                                                return;
+                                                            }
+                                                            const decimalCoords = extractDecimalCoordinates(item.coordinates, gcCoords);
+                                                            if (!decimalCoords) {
+                                                                console.warn('[Plugin Executor] Impossible de convertir les coordonnées pour la carte', {
+                                                                    coordinates: item.coordinates,
+                                                                    fallback: gcCoords
+                                                                });
+                                                            }
+                                                            onRequestAddWaypoint?.({
+                                                                gcCoords,
+                                                                pluginName: pluginName || result.plugin_info?.name,
+                                                                geocache: geocacheContext ? {
+                                                                    gcCode: geocacheContext.gcCode,
+                                                                    name: geocacheContext.name
+                                                                } : undefined,
+                                                                sourceResultText: item.text_output,
+                                                                waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
+                                                                waypointNote: item.text_output,
+                                                                autoSave: mode === 'auto',
+                                                                decimalLatitude: decimalCoords?.latitude,
+                                                                decimalLongitude: decimalCoords?.longitude
+                                                            });
+                                                        }}
+                                                        title={mode === 'auto'
+                                                            ? 'Créer immédiatement un waypoint validé'
+                                                            : 'Ajouter ces coordonnées comme nouveau waypoint'}
+                                                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                    >
+                                                        {mode === 'auto' ? '✅ Ajouter et valider' : '➕ Ajouter comme waypoint'}
+                                                    </button>
+                                                ))}
                                             </>
                                         )}
                                     </div>

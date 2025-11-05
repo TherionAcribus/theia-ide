@@ -18,6 +18,8 @@ interface PluginAddWaypointDetail {
     waypointTitle?: string;
     waypointNote?: string;
     autoSave?: boolean;
+    decimalLatitude?: number;
+    decimalLongitude?: number;
 }
 
 interface WaypointPrefillPayload {

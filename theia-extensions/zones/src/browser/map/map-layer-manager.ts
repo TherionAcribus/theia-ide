@@ -5,9 +5,10 @@ import { Point } from 'ol/geom';
 import Map from 'ol/Map';
 import { createClusterSource } from './map-clustering';
 import { createClusterStyle } from './map-geocache-style';
-import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, GeocacheFeatureProperties } from './map-geocache-style-sprite';
+import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties } from './map-geocache-style-sprite';
 import { lonLatToMapCoordinate } from './map-utils';
 import { createTileLayer, DEFAULT_PROVIDER_ID } from './map-tile-providers';
+import { DetectedCoordinateHighlight } from './map-service';
 
 /**
  * Interface pour un waypoint de géocache
@@ -55,6 +56,8 @@ export class MapLayerManager {
     private geocacheLayer: any;
     private waypointVectorSource: VectorSource<Feature<Point>>;
     private waypointLayer: any;
+    private detectedCoordinateSource: VectorSource<Feature<Point>>;
+    private detectedCoordinateLayer: any;
     private currentTileProviderId: string;
 
     constructor(map: Map) {
@@ -91,6 +94,18 @@ export class MapLayerManager {
             zIndex: 20
         });
         this.map.addLayer(this.waypointLayer);
+
+        // Couche pour une coordonnée détectée temporaire
+        this.detectedCoordinateSource = new VectorSource<Feature<Point>>();
+        this.detectedCoordinateLayer = new VectorLayer({
+            source: this.detectedCoordinateSource,
+            style: createDetectedCoordinateStyle,
+            properties: {
+                name: 'detected-coordinate'
+            },
+            zIndex: 30
+        });
+        this.map.addLayer(this.detectedCoordinateLayer);
     }
 
     /**
@@ -303,6 +318,38 @@ export class MapLayerManager {
     }
 
     /**
+     * Affiche une coordonnée détectée temporaire sur la carte.
+     */
+    showDetectedCoordinate(highlight: DetectedCoordinateHighlight): void {
+        this.detectedCoordinateSource.clear();
+
+        if (highlight.latitude === undefined || highlight.longitude === undefined) {
+            return;
+        }
+
+        const coordinate = lonLatToMapCoordinate(highlight.longitude, highlight.latitude);
+        const feature = new Feature({
+            geometry: new Point(coordinate)
+        });
+
+        feature.setProperties({
+            isDetectedCoordinate: true,
+            formatted: highlight.formatted,
+            pluginName: highlight.pluginName,
+            autoSaved: highlight.autoSaved
+        });
+
+        this.detectedCoordinateSource.addFeature(feature);
+    }
+
+    /**
+     * Efface la coordonnée détectée temporaire.
+     */
+    clearDetectedCoordinate(): void {
+        this.detectedCoordinateSource.clear();
+    }
+
+    /**
      * Récupère la source vectorielle des géocaches (pour interactions avancées)
      */
     getGeocacheVectorSource(): VectorSource<Feature<Point>> {
@@ -335,6 +382,7 @@ export class MapLayerManager {
     dispose(): void {
         this.clearGeocaches();
         this.clearWaypoints();
+        this.clearDetectedCoordinate();
     }
 }
 

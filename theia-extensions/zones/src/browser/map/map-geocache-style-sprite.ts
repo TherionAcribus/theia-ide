@@ -128,3 +128,63 @@ export function createWaypointStyleFromSprite(feature: Feature<Geometry>, resolu
     });
 }
 
+/**
+ * Style mis en évidence pour une coordonnée détectée par un plugin
+ */
+export function createDetectedCoordinateStyle(feature: Feature<Geometry>): Style[] {
+    const isAutoSaved = feature.get('autoSaved') === true;
+    const formatted = feature.get('formatted') as string | undefined;
+    const pluginName = feature.get('pluginName') as string | undefined;
+
+    const baseColor = isAutoSaved ? 'rgba(46, 204, 113, 0.85)' : 'rgba(52, 152, 219, 0.85)';
+    const borderColor = isAutoSaved ? '#2ecc71' : '#3498db';
+
+    return [
+        new Style({
+            image: new Circle({
+                radius: 18,
+                stroke: new Stroke({
+                    color: borderColor,
+                    width: 4
+                })
+            }),
+            zIndex: 1900
+        }),
+        new Style({
+            image: new Circle({
+                radius: 10,
+                fill: new Fill({
+                    color: baseColor
+                }),
+                stroke: new Stroke({
+                    color: '#ffffff',
+                    width: 2
+                })
+            }),
+            zIndex: 2000
+        }),
+        new Style({
+            text: new Text({
+                text: pluginName ? `🔍 ${pluginName}` : formatted || 'Coordonnée détectée',
+                offsetY: -24,
+                font: '12px "Fira Sans", sans-serif',
+                fill: new Fill({
+                    color: '#1a1a1a'
+                }),
+                stroke: new Stroke({
+                    color: '#ffffff',
+                    width: 3
+                }),
+                backgroundFill: new Fill({
+                    color: 'rgba(255, 255, 255, 0.9)'
+                }),
+                backgroundStroke: new Stroke({
+                    color: borderColor,
+                    width: 1
+                }),
+                padding: [2, 6, 2, 6]
+            }),
+            zIndex: 2100
+        })
+    ];
+}

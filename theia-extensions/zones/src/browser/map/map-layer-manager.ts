@@ -321,7 +321,10 @@ export class MapLayerManager {
      * Affiche une coordonnée détectée temporaire sur la carte.
      */
     showDetectedCoordinate(highlight: DetectedCoordinateHighlight): void {
-        this.detectedCoordinateSource.clear();
+        const shouldClear = highlight.replaceExisting !== true;
+        if (shouldClear) {
+            this.detectedCoordinateSource.clear();
+        }
 
         if (highlight.latitude === undefined || highlight.longitude === undefined) {
             return;
@@ -336,15 +339,24 @@ export class MapLayerManager {
             isDetectedCoordinate: true,
             formatted: highlight.formatted,
             pluginName: highlight.pluginName,
-            autoSaved: highlight.autoSaved
+            autoSaved: highlight.autoSaved,
+            gcCode: highlight.gcCode,
+            latDecimal: highlight.latitude,
+            lonDecimal: highlight.longitude,
+            replaceExisting: highlight.replaceExisting,
+            waypointTitle: highlight.waypointTitle,
+            waypointNote: highlight.waypointNote,
+            sourceResultText: highlight.sourceResultText,
+            gc_code: highlight.gcCode || 'Point détecté',
+            name: highlight.waypointTitle || highlight.pluginName || highlight.formatted || 'Coordonnée détectée',
+            cache_type: 'Coordonnée détectée',
+            note: highlight.waypointNote || highlight.sourceResultText || highlight.formatted || '',
+            coordinatesFormatted: highlight.formatted
         });
 
         this.detectedCoordinateSource.addFeature(feature);
     }
 
-    /**
-     * Efface la coordonnée détectée temporaire.
-     */
     clearDetectedCoordinate(): void {
         this.detectedCoordinateSource.clear();
     }

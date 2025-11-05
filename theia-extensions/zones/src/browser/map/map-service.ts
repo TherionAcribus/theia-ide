@@ -31,6 +31,11 @@ export interface DetectedCoordinateHighlight {
     pluginName?: string;
     autoSaved?: boolean;
     replaceExisting?: boolean;
+    waypointTitle?: string;
+    waypointNote?: string;
+    sourceResultText?: string;
+    interactionType?: string; // Added interactionType property
+    interactionData?: any; // Added interactionData property
 }
 
 interface DetectedCoordinateHighlightEventDetail {
@@ -43,6 +48,11 @@ interface DetectedCoordinateHighlightEventDetail {
     };
     autoSaved?: boolean;
     replaceExisting?: boolean;
+    waypointTitle?: string;
+    waypointNote?: string;
+    sourceResultText?: string;
+    interactionType?: string; // Added interactionType property
+    interactionData?: any; // Added interactionData property
 }
 
 /**
@@ -112,7 +122,9 @@ export class MapService {
             gcCode: detail.gcCode,
             pluginName: detail.pluginName,
             coordinates: detail.coordinates,
-            autoSaved: detail.autoSaved
+            autoSaved: detail.autoSaved,
+            waypointTitle: detail.waypointTitle,
+            waypointNote: detail.waypointNote
         });
 
         this.highlightDetectedCoordinate({
@@ -122,7 +134,10 @@ export class MapService {
             gcCode: detail.gcCode,
             pluginName: detail.pluginName,
             autoSaved: detail.autoSaved,
-            replaceExisting: detail.replaceExisting
+            replaceExisting: detail.replaceExisting,
+            waypointTitle: detail.waypointTitle,
+            waypointNote: detail.waypointNote,
+            sourceResultText: detail.sourceResultText
         });
     };
 

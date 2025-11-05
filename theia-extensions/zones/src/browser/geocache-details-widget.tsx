@@ -975,7 +975,12 @@ export class GeocacheDetailsWidget extends ReactWidget {
      * Ouvre le formulaire d'ajout de waypoint avec des coordonnées pré-remplies
      * Méthode publique appelable depuis d'autres widgets (ex: carte)
      */
-    public addWaypointWithCoordinates(gcCoords: string, options?: { title?: string; note?: string }): void {
+    public addWaypointWithCoordinates(gcCoords: string, options?: { title?: string; note?: string; autoSave?: boolean }): void {
+        if (options?.autoSave) {
+            void this.autoSaveWaypoint(gcCoords, options.title, options.note);
+            return;
+        }
+
         if (this.waypointEditorCallback) {
             // Activer le widget pour le rendre visible
             this.shell.activateWidget(this.id);

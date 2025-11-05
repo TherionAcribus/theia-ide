@@ -136,16 +136,21 @@ export function formatCoordinates(lon: number, lat: number, format: 'decimal' | 
  * Format: "N 48° 51.396 E 002° 21.132"
  */
 export function formatGeocachingCoordinates(lon: number, lat: number): string {
+    const formatMinutes = (minutes: number): string => {
+        const value = minutes.toFixed(3);
+        return minutes < 10 ? `0${value}` : value;
+    };
+
     const latDir = lat >= 0 ? 'N' : 'S';
     const lonDir = lon >= 0 ? 'E' : 'W';
     const absLat = Math.abs(lat);
     const absLon = Math.abs(lon);
 
     const latDeg = Math.floor(absLat);
-    const latMin = ((absLat - latDeg) * 60).toFixed(3);
+    const latMin = formatMinutes((absLat - latDeg) * 60);
 
     const lonDeg = Math.floor(absLon);
-    const lonMin = ((absLon - lonDeg) * 60).toFixed(3);
+    const lonMin = formatMinutes((absLon - lonDeg) * 60);
 
     // Formater la longitude avec des zéros devant si nécessaire (ex: 002°)
     const lonDegFormatted = lonDeg.toString().padStart(3, '0');

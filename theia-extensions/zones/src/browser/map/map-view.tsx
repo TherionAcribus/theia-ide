@@ -17,7 +17,7 @@ export interface MapViewProps {
     mapService: MapService;
     geocaches: MapGeocache[];  // ✅ Données propres à cette carte
     onMapReady?: (map: Map) => void;
-    onAddWaypoint?: (gcCoords: string) => void;  // ✅ Callback pour ajouter un waypoint
+    onAddWaypoint?: (options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }) => void;  // ✅ Callback pour ajouter un waypoint
     onDeleteWaypoint?: (waypointId: number) => void;  // ✅ Callback pour supprimer un waypoint
     onSetWaypointAsCorrectedCoords?: (waypointId: number) => void;  // ✅ Callback pour définir comme coordonnées corrigées
 }
@@ -86,18 +86,57 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         // Ajouter le gestionnaire de clic gauche
         map.on('click', (evt) => {
             const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
-            if (feature) {
-                const props = feature.getProperties() as GeocacheFeatureProperties;
-                if (props.id !== undefined) {
-                    setPopupData(props);
-                    if (overlayRef.current) {
-                        overlayRef.current.setPosition(evt.coordinate);
-                    }
-                }
-            } else {
+            if (!feature) {
                 setPopupData(null);
                 if (overlayRef.current) {
                     overlayRef.current.setPosition(undefined);
+                }
+                return;
+            }
+
+            const props = feature.getProperties() as GeocacheFeatureProperties & {
+                isDetectedCoordinate?: boolean;
+                formatted?: string;
+                pluginName?: string;
+                gcCode?: string;
+                latDecimal?: number;
+                lonDecimal?: number;
+                waypointTitle?: string;
+                waypointNote?: string;
+                sourceResultText?: string;
+            };
+
+            if (props.isDetectedCoordinate) {
+                // Afficher un popup spécifique pour la coordonnée détectée
+                const popupContent = {
+                    id: -1,
+                    gc_code: props.gcCode || 'Point détecté',
+                    name: props.waypointTitle || props.pluginName || 'Coordonnée détectée',
+                    cache_type: props.formatted || 'Coordonnées temporaires',
+                    difficulty: undefined,
+                    terrain: undefined,
+                    pluginName: props.pluginName,
+                    formatted: props.formatted,
+                    note: props.waypointNote || props.sourceResultText,
+                    coordinates: {
+                        decimal: props.latDecimal !== undefined && props.lonDecimal !== undefined
+                            ? `${props.latDecimal.toFixed(6)}, ${props.lonDecimal.toFixed(6)}`
+                            : undefined,
+                        formatted: props.formatted
+                    }
+                } as any;
+
+                setPopupData(popupContent);
+                if (overlayRef.current) {
+                    overlayRef.current.setPosition(evt.coordinate);
+                }
+                return;
+            }
+
+            if (props.id !== undefined) {
+                setPopupData(props);
+                if (overlayRef.current) {
+                    overlayRef.current.setPosition(evt.coordinate);
                 }
             }
         });
@@ -115,9 +154,19 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             const feature = map.forEachFeatureAtPixel(pixel, (f) => f);
             
             if (feature) {
-                const props = feature.getProperties() as GeocacheFeatureProperties;
-                
-                // Si c'est un waypoint, afficher un menu contextuel spécifique
+                const props = feature.getProperties() as GeocacheFeatureProperties & {
+                    isDetectedCoordinate?: boolean;
+                    formatted?: string;
+                    pluginName?: string;
+                    gcCode?: string;
+                    latDecimal?: number;
+                    lonDecimal?: number;
+                    waypointTitle?: string;
+                    waypointNote?: string;
+                    sourceResultText?: string;
+                };
+
+                // Menu pour waypoint existant
                 if (props.isWaypoint && props.waypointId !== undefined) {
                     const items: ContextMenuItem[] = [
                         {
@@ -149,6 +198,86 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         });
                     }
                     
+                    setContextMenu({
+                        items,
+                        x: event.clientX,
+                        y: event.clientY
+                    });
+                    return;
+                }
+
+                // Menu pour coordonnée détectée
+                if (props.isDetectedCoordinate) {
+                    const lat = props.latDecimal;
+                    const lon = props.lonDecimal;
+                    const gcCoords = lat !== undefined && lon !== undefined
+                        ? formatGeocachingCoordinates(lon, lat)
+                        : props.formatted || 'Coordonnées inconnues';
+
+                    const waypointTitle = props.waypointTitle || props.pluginName || 'Coordonnée détectée';
+                    const waypointNote = props.waypointNote || props.sourceResultText || props.formatted || '';
+
+                    const items: ContextMenuItem[] = [
+                        {
+                            label: waypointTitle,
+                            disabled: true
+                        },
+                        { separator: true },
+                        {
+                            label: `🌍 ${gcCoords}`,
+                            action: () => navigator.clipboard.writeText(gcCoords)
+                        }
+                    ];
+
+                    if (lat !== undefined && lon !== undefined) {
+                        items.push({
+                            label: `🔢 ${lat.toFixed(6)}, ${lon.toFixed(6)}`,
+                            action: () => navigator.clipboard.writeText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`)
+                        });
+                    }
+
+                    if (props.pluginName) {
+                        items.push({
+                            label: `🧩 Plugin : ${props.pluginName}`,
+                            disabled: true
+                        });
+                    }
+
+                    if (props.sourceResultText) {
+                        items.push({ separator: true });
+                        items.push({
+                            label: '📋 Copier le texte du résultat',
+                            action: () => navigator.clipboard.writeText(props.sourceResultText as string)
+                        });
+                    }
+
+                    if (onAddWaypoint) {
+                        items.push({ separator: true });
+                        items.push({
+                            label: 'Ajouter un waypoint à valider',
+                            icon: '➕',
+                            action: () => {
+                                onAddWaypoint({
+                                    gcCoords,
+                                    title: waypointTitle,
+                                    note: waypointNote
+                                });
+                            }
+                        });
+                        items.push({
+                            label: 'Ajouter un waypoint validé',
+                            icon: '✅',
+                            action: () => {
+                                onAddWaypoint({
+                                    gcCoords,
+                                    title: waypointTitle,
+                                    note: waypointNote,
+                                    autoSave: true
+                                });
+                            }
+                        });
+                    }
+
                     setContextMenu({
                         items,
                         x: event.clientX,
@@ -195,7 +324,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         label: 'Ajouter un waypoint',
                         icon: '📌',
                         action: () => {
-                            onAddWaypoint(gcCoords);
+                            onAddWaypoint({ gcCoords });
                         }
                     });
                 }

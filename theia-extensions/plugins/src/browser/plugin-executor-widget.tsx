@@ -515,6 +515,7 @@ const PluginExecutorComponent: React.FC<{
                             formatted: coords.ddm || ''
                         };
 
+                        const pluginLabel = result.plugin_info?.name || state.selectedPlugin || 'Coordonnée détectée';
                         const decimalCoordinates = extractDecimalCoordinates({
                             latitude: (coords as any).decimal_latitude ?? item.coordinates.latitude,
                             longitude: (coords as any).decimal_longitude ?? item.coordinates.longitude,
@@ -524,7 +525,7 @@ const PluginExecutorComponent: React.FC<{
                         if (decimalCoordinates) {
                             console.log('[Coordinates Detection] Dispatch map highlight', {
                                 gcCode: context.gcCode,
-                                pluginName: state.selectedPlugin || result.plugin_info?.name,
+                                pluginName: pluginLabel,
                                 latitude: decimalCoordinates.latitude,
                                 longitude: decimalCoordinates.longitude,
                                 formatted: coords.ddm || item.coordinates.formatted
@@ -532,14 +533,17 @@ const PluginExecutorComponent: React.FC<{
                             window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
                                 detail: {
                                     gcCode: context.gcCode,
-                                    pluginName: state.selectedPlugin || result.plugin_info?.name,
+                                    pluginName: pluginLabel,
                                     coordinates: {
                                         latitude: decimalCoordinates.latitude,
                                         longitude: decimalCoordinates.longitude,
                                         formatted: coords.ddm || item.coordinates.formatted
                                     },
                                     autoSaved: false,
-                                    replaceExisting: false
+                                    replaceExisting: false,
+                                    waypointTitle: pluginLabel,
+                                    waypointNote: item.text_output,
+                                    sourceResultText: item.text_output
                                 }
                             }));
                         } else {

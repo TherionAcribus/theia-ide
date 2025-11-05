@@ -126,7 +126,7 @@ export class MapWidget extends ReactWidget {
     /**
      * Gère l'ajout d'un waypoint depuis le menu contextuel de la carte
      */
-    private handleAddWaypoint = (gcCoords: string): void => {
+    private handleAddWaypoint = (options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }): void => {
         if (this.context.type !== 'geocache' || !this.context.id) {
             return;
         }
@@ -137,7 +137,11 @@ export class MapWidget extends ReactWidget {
 
         if (detailsWidget && 'addWaypointWithCoordinates' in detailsWidget) {
             // Appeler la méthode publique du widget de détails
-            (detailsWidget as any).addWaypointWithCoordinates(gcCoords);
+            (detailsWidget as any).addWaypointWithCoordinates(options.gcCoords, {
+                title: options.title,
+                note: options.note,
+                autoSave: options.autoSave
+            });
         } else {
             this.messageService.warn('Veuillez ouvrir les détails de la géocache pour ajouter un waypoint');
         }

@@ -3,9 +3,11 @@ import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
+import { CommandService } from '@theia/core';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
+import { FormulaSolverSolveFromGeocacheCommand } from '@mysterai/theia-formula-solver/lib/browser/formula-solver-contribution';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -904,7 +906,8 @@ export class GeocacheDetailsWidget extends ReactWidget {
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
-        @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution
+        @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
+        @inject(CommandService) protected readonly commandService: CommandService
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
@@ -1073,6 +1076,26 @@ export class GeocacheDetailsWidget extends ReactWidget {
 
         await this.setAsCorrectedCoords(waypointId, waypoint.name || 'ce waypoint');
     }
+
+    /**
+     * Ouvre le Formula Solver avec la géocache actuelle
+     */
+    protected solveFormula = async (): Promise<void> => {
+        if (!this.data || !this.geocacheId) {
+            this.messages.warn('Aucune géocache chargée');
+            return;
+        }
+
+        try {
+            await this.commandService.executeCommand(
+                FormulaSolverSolveFromGeocacheCommand.id,
+                this.geocacheId
+            );
+        } catch (error) {
+            console.error('Erreur lors de l\'ouverture du Formula Solver:', error);
+            this.messages.error('Impossible d\'ouvrir le Formula Solver');
+        }
+    };
 
     /**
      * Ouvre le Plugin Executor avec le contexte de la géocache actuelle
@@ -1432,14 +1455,24 @@ export class GeocacheDetailsWidget extends ReactWidget {
                         <div style={{ marginBottom: 8 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                                 <h3 style={{ margin: 0 }}>{d.name}</h3>
-                                <button
-                                    className='theia-button secondary'
-                                    onClick={this.analyzeWithPlugins}
-                                    style={{ fontSize: 12, padding: '4px 12px' }}
-                                    title='Analyser cette géocache avec les plugins'
-                                >
-                                    🔌 Analyser avec plugins
-                                </button>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        className='theia-button secondary'
+                                        onClick={this.solveFormula}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Ouvrir le Formula Solver'
+                                    >
+                                        🧮 Résoudre formule
+                                    </button>
+                                    <button
+                                        className='theia-button secondary'
+                                        onClick={this.analyzeWithPlugins}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Analyser cette géocache avec les plugins'
+                                    >
+                                        🔌 Analyser avec plugins
+                                    </button>
+                                </div>
                             </div>
                             <div style={{ display: 'flex', gap: 16, opacity: 0.7, fontSize: 14 }}>
                                 <span>{d.gc_code}</span>

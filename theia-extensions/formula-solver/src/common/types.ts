@@ -82,7 +82,12 @@ export interface FormulaSolverState {
     
     // Données
     geocacheId?: number;
+    gcCode?: string;
     text?: string;
+    
+    // Coordonnées d'origine
+    originLat?: number;
+    originLon?: number;
     
     // Formules détectées
     formulas: Formula[];

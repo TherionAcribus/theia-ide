@@ -4,7 +4,7 @@
  */
 
 import * as React from '@theia/core/shared/react';
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct, optional } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FormulaSolverService } from './formula-solver-service';
@@ -14,6 +14,7 @@ import {
     QuestionFieldsComponent,
     ResultDisplayComponent
 } from './components';
+import { MapService } from 'theia-ide-zones-ext/lib/browser/map/map-service';
 
 @injectable()
 export class FormulaSolverWidget extends ReactWidget {
@@ -26,6 +27,10 @@ export class FormulaSolverWidget extends ReactWidget {
 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
+
+    @inject(MapService)
+    @optional()
+    protected readonly mapService?: MapService;
 
     // État du widget
     protected state: FormulaSolverState = {
@@ -43,10 +48,49 @@ export class FormulaSolverWidget extends ReactWidget {
         this.title.caption = FormulaSolverWidget.LABEL;
         this.title.closable = true;
         this.title.iconClass = 'codicon codicon-symbol-variable';
-
-        this.update();
         
-        console.log('[FORMULA-SOLVER] Widget initialized');
+        this.update();
+    }
+
+    /**
+     * Charge le Formula Solver depuis une geocache
+     */
+    async loadFromGeocache(geocacheId: number): Promise<void> {
+        console.log(`[FORMULA-SOLVER] Chargement depuis geocache ${geocacheId}`);
+        
+        try {
+            this.updateState({ loading: true, error: undefined });
+            
+            // Récupérer les données de la geocache
+            const geocache = await this.formulaSolverService.getGeocache(geocacheId);
+            
+            console.log(`[FORMULA-SOLVER] Geocache ${geocache.gc_code} chargée`);
+            
+            // Mettre à jour l'état avec les données de la geocache
+            this.updateState({
+                geocacheId: geocache.id,
+                gcCode: geocache.gc_code,
+                text: geocache.description,
+                originLat: geocache.latitude,
+                originLon: geocache.longitude
+            });
+            
+            // Détecter automatiquement les formules
+            if (geocache.description) {
+                await this.detectFormulasFromText(geocache.description);
+            }
+            
+            this.messageService.info(`Formula Solver chargé pour ${geocache.gc_code} - ${geocache.name}`);
+            
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors du chargement:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.updateState({ 
+                error: `Erreur lors du chargement de la geocache: ${errorMsg}`,
+                loading: false 
+            });
+            this.messageService.error(`Erreur: ${errorMsg}`);
+        }
     }
 
     /**
@@ -55,6 +99,100 @@ export class FormulaSolverWidget extends ReactWidget {
     protected updateState(updates: Partial<FormulaSolverState>): void {
         this.state = { ...this.state, ...updates };
         this.update();
+    }
+
+    /**
+     * Affiche le résultat sur la carte
+     */
+    protected showOnMap(): void {
+        if (!this.state.result || !this.state.result.coordinates) {
+            this.messageService.error('Aucun résultat à afficher sur la carte');
+            return;
+        }
+
+        if (!this.mapService) {
+            this.messageService.warn('Carte indisponible : extension Zones non chargée');
+            return;
+        }
+
+        try {
+            // Préparer les informations pour le popup
+            const formulaText = this.state.selectedFormula 
+                ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
+                : 'Formule inconnue';
+            
+            const valuesText = Array.from(this.state.values.entries())
+                .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue})`)
+                .join(', ');
+
+            const coords = this.state.result.coordinates;
+            const formattedCoords = `${coords.ddm}\n${coords.dms}\n${coords.decimal}`;
+
+            // Construire la note détaillée
+            const note = `Solution Formula Solver\n\nFormule: ${formulaText}\nValeurs: ${valuesText}\n\nCoordonnées:\n${formattedCoords}`;
+
+            // Utiliser le MapService pour afficher sur la carte
+            this.mapService.highlightDetectedCoordinate({
+                latitude: coords.latitude,
+                longitude: coords.longitude,
+                formatted: coords.ddm,
+                gcCode: this.state.gcCode,
+                pluginName: 'Formula Solver',
+                waypointTitle: 'Solution formule',
+                waypointNote: note,
+                sourceResultText: formattedCoords
+            });
+
+            this.messageService.info('Coordonnées affichées sur la carte !');
+            
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors de l\'affichage sur la carte:', error);
+            this.messageService.error('Erreur lors de l\'affichage sur la carte');
+        }
+    }
+
+    /**
+     * Crée un waypoint depuis le résultat
+     */
+    protected async createWaypoint(): Promise<void> {
+        if (!this.state.geocacheId || !this.state.result || !this.state.result.coordinates) {
+            this.messageService.error('Impossible de créer le waypoint : données manquantes');
+            return;
+        }
+
+        try {
+            // Préparer la note avec la formule et les valeurs
+            const formulaText = this.state.selectedFormula 
+                ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
+                : 'Formule inconnue';
+            
+            const valuesText = Array.from(this.state.values.entries())
+                .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue}, type: ${value.type})`)
+                .join('\n');
+            
+            const note = `Solution Formula Solver\n\nFormule:\n${formulaText}\n\nValeurs:\n${valuesText}`;
+
+            // Appeler le service pour créer le waypoint
+            const waypoint = await this.formulaSolverService.createWaypoint(
+                this.state.geocacheId,
+                {
+                    name: 'Solution formule',
+                    latitude: this.state.result.coordinates.latitude,
+                    longitude: this.state.result.coordinates.longitude,
+                    note: note,
+                    type: 'Reference Point'
+                }
+            );
+
+            this.messageService.info(`Waypoint ${waypoint.prefix} créé avec succès !`);
+            
+            // TODO: Actualiser le GeocacheDetailsWidget
+            
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors de la création du waypoint:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.messageService.error(`Erreur lors de la création du waypoint: ${errorMsg}`);
+        }
     }
 
     /**
@@ -284,6 +422,8 @@ export class FormulaSolverWidget extends ReactWidget {
                     <ResultDisplayComponent
                         result={this.state.result}
                         onCopy={(text) => this.messageService.info(`Copié: ${text}`)}
+                        onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint() : undefined}
+                        onProjectOnMap={() => this.showOnMap()}
                     />
                 )}
                 

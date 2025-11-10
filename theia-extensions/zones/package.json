@@ -21,7 +21,8 @@
     "inversify": "^6.0.1",
     "@tanstack/react-table": "^8.10.7",
     "ol": "^9.0.0",
-    "@mysterai/theia-plugins": "1.0.0"
+    "@mysterai/theia-plugins": "1.0.0",
+    "@mysterai/theia-formula-solver": "1.0.0"
   },
   "peerDependencies": {
     "react": "^16.8.0"
@@ -33,7 +34,7 @@
   "scripts": {
     "clean": "rimraf lib *.tsbuildinfo",
     "build": "tsc -b",
-    "watch": "tsc -w",
+    "watch": "rimraf lib *.tsbuildinfo && tsc -w",
     "lint": "eslint --ext js,jsx,ts,tsx src",
     "lint:fix": "eslint --ext js,jsx,ts,tsx src --fix",
     "update:theia": "ts-node ../../scripts/update-theia-version.ts",

@@ -20,6 +20,11 @@ export const FormulaSolverToggleCommand: Command = {
     label: 'Formula Solver'
 };
 
+export const FormulaSolverSolveFromGeocacheCommand: Command = {
+    id: 'formula-solver:solve-from-geocache',
+    label: 'Résoudre la formule'
+};
+
 @injectable()
 export class FormulaSolverContribution
     extends AbstractViewContribution<FormulaSolverWidget>
@@ -50,6 +55,17 @@ export class FormulaSolverContribution
         // Commande pour toggle le widget
         commands.registerCommand(FormulaSolverToggleCommand, {
             execute: () => this.toggleView()
+        });
+
+        // Commande pour résoudre depuis une geocache
+        commands.registerCommand(FormulaSolverSolveFromGeocacheCommand, {
+            execute: async (geocacheId: number) => {
+                console.log(`[FORMULA-SOLVER] Ouverture depuis geocache ${geocacheId}`);
+                const widget = await this.openView({ activate: true, reveal: true });
+                if (widget instanceof FormulaSolverWidget) {
+                    await widget.loadFromGeocache(geocacheId);
+                }
+            }
         });
 
         console.log('[FORMULA-SOLVER] Commands registered');

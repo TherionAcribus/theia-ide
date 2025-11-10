@@ -22,6 +22,30 @@ export interface FormulaSolverService {
     calculateChecksum(value: string | number): number;
     calculateReducedChecksum(value: string | number): number;
     calculateLength(value: string): number;
+    getGeocache(geocacheId: number): Promise<{
+        id: number;
+        gc_code: string;
+        name: string;
+        description: string;
+        latitude: number;
+        longitude: number;
+    }>;
+    createWaypoint(geocacheId: number, params: {
+        name: string;
+        latitude: number;
+        longitude: number;
+        note?: string;
+        type?: string;
+    }): Promise<{
+        id: number;
+        prefix: string;
+        name: string;
+        type: string;
+        latitude: number;
+        longitude: number;
+        gc_coords: string;
+        note: string;
+    }>;
 }
 
 @injectable()
@@ -195,5 +219,69 @@ export class FormulaSolverServiceImpl implements FormulaSolverService {
      */
     calculateLength(value: string): number {
         return value.replace(/\s/g, '').length;
+    }
+
+    /**
+     * Récupère les informations d'une geocache pour le Formula Solver
+     */
+    async getGeocache(geocacheId: number): Promise<{
+        id: number;
+        gc_code: string;
+        name: string;
+        description: string;
+        latitude: number;
+        longitude: number;
+    }> {
+        console.log(`[FORMULA-SOLVER] Récupération geocache ${geocacheId}`);
+        
+        try {
+            const response = await this.apiClient.get(`/geocache/${geocacheId}`);
+            
+            if (response.data.status === 'success') {
+                console.log(`[FORMULA-SOLVER] Geocache ${response.data.geocache.gc_code} récupérée`);
+                return response.data.geocache;
+            } else {
+                throw new Error(response.data.error || 'Erreur inconnue');
+            }
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors de la récupération de la geocache:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Crée un waypoint depuis le résultat du Formula Solver
+     */
+    async createWaypoint(geocacheId: number, params: {
+        name: string;
+        latitude: number;
+        longitude: number;
+        note?: string;
+        type?: string;
+    }): Promise<{
+        id: number;
+        prefix: string;
+        name: string;
+        type: string;
+        latitude: number;
+        longitude: number;
+        gc_coords: string;
+        note: string;
+    }> {
+        console.log(`[FORMULA-SOLVER] Création waypoint pour geocache ${geocacheId}`);
+        
+        try {
+            const response = await this.apiClient.post(`/geocache/${geocacheId}/waypoint`, params);
+            
+            if (response.data.status === 'success') {
+                console.log(`[FORMULA-SOLVER] Waypoint ${response.data.waypoint.prefix} créé`);
+                return response.data.waypoint;
+            } else {
+                throw new Error(response.data.error || 'Erreur inconnue');
+            }
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors de la création du waypoint:', error);
+            throw error;
+        }
     }
 }

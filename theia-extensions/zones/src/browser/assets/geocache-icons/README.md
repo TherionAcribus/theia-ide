@@ -87,3 +87,4 @@ for name, x, y in icons:
 Si les icônes ne sont pas trouvées, la carte utilisera des cercles de couleur comme fallback.
 
 
+

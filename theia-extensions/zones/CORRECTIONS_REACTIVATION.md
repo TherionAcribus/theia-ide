@@ -216,3 +216,4 @@ Résultat attendu :
 **Status** : ✅ Corrigé et compilé avec succès  
 **Version** : 2.1 (patch de réactivation)
 
+

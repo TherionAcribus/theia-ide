@@ -189,3 +189,4 @@ Les logs sont actuellement **très utiles** et peuvent être gardés. Si vous d�
 
 **Décision recommandée** : Garder les logs pour l'instant, implémenter le système de flag plus tard si nécessaire.
 
+

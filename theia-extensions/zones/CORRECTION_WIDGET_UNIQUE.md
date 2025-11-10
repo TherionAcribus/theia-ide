@@ -224,3 +224,4 @@ Le panneau devrait afficher :
 **Type** : Correction critique (architecture)  
 **Build** : ✅ Done in 1.01s
 
+

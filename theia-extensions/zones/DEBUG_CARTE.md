@@ -163,3 +163,4 @@ Si ce point ne s'affiche pas → Le problème vient du rendu
 
 **Prochain pas** : Relancez Theia, ouvrez une zone, et partagez-moi les logs de la console ! 🔍
 
+

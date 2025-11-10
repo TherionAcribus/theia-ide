@@ -226,3 +226,4 @@ yarn build
 
 **Résultat** : La carte affiche maintenant **tous les points pertinents** pour chaque zone et chaque géocache.
 
+

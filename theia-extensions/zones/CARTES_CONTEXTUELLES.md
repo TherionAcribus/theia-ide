@@ -339,3 +339,4 @@ openMapForRoute(routeId: number, waypoints: any[]): Promise<MapWidget>
 
 **Résultat** : Un système de cartes moderne, flexible et intuitif ! 🗺️✨
 
+

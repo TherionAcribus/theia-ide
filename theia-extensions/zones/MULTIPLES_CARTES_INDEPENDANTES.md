@@ -290,3 +290,4 @@ yarn build  # ✅ Done in 1.87s
 **Version** : 2.2  
 **Type** : Correction majeure (architecture)
 
+

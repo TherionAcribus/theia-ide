@@ -2,6 +2,8 @@
  * Styles pour Formula Solver Widget
  */
 
+@import './formula-preview.css';
+
 .formula-solver-container {
     font-family: var(--theia-ui-font-family);
     font-size: var(--theia-ui-font-size1);

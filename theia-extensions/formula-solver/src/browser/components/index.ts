@@ -5,3 +5,4 @@
 export * from './DetectedFormulasComponent';
 export * from './QuestionFieldsComponent';
 export * from './ResultDisplayComponent';
+export * from './FormulaPreviewComponent';

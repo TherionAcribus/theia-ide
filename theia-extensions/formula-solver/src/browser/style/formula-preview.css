@@ -1,0 +1,76 @@
+/**
+ * Styles pour le composant FormulaPreview
+ */
+
+.formula-preview-container {
+    background-color: var(--theia-editor-background);
+    border: 1px solid var(--theia-panel-border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.formula-preview-container h3 {
+    margin: 0 0 12px 0;
+    color: var(--theia-foreground);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.formula-part {
+    transition: all 0.2s ease-in-out;
+}
+
+.formula-part strong {
+    color: var(--theia-foreground);
+}
+
+/* Classes Theia natives pour les statuts */
+.theia-success {
+    color: var(--theia-successText, #4caf50);
+    font-weight: 500;
+}
+
+.theia-warn {
+    color: var(--theia-warningText, #ff9800);
+    font-weight: 500;
+}
+
+.theia-error {
+    color: var(--theia-errorText, #f44336);
+    font-weight: 500;
+}
+
+/* Animation pour les updates */
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.formula-part:hover {
+    transform: translateX(2px);
+}
+
+/* Styles pour les icônes de statut */
+.codicon {
+    font-size: 14px;
+}
+
+.codicon-check {
+    color: var(--theia-successText, #4caf50);
+}
+
+.codicon-circle-outline {
+    color: var(--theia-warningText, #ff9800);
+}
+
+.codicon-error {
+    color: var(--theia-errorText, #f44336);
+}

@@ -12,7 +12,8 @@ import { Formula, Question, LetterValue, FormulaSolverState } from '../common/ty
 import {
     DetectedFormulasComponent,
     QuestionFieldsComponent,
-    ResultDisplayComponent
+    ResultDisplayComponent,
+    FormulaPreviewComponent
 } from './components';
 
 @injectable()
@@ -306,11 +307,29 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Tente un calcul automatique si toutes les lettres sont remplies
+     */
+    protected tryAutoCalculate(): void {
+        if (!this.state.selectedFormula) {
+            return;
+        }
+
+        // Vérifier que toutes les valeurs sont renseignées
+        const letters = this.extractLettersFromFormula(this.state.selectedFormula);
+        const missingValues = letters.filter(letter => !this.state.values.has(letter));
+        
+        if (missingValues.length === 0) {
+            // Toutes les lettres sont remplies, calculer automatiquement
+            console.log('[FORMULA-SOLVER] Toutes les lettres sont remplies, calcul automatique...');
+            this.calculateCoordinates();
+        }
+    }
+
+    /**
      * Calcule les coordonnées finales
      */
     protected async calculateCoordinates(): Promise<void> {
         if (!this.state.selectedFormula) {
-            this.messageService.warn('Aucune formule sélectionnée');
             return;
         }
 
@@ -319,7 +338,7 @@ export class FormulaSolverWidget extends ReactWidget {
         const missingValues = letters.filter(letter => !this.state.values.has(letter));
         
         if (missingValues.length > 0) {
-            this.messageService.warn(`Valeurs manquantes pour : ${missingValues.join(', ')}`);
+            // Mode silencieux : ne pas afficher de warning, c'est normal en cours de saisie
             return;
         }
 
@@ -424,6 +443,9 @@ export class FormulaSolverWidget extends ReactWidget {
 
         this.state.values.set(letter, letterValue);
         this.update();
+        
+        // Déclencher le calcul automatique si toutes les lettres sont remplies
+        this.tryAutoCalculate();
     }
 
     /**
@@ -440,41 +462,8 @@ export class FormulaSolverWidget extends ReactWidget {
                 {/* Étape 2 : Questions et valeurs */}
                 {this.state.currentStep !== 'detect' && this.renderQuestionsStep()}
                 
-                {/* Bouton calculer */}
-                {this.state.questions.length > 0 && (
-                    <div style={{ marginTop: '15px', marginBottom: '20px' }}>
-                        <button
-                            style={{
-                                padding: '10px 20px',
-                                backgroundColor: 'var(--theia-button-background)',
-                                color: 'var(--theia-button-foreground)',
-                                border: 'none',
-                                borderRadius: '4px',
-                                cursor: 'pointer',
-                                fontSize: '14px',
-                                fontWeight: 'bold',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px'
-                            }}
-                            onClick={() => this.calculateCoordinates()}
-                            disabled={this.state.loading}
-                        >
-                            <span className='codicon codicon-run-all'></span>
-                            Calculer les coordonnées
-                        </button>
-                    </div>
-                )}
-                
-                {/* Étape 3 : Résultat */}
-                {this.state.result && this.state.result.status === 'success' && (
-                    <ResultDisplayComponent
-                        result={this.state.result}
-                        onCopy={(text) => this.messageService.info(`Copié: ${text}`)}
-                        onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint() : undefined}
-                        onProjectOnMap={() => this.showOnMap()}
-                    />
-                )}
+                {/* Étape 3 : Calcul automatique des coordonnées */}
+                {this.state.questions.length > 0 && this.renderCalculateStep()}
                 
                 {/* État de chargement */}
                 {this.state.loading && (
@@ -549,6 +538,7 @@ export class FormulaSolverWidget extends ReactWidget {
         return (
             <div className='questions-step' style={{ marginBottom: '20px' }}>
                 <h3>2. Questions pour les variables</h3>
+                
                 <QuestionFieldsComponent
                     questions={this.state.questions}
                     values={this.state.values}
@@ -556,6 +546,37 @@ export class FormulaSolverWidget extends ReactWidget {
                     onExtractQuestions={this.state.questions.length === 0 ? () => this.extractQuestions(this.state.selectedFormula!) : undefined}
                     loading={this.state.loading}
                 />
+            </div>
+        );
+    }
+
+    protected renderCalculateStep(): React.ReactNode {
+        if (!this.state.selectedFormula) return null;
+
+        return (
+            <div className='calculate-step' style={{ marginBottom: '20px' }}>
+                <h3>3. Calcul des coordonnées</h3>
+                
+                {/* Prévisualisation en temps réel avec calcul automatique */}
+                <FormulaPreviewComponent
+                    formula={this.state.selectedFormula}
+                    values={this.state.values}
+                    onPartialCalculate={(part, result) => {
+                        console.log(`[FORMULA-SOLVER] Partie ${part} calculée automatiquement:`, result);
+                        // Vérifier si les deux parties sont complètes pour calculer automatiquement
+                        this.tryAutoCalculate();
+                    }}
+                />
+                
+                {/* Résultat du calcul */}
+                {this.state.result && this.state.result.status === 'success' && (
+                    <ResultDisplayComponent
+                        result={this.state.result}
+                        onCopy={(text) => this.messageService.info(`Copié: ${text}`)}
+                        onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint() : undefined}
+                        onProjectOnMap={() => this.showOnMap()}
+                    />
+                )}
             </div>
         );
     }

@@ -364,6 +364,53 @@ export class MapLayerManager {
         console.log('[MapLayerManager] Feature added to detectedCoordinateSource, total features:', this.detectedCoordinateSource.getFeatures().length);
     }
 
+    /**
+     * Affiche plusieurs coordonnées détectées simultanément (pour brute force)
+     */
+    showMultipleDetectedCoordinates(highlights: DetectedCoordinateHighlight[]): void {
+        console.log('[MapLayerManager] showMultipleDetectedCoordinates called', highlights.length);
+        
+        // Effacer les points précédents
+        this.detectedCoordinateSource.clear();
+        
+        // Ajouter chaque point
+        for (const highlight of highlights) {
+            if (highlight.latitude === undefined || highlight.longitude === undefined) {
+                console.warn('[MapLayerManager] Skipping invalid coordinate', highlight);
+                continue;
+            }
+
+            const coordinate = lonLatToMapCoordinate(highlight.longitude, highlight.latitude);
+            
+            const feature = new Feature({
+                geometry: new Point(coordinate)
+            });
+
+            feature.setProperties({
+                isDetectedCoordinate: true,
+                formatted: highlight.formatted,
+                pluginName: highlight.pluginName,
+                autoSaved: highlight.autoSaved,
+                gcCode: highlight.gcCode,
+                latDecimal: highlight.latitude,
+                lonDecimal: highlight.longitude,
+                replaceExisting: highlight.replaceExisting,
+                waypointTitle: highlight.waypointTitle,
+                waypointNote: highlight.waypointNote,
+                sourceResultText: highlight.sourceResultText,
+                gc_code: highlight.gcCode || 'Point détecté',
+                name: highlight.waypointTitle || highlight.pluginName || highlight.formatted || 'Coordonnée détectée',
+                cache_type: 'Coordonnée détectée',
+                note: highlight.waypointNote || highlight.sourceResultText || highlight.formatted || '',
+                coordinatesFormatted: highlight.formatted
+            });
+
+            this.detectedCoordinateSource.addFeature(feature);
+        }
+        
+        console.log('[MapLayerManager] Added', highlights.length, 'features to detectedCoordinateSource, total:', this.detectedCoordinateSource.getFeatures().length);
+    }
+
     clearDetectedCoordinate(): void {
         this.detectedCoordinateSource.clear();
     }

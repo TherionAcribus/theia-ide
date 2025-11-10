@@ -13,7 +13,8 @@ import {
     DetectedFormulasComponent,
     QuestionFieldsComponent,
     ResultDisplayComponent,
-    FormulaPreviewComponent
+    FormulaPreviewComponent,
+    BruteForceComponent
 } from './components';
 
 @injectable()
@@ -36,6 +37,13 @@ export class FormulaSolverWidget extends ReactWidget {
         values: new Map(),
         loading: false
     };
+
+    // État brute force
+    protected bruteForceMode: boolean = false;
+    protected bruteForceResults: Array<{
+        values: Record<string, number>;
+        coordinates?: any;
+    }> = [];
 
     @postConstruct()
     protected init(): void {
@@ -379,6 +387,98 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Exécute le calcul en mode brute force pour toutes les combinaisons
+     */
+    protected async executeBruteForce(combinations: Array<Record<string, number>>): Promise<void> {
+        if (!this.state.selectedFormula) {
+            return;
+        }
+
+        this.bruteForceMode = true;
+        this.bruteForceResults = [];
+        this.updateState({ loading: true, error: undefined });
+
+        this.messageService.info(`Calcul de ${combinations.length} combinaisons...`);
+
+        try {
+            const results: Array<{ values: Record<string, number>; coordinates?: any }> = [];
+
+            // Calculer chaque combinaison
+            for (const combination of combinations) {
+                try {
+                    const result = await this.formulaSolverService.calculateCoordinates({
+                        northFormula: this.state.selectedFormula.north,
+                        eastFormula: this.state.selectedFormula.east,
+                        values: combination
+                    });
+
+                    if (result.status === 'success') {
+                        results.push({
+                            values: combination,
+                            coordinates: result.coordinates
+                        });
+                    }
+                } catch (error) {
+                    // Ignorer les erreurs de calcul individuelles
+                    console.warn('[FORMULA-SOLVER] Erreur pour combinaison', combination, error);
+                }
+            }
+
+            this.bruteForceResults = results;
+            this.updateState({ loading: false });
+
+            // Afficher tous les points sur la carte (uniquement ceux avec coordonnées)
+            const validResults = results.filter((r): r is { values: Record<string, number>; coordinates: any } => 
+                r.coordinates !== undefined
+            );
+            this.showAllResultsOnMap(validResults);
+
+            this.messageService.info(
+                `${results.length} résultat${results.length > 1 ? 's' : ''} calculé${results.length > 1 ? 's' : ''} avec succès !`
+            );
+
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.messageService.error(`Erreur brute force : ${message}`);
+            this.updateState({ loading: false, error: message });
+        }
+    }
+
+    /**
+     * Affiche tous les résultats du brute force sur la carte
+     */
+    protected showAllResultsOnMap(results: Array<{ values: Record<string, number>; coordinates: any }>): void {
+        console.log('[FORMULA-SOLVER] Affichage de', results.length, 'résultats sur la carte');
+
+        // Effacer les points précédents
+        window.dispatchEvent(new CustomEvent('geoapp-map-highlight-clear'));
+
+        // Ajouter chaque point
+        results.forEach((result, index) => {
+            const coords = result.coordinates;
+            const valuesText = Object.entries(result.values)
+                .map(([letter, value]) => `${letter}=${value}`)
+                .join(', ');
+
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+                detail: {
+                    gcCode: this.state.gcCode,
+                    pluginName: 'Formula Solver (Brute Force)',
+                    coordinates: {
+                        latitude: coords.latitude,
+                        longitude: coords.longitude,
+                        formatted: coords.ddm
+                    },
+                    waypointTitle: `Solution ${index + 1}`,
+                    waypointNote: `Valeurs: ${valuesText}\n\nCoordonnées:\n${coords.ddm}`,
+                    sourceResultText: coords.ddm,
+                    replaceExisting: false // Ajouter sans remplacer
+                }
+            }));
+        });
+    }
+
+    /**
      * Extrait les lettres (variables) d'une formule
      * Ignore uniquement les lettres cardinales (N, S, E, W) en début de coordonnées
      */
@@ -568,14 +668,83 @@ export class FormulaSolverWidget extends ReactWidget {
                     }}
                 />
                 
-                {/* Résultat du calcul */}
-                {this.state.result && this.state.result.status === 'success' && (
+                {/* Mode Brute Force */}
+                <BruteForceComponent
+                    letters={this.extractLettersFromFormula(this.state.selectedFormula)}
+                    values={this.state.values}
+                    onBruteForceExecute={(combinations) => this.executeBruteForce(combinations)}
+                />
+                
+                {/* Résultat du calcul normal */}
+                {!this.bruteForceMode && this.state.result && this.state.result.status === 'success' && (
                     <ResultDisplayComponent
                         result={this.state.result}
                         onCopy={(text) => this.messageService.info(`Copié: ${text}`)}
                         onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint() : undefined}
                         onProjectOnMap={() => this.showOnMap()}
                     />
+                )}
+                
+                {/* Résultats du brute force */}
+                {this.bruteForceMode && this.bruteForceResults.length > 0 && (
+                    <div style={{
+                        marginTop: '20px',
+                        padding: '16px',
+                        backgroundColor: 'var(--theia-editor-background)',
+                        border: '1px solid var(--theia-panel-border)',
+                        borderRadius: '6px'
+                    }}>
+                        <h4 style={{ margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="codicon codicon-checklist" />
+                            Résultats Brute Force ({this.bruteForceResults.length})
+                        </h4>
+                        <div style={{ 
+                            maxHeight: '400px', 
+                            overflowY: 'auto',
+                            fontSize: '12px'
+                        }}>
+                            {this.bruteForceResults.map((result, index) => (
+                                <div key={index} style={{
+                                    padding: '8px',
+                                    marginBottom: '8px',
+                                    backgroundColor: 'var(--theia-input-background)',
+                                    borderRadius: '4px',
+                                    borderLeft: '3px solid var(--theia-successText)'
+                                }}>
+                                    <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                                        Solution {index + 1}
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--theia-code-font-family)' }}>
+                                        Valeurs: {Object.entries(result.values)
+                                            .map(([letter, value]) => `${letter}=${value}`)
+                                            .join(', ')}
+                                    </div>
+                                    <div style={{ fontFamily: 'var(--theia-code-font-family)', color: 'var(--theia-descriptionForeground)' }}>
+                                        {result.coordinates?.ddm}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <button
+                            onClick={() => {
+                                this.bruteForceMode = false;
+                                this.bruteForceResults = [];
+                                this.update();
+                            }}
+                            style={{
+                                marginTop: '12px',
+                                padding: '8px 16px',
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                        >
+                            Effacer les résultats
+                        </button>
+                    </div>
                 )}
             </div>
         );

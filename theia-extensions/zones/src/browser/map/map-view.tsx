@@ -484,6 +484,39 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             applyHighlight(highlight);
         });
 
+        // Listener pour les highlights multiples (Brute Force)
+        const disposableMulti = mapService.onDidHighlightCoordinates(highlights => {
+            console.log('[MapView] Multiple highlights received!', highlights.length);
+            
+            if (!layerManagerRef.current) {
+                return;
+            }
+
+            if (highlights.length === 0) {
+                // Effacer tous les points
+                layerManagerRef.current.clearDetectedCoordinate();
+                return;
+            }
+
+            // Afficher tous les points
+            layerManagerRef.current.showMultipleDetectedCoordinates(highlights);
+
+            // Centrer sur le premier point ou sur l'ensemble
+            if (highlights.length > 0) {
+                const firstPoint = highlights[0];
+                const coordinate = lonLatToMapCoordinate(firstPoint.longitude, firstPoint.latitude);
+                const view = mapInstanceRef.current?.getView();
+                if (view) {
+                    const currentZoom = view.getZoom() ?? 13;
+                    view.animate({
+                        center: coordinate,
+                        duration: 400,
+                        zoom: currentZoom < 13 ? 13 : currentZoom
+                    });
+                }
+            }
+        });
+
         const lastHighlight = mapService.getLastHighlightedCoordinate();
         if (lastHighlight) {
             console.log('[MapView] Applying last highlight from cache', lastHighlight);
@@ -494,6 +527,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             console.log('[MapView] Cleaning up highlight listener');
             applyHighlight(undefined);
             disposable.dispose();
+            disposableMulti.dispose();
         };
     }, [isInitialized, mapService]);
 

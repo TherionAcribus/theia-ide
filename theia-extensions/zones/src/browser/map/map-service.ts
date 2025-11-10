@@ -89,12 +89,17 @@ export class MapService {
     private readonly onDidHighlightCoordinateEmitter = new Emitter<DetectedCoordinateHighlight | undefined>();
     readonly onDidHighlightCoordinate: TheiaEvent<DetectedCoordinateHighlight | undefined> = this.onDidHighlightCoordinateEmitter.event;
 
+    // Événement pour les highlights multiples (Brute Force)
+    private readonly onDidHighlightCoordinatesEmitter = new Emitter<DetectedCoordinateHighlight[]>();
+    readonly onDidHighlightCoordinates: TheiaEvent<DetectedCoordinateHighlight[]> = this.onDidHighlightCoordinatesEmitter.event;
+
     // État interne
     private selectedGeocache: SelectedGeocache | null = null;
     private currentView: MapViewState | null = null;
     private loadedGeocaches: MapGeocache[] = [];
     private currentTileProvider: string = 'osm';
     private lastHighlightedCoordinate: DetectedCoordinateHighlight | undefined;
+    private highlightedCoordinates: DetectedCoordinateHighlight[] = [];
 
     constructor() {
         if (typeof window !== 'undefined') {
@@ -246,8 +251,23 @@ export class MapService {
      */
     highlightDetectedCoordinate(coordinate: DetectedCoordinateHighlight): void {
         this.lastHighlightedCoordinate = coordinate;
-        console.log('[MapService] Highlight coordonnée mise à jour', coordinate);
+        
+        // Gérer replaceExisting pour les highlights multiples
+        if (coordinate.replaceExisting === false) {
+            // Ajouter au tableau existant
+            this.highlightedCoordinates.push(coordinate);
+            console.log('[MapService] Highlight coordonnée ajoutée', coordinate, `(${this.highlightedCoordinates.length} total)`);
+        } else {
+            // Remplacer tout (comportement par défaut)
+            this.highlightedCoordinates = [coordinate];
+            console.log('[MapService] Highlight coordonnée mise à jour (remplacé)', coordinate);
+        }
+        
+        // Émettre l'événement unique (rétrocompatibilité)
         this.onDidHighlightCoordinateEmitter.fire(coordinate);
+        
+        // Émettre l'événement multiple (nouveau)
+        this.onDidHighlightCoordinatesEmitter.fire([...this.highlightedCoordinates]);
     }
 
     /**
@@ -255,8 +275,10 @@ export class MapService {
      */
     clearHighlightedCoordinate(): void {
         this.lastHighlightedCoordinate = undefined;
-        console.log('[MapService] Highlight coordonnée effacée');
+        this.highlightedCoordinates = [];
+        console.log('[MapService] Highlight coordonnées effacées');
         this.onDidHighlightCoordinateEmitter.fire(undefined);
+        this.onDidHighlightCoordinatesEmitter.fire([]);
     }
 
     /**
@@ -264,6 +286,13 @@ export class MapService {
      */
     getLastHighlightedCoordinate(): DetectedCoordinateHighlight | undefined {
         return this.lastHighlightedCoordinate;
+    }
+
+    /**
+     * Récupère toutes les coordonnées détectées mises en évidence.
+     */
+    getHighlightedCoordinates(): DetectedCoordinateHighlight[] {
+        return [...this.highlightedCoordinates];
     }
 
     /**

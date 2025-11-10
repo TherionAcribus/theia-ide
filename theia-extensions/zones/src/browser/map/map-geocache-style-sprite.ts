@@ -17,6 +17,7 @@ export interface GeocacheFeatureProperties {
     selected?: boolean;
     isWaypoint?: boolean;  // ✅ Indique si c'est un waypoint
     waypointId?: number;   // ✅ ID du waypoint (si isWaypoint = true)
+    bruteForceId?: string; // ✅ ID pour les points brute force (suppression)
 }
 
 /**

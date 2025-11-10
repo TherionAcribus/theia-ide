@@ -41,6 +41,8 @@ export class FormulaSolverWidget extends ReactWidget {
     // État brute force
     protected bruteForceMode: boolean = false;
     protected bruteForceResults: Array<{
+        id: string;
+        label: string;
         values: Record<string, number>;
         coordinates?: any;
     }> = [];
@@ -54,6 +56,28 @@ export class FormulaSolverWidget extends ReactWidget {
         this.title.iconClass = 'codicon codicon-symbol-variable';
         
         this.update();
+    }
+
+    protected onAfterAttach(msg: unknown): void {
+        super.onAfterAttach(msg as any);
+
+        if (typeof window !== 'undefined') {
+            window.addEventListener(
+                'geoapp-map-remove-brute-force-point',
+                this.handleExternalBruteForceRemoval as EventListener
+            );
+        }
+    }
+
+    protected onBeforeDetach(msg: unknown): void {
+        if (typeof window !== 'undefined') {
+            window.removeEventListener(
+                'geoapp-map-remove-brute-force-point',
+                this.handleExternalBruteForceRemoval as EventListener
+            );
+        }
+
+        super.onBeforeDetach(msg as any);
     }
 
     /**
@@ -401,7 +425,7 @@ export class FormulaSolverWidget extends ReactWidget {
         this.messageService.info(`Calcul de ${combinations.length} combinaisons...`);
 
         try {
-            const results: Array<{ values: Record<string, number>; coordinates?: any }> = [];
+            const results: Array<{ id: string; label: string; values: Record<string, number>; coordinates?: any }> = [];
 
             // Calculer chaque combinaison
             for (const combination of combinations) {
@@ -413,7 +437,16 @@ export class FormulaSolverWidget extends ReactWidget {
                     });
 
                     if (result.status === 'success') {
+                        // Générer un ID unique basé sur les valeurs
+                        const id = Object.entries(combination)
+                            .map(([k, v]) => `${k}${v}`)
+                            .join('-');
+                        
+                        const label = `Solution ${results.length + 1}`;
+
                         results.push({
+                            id,
+                            label,
                             values: combination,
                             coordinates: result.coordinates
                         });
@@ -428,7 +461,7 @@ export class FormulaSolverWidget extends ReactWidget {
             this.updateState({ loading: false });
 
             // Afficher tous les points sur la carte (uniquement ceux avec coordonnées)
-            const validResults = results.filter((r): r is { values: Record<string, number>; coordinates: any } => 
+            const validResults = results.filter((r): r is { id: string; label: string; values: Record<string, number>; coordinates: any } => 
                 r.coordinates !== undefined
             );
             this.showAllResultsOnMap(validResults);
@@ -445,16 +478,67 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Supprime un résultat brute force spécifique
+     */
+    protected removeBruteForceResult(resultId: string): void {
+        console.log('[FORMULA-SOLVER] Suppression du résultat', resultId);
+        
+        // Retirer du tableau
+        this.bruteForceResults = this.bruteForceResults.filter(r => r.id !== resultId);
+        
+        // Émettre l'événement de suppression pour synchroniser la carte
+        window.dispatchEvent(new CustomEvent('geoapp-map-remove-brute-force-point', {
+            detail: { bruteForceId: resultId }
+        }));
+        
+        if (this.bruteForceResults.length === 0) {
+            // Plus de résultats, quitter le mode brute force
+            this.bruteForceMode = false;
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-clear'));
+        }
+        
+        this.update();
+        this.messageService.info('Résultat supprimé');
+    }
+
+    private handleExternalBruteForceRemoval = (event: Event): void => {
+        if (!this.bruteForceMode || this.bruteForceResults.length === 0) {
+            return;
+        }
+
+        const customEvent = event as CustomEvent<{ bruteForceId?: string }>;
+        const bruteForceId = customEvent.detail?.bruteForceId;
+
+        if (!bruteForceId) {
+            return;
+        }
+
+        if (!this.bruteForceResults.some(result => result.id === bruteForceId)) {
+            return;
+        }
+
+        console.log('[FORMULA-SOLVER] Résultat supprimé depuis la carte', bruteForceId);
+        this.bruteForceResults = this.bruteForceResults.filter(result => result.id !== bruteForceId);
+
+        if (this.bruteForceResults.length === 0) {
+            this.bruteForceMode = false;
+        }
+
+        this.update();
+        this.messageService.info('Résultat supprimé depuis la carte');
+    };
+
+    /**
      * Affiche tous les résultats du brute force sur la carte
      */
-    protected showAllResultsOnMap(results: Array<{ values: Record<string, number>; coordinates: any }>): void {
+    protected showAllResultsOnMap(results: Array<{ id: string; label: string; values: Record<string, number>; coordinates: any }>): void {
         console.log('[FORMULA-SOLVER] Affichage de', results.length, 'résultats sur la carte');
 
         // Effacer les points précédents
         window.dispatchEvent(new CustomEvent('geoapp-map-highlight-clear'));
 
         // Ajouter chaque point
-        results.forEach((result, index) => {
+        results.forEach(result => {
             const coords = result.coordinates;
             const valuesText = Object.entries(result.values)
                 .map(([letter, value]) => `${letter}=${value}`)
@@ -469,10 +553,11 @@ export class FormulaSolverWidget extends ReactWidget {
                         longitude: coords.longitude,
                         formatted: coords.ddm
                     },
-                    waypointTitle: `Solution ${index + 1}`,
+                    waypointTitle: result.label,
                     waypointNote: `Valeurs: ${valuesText}\n\nCoordonnées:\n${coords.ddm}`,
                     sourceResultText: coords.ddm,
-                    replaceExisting: false // Ajouter sans remplacer
+                    replaceExisting: false, // Ajouter sans remplacer
+                    bruteForceId: result.id // ID pour la suppression
                 }
             }));
         });
@@ -703,25 +788,58 @@ export class FormulaSolverWidget extends ReactWidget {
                             overflowY: 'auto',
                             fontSize: '12px'
                         }}>
-                            {this.bruteForceResults.map((result, index) => (
-                                <div key={index} style={{
+                            {this.bruteForceResults.map((result) => (
+                                <div key={result.id} style={{
                                     padding: '8px',
                                     marginBottom: '8px',
                                     backgroundColor: 'var(--theia-input-background)',
                                     borderRadius: '4px',
-                                    borderLeft: '3px solid var(--theia-successText)'
+                                    borderLeft: '3px solid var(--theia-successText)',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'flex-start',
+                                    gap: '8px'
                                 }}>
-                                    <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-                                        Solution {index + 1}
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                                            {result.label}
+                                        </div>
+                                        <div style={{ fontFamily: 'var(--theia-code-font-family)' }}>
+                                            Valeurs: {Object.entries(result.values)
+                                                .map(([letter, value]) => `${letter}=${value}`)
+                                                .join(', ')}
+                                        </div>
+                                        <div style={{ fontFamily: 'var(--theia-code-font-family)', color: 'var(--theia-descriptionForeground)' }}>
+                                            {result.coordinates?.ddm}
+                                        </div>
                                     </div>
-                                    <div style={{ fontFamily: 'var(--theia-code-font-family)' }}>
-                                        Valeurs: {Object.entries(result.values)
-                                            .map(([letter, value]) => `${letter}=${value}`)
-                                            .join(', ')}
-                                    </div>
-                                    <div style={{ fontFamily: 'var(--theia-code-font-family)', color: 'var(--theia-descriptionForeground)' }}>
-                                        {result.coordinates?.ddm}
-                                    </div>
+                                    <button
+                                        onClick={() => this.removeBruteForceResult(result.id)}
+                                        title="Supprimer cette solution"
+                                        style={{
+                                            padding: '4px 8px',
+                                            backgroundColor: 'transparent',
+                                            color: 'var(--theia-errorForeground)',
+                                            border: '1px solid var(--theia-errorForeground)',
+                                            borderRadius: '3px',
+                                            cursor: 'pointer',
+                                            fontSize: '11px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            flexShrink: 0
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--theia-errorForeground)';
+                                            e.currentTarget.style.color = 'var(--theia-editor-background)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'transparent';
+                                            e.currentTarget.style.color = 'var(--theia-errorForeground)';
+                                        }}
+                                    >
+                                        <span className="codicon codicon-trash" />
+                                    </button>
                                 </div>
                             ))}
                         </div>

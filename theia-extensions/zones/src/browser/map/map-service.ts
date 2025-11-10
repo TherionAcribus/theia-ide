@@ -36,6 +36,7 @@ export interface DetectedCoordinateHighlight {
     sourceResultText?: string;
     interactionType?: string; // Added interactionType property
     interactionData?: any; // Added interactionData property
+    bruteForceId?: string; // ID pour identification brute force
 }
 
 interface DetectedCoordinateHighlightEventDetail {
@@ -53,6 +54,7 @@ interface DetectedCoordinateHighlightEventDetail {
     sourceResultText?: string;
     interactionType?: string; // Added interactionType property
     interactionData?: any; // Added interactionData property
+    bruteForceId?: string; // ID pour identification brute force
 }
 
 /**
@@ -105,6 +107,7 @@ export class MapService {
         if (typeof window !== 'undefined') {
             window.addEventListener('geoapp-map-highlight-coordinate', this.handleHighlightCoordinateEvent as EventListener);
             window.addEventListener('geoapp-map-highlight-clear', this.handleHighlightClearEvent as EventListener);
+            window.addEventListener('geoapp-map-remove-brute-force-point', this.handleRemoveBruteForcePointEvent as EventListener);
         }
     }
 
@@ -142,13 +145,27 @@ export class MapService {
             replaceExisting: detail.replaceExisting,
             waypointTitle: detail.waypointTitle,
             waypointNote: detail.waypointNote,
-            sourceResultText: detail.sourceResultText
+            sourceResultText: detail.sourceResultText,
+            bruteForceId: detail.bruteForceId
         });
     };
 
     private handleHighlightClearEvent = (): void => {
         console.log('[MapService] Reçu geoapp-map-highlight-clear');
         this.clearHighlightedCoordinate();
+    };
+
+    private handleRemoveBruteForcePointEvent = (event: Event): void => {
+        const customEvent = event as CustomEvent<{ bruteForceId: string }>;
+        const { bruteForceId } = customEvent.detail;
+        
+        if (!bruteForceId) {
+            console.warn('[MapService] Remove event ignoré: bruteForceId manquant');
+            return;
+        }
+
+        console.log('[MapService] Suppression du point brute force', bruteForceId);
+        this.removeBruteForcePoint(bruteForceId);
     };
 
     /**
@@ -271,6 +288,21 @@ export class MapService {
     }
 
     /**
+     * Supprime un point brute force spécifique par son ID
+     */
+    removeBruteForcePoint(bruteForceId: string): void {
+        console.log('[MapService] Suppression du point brute force', bruteForceId);
+        
+        // Retirer du tableau
+        this.highlightedCoordinates = this.highlightedCoordinates.filter(
+            coord => coord.bruteForceId !== bruteForceId
+        );
+        
+        // Émettre l'événement mis à jour
+        this.onDidHighlightCoordinatesEmitter.fire([...this.highlightedCoordinates]);
+    }
+
+    /**
      * Efface la coordonnée détectée actuellement mise en évidence.
      */
     clearHighlightedCoordinate(): void {
@@ -347,6 +379,7 @@ export class MapService {
         if (typeof window !== 'undefined') {
             window.removeEventListener('geoapp-map-highlight-coordinate', this.handleHighlightCoordinateEvent as EventListener);
             window.removeEventListener('geoapp-map-highlight-clear', this.handleHighlightClearEvent as EventListener);
+            window.removeEventListener('geoapp-map-remove-brute-force-point', this.handleRemoveBruteForcePointEvent as EventListener);
         }
     }
 }

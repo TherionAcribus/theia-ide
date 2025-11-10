@@ -251,6 +251,21 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         });
                     }
 
+                    // Option de suppression pour les points brute force
+                    if (props.bruteForceId) {
+                        items.push({ separator: true });
+                        items.push({
+                            label: 'Supprimer ce point',
+                            icon: '🗑️',
+                            action: () => {
+                                console.log('[MapView] Suppression du point brute force', props.bruteForceId);
+                                window.dispatchEvent(new CustomEvent('geoapp-map-remove-brute-force-point', {
+                                    detail: { bruteForceId: props.bruteForceId }
+                                }));
+                            }
+                        });
+                    }
+
                     if (onAddWaypoint) {
                         items.push({ separator: true });
                         items.push({

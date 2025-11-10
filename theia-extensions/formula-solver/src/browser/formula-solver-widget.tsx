@@ -4,7 +4,7 @@
  */
 
 import * as React from '@theia/core/shared/react';
-import { injectable, inject, postConstruct, optional } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FormulaSolverService } from './formula-solver-service';
@@ -14,7 +14,6 @@ import {
     QuestionFieldsComponent,
     ResultDisplayComponent
 } from './components';
-import { MapService } from 'theia-ide-zones-ext/lib/browser/map/map-service';
 
 @injectable()
 export class FormulaSolverWidget extends ReactWidget {
@@ -27,10 +26,6 @@ export class FormulaSolverWidget extends ReactWidget {
 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
-
-    @inject(MapService)
-    @optional()
-    protected readonly mapService?: MapService;
 
     // État du widget
     protected state: FormulaSolverState = {
@@ -102,16 +97,11 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
-     * Affiche le résultat sur la carte
+     * Affiche le résultat sur la carte via événement window
      */
     protected showOnMap(): void {
         if (!this.state.result || !this.state.result.coordinates) {
             this.messageService.error('Aucun résultat à afficher sur la carte');
-            return;
-        }
-
-        if (!this.mapService) {
-            this.messageService.warn('Carte indisponible : extension Zones non chargée');
             return;
         }
 
@@ -131,17 +121,28 @@ export class FormulaSolverWidget extends ReactWidget {
             // Construire la note détaillée
             const note = `Solution Formula Solver\n\nFormule: ${formulaText}\nValeurs: ${valuesText}\n\nCoordonnées:\n${formattedCoords}`;
 
-            // Utiliser le MapService pour afficher sur la carte
-            this.mapService.highlightDetectedCoordinate({
-                latitude: coords.latitude,
-                longitude: coords.longitude,
-                formatted: coords.ddm,
-                gcCode: this.state.gcCode,
-                pluginName: 'Formula Solver',
-                waypointTitle: 'Solution formule',
-                waypointNote: note,
-                sourceResultText: formattedCoords
+            console.log('[FORMULA-SOLVER] Émission événement geoapp-map-highlight-coordinate', {
+                lat: coords.latitude,
+                lon: coords.longitude,
+                formatted: coords.ddm
             });
+
+            // Émettre événement pour la carte (compatible avec MapService de zones)
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+                detail: {
+                    gcCode: this.state.gcCode,
+                    pluginName: 'Formula Solver',
+                    coordinates: {
+                        latitude: coords.latitude,
+                        longitude: coords.longitude,
+                        formatted: coords.ddm
+                    },
+                    waypointTitle: 'Solution formule',
+                    waypointNote: note,
+                    sourceResultText: formattedCoords,
+                    replaceExisting: false
+                }
+            }));
 
             this.messageService.info('Coordonnées affichées sur la carte !');
             
@@ -345,6 +346,9 @@ export class FormulaSolverWidget extends ReactWidget {
                     result,
                     currentStep: 'calculate'
                 });
+                
+                // Afficher automatiquement le point sur la carte
+                this.showOnMap();
             } else {
                 throw new Error(result.error || 'Erreur lors du calcul');
             }

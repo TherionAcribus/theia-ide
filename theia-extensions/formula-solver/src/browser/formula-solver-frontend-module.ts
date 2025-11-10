@@ -16,6 +16,9 @@ console.log('[FORMULA-SOLVER] Loading formula-solver-frontend-module...');
 export default new ContainerModule(bind => {
     console.log('[FORMULA-SOLVER] Registering services and contributions...');
 
+    // Ne pas créer MapService ici - il sera injecté depuis zones si disponible
+    // L'injection @optional() dans FormulaSolverWidget gérera l'absence
+
     // Service
     bind(FormulaSolverService).to(FormulaSolverServiceImpl).inSingletonScope();
     

@@ -432,19 +432,36 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
 
     // Écoute des événements de mise en évidence d'une coordonnée détectée
     React.useEffect(() => {
+        console.log('[MapView] Setting up highlight listener', {
+            isInitialized,
+            hasMapInstance: !!mapInstanceRef.current,
+            hasLayerManager: !!layerManagerRef.current
+        });
+
         if (!mapInstanceRef.current || !layerManagerRef.current) {
+            console.log('[MapView] Skipping highlight listener - map not ready');
             return;
         }
 
         const applyHighlight = (highlight?: DetectedCoordinateHighlight) => {
+            console.log('[MapView] applyHighlight called', highlight);
+            
             if (!layerManagerRef.current) {
+                console.log('[MapView] No layerManager, skipping');
                 return;
             }
 
             if (!highlight) {
+                console.log('[MapView] Clearing detected coordinate');
                 layerManagerRef.current.clearDetectedCoordinate();
                 return;
             }
+
+            console.log('[MapView] Showing detected coordinate on map', {
+                lat: highlight.latitude,
+                lon: highlight.longitude,
+                formatted: highlight.formatted
+            });
 
             layerManagerRef.current.showDetectedCoordinate(highlight);
 
@@ -452,6 +469,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             const view = mapInstanceRef.current?.getView();
             if (view) {
                 const currentZoom = view.getZoom() ?? 13;
+                console.log('[MapView] Animating to coordinate, zoom:', currentZoom < 15 ? 15 : currentZoom);
                 view.animate({
                     center: coordinate,
                     duration: 400,
@@ -460,16 +478,20 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             }
         };
 
+        console.log('[MapView] Registering highlight event listener');
         const disposable = mapService.onDidHighlightCoordinate(highlight => {
+            console.log('[MapView] Highlight event received!', highlight);
             applyHighlight(highlight);
         });
 
         const lastHighlight = mapService.getLastHighlightedCoordinate();
         if (lastHighlight) {
+            console.log('[MapView] Applying last highlight from cache', lastHighlight);
             applyHighlight(lastHighlight);
         }
 
         return () => {
+            console.log('[MapView] Cleaning up highlight listener');
             applyHighlight(undefined);
             disposable.dispose();
         };

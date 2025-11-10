@@ -321,16 +321,22 @@ export class MapLayerManager {
      * Affiche une coordonnée détectée temporaire sur la carte.
      */
     showDetectedCoordinate(highlight: DetectedCoordinateHighlight): void {
+        console.log('[MapLayerManager] showDetectedCoordinate called', highlight);
+        
         const shouldClear = highlight.replaceExisting !== true;
         if (shouldClear) {
+            console.log('[MapLayerManager] Clearing previous detected coordinates');
             this.detectedCoordinateSource.clear();
         }
 
         if (highlight.latitude === undefined || highlight.longitude === undefined) {
+            console.log('[MapLayerManager] Invalid coordinates, skipping');
             return;
         }
 
         const coordinate = lonLatToMapCoordinate(highlight.longitude, highlight.latitude);
+        console.log('[MapLayerManager] Creating feature at coordinate', coordinate);
+        
         const feature = new Feature({
             geometry: new Point(coordinate)
         });
@@ -355,6 +361,7 @@ export class MapLayerManager {
         });
 
         this.detectedCoordinateSource.addFeature(feature);
+        console.log('[MapLayerManager] Feature added to detectedCoordinateSource, total features:', this.detectedCoordinateSource.getFeatures().length);
     }
 
     clearDetectedCoordinate(): void {

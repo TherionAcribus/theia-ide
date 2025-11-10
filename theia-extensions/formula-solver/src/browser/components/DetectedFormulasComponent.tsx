@@ -9,6 +9,7 @@ export interface DetectedFormulasComponentProps {
     formulas: Formula[];
     selectedFormula?: Formula;
     onSelect: (formula: Formula) => void;
+    onEditFormula?: (formula: Formula, updatedNorth: string, updatedEast: string) => void;
     loading?: boolean;
 }
 
@@ -16,8 +17,31 @@ export const DetectedFormulasComponent: React.FC<DetectedFormulasComponentProps>
     formulas,
     selectedFormula,
     onSelect,
+    onEditFormula,
     loading = false
 }) => {
+    const [editingId, setEditingId] = React.useState<string | null>(null);
+    const [editedNorth, setEditedNorth] = React.useState<string>('');
+    const [editedEast, setEditedEast] = React.useState<string>('');
+
+    const handleStartEdit = (formula: Formula) => {
+        setEditingId(formula.id);
+        setEditedNorth(formula.north);
+        setEditedEast(formula.east);
+    };
+
+    const handleSaveEdit = (formula: Formula) => {
+        if (onEditFormula) {
+            onEditFormula(formula, editedNorth, editedEast);
+        }
+        setEditingId(null);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingId(null);
+        setEditedNorth('');
+        setEditedEast('');
+    };
     if (formulas.length === 0 && !loading) {
         return null;
     }
@@ -55,6 +79,7 @@ export const DetectedFormulasComponent: React.FC<DetectedFormulasComponentProps>
 
                 {formulas.map((formula, index) => {
                     const isSelected = selectedFormula?.id === formula.id;
+                    const isEditing = editingId === formula.id;
                     
                     return (
                         <div
@@ -107,47 +132,163 @@ export const DetectedFormulasComponent: React.FC<DetectedFormulasComponentProps>
 
                             {/* Formule complète */}
                             <div style={{
-                                fontFamily: 'var(--theia-code-font-family)',
-                                fontSize: '14px',
-                                color: isSelected ? 'var(--theia-list-activeSelectionForeground)' : 'var(--theia-foreground)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
                                 marginBottom: '8px'
                             }}>
-                                {formula.text_output || `${formula.north} ${formula.east}`}
+                                <div style={{
+                                    fontFamily: 'var(--theia-code-font-family)',
+                                    fontSize: '14px',
+                                    color: isSelected ? 'var(--theia-list-activeSelectionForeground)' : 'var(--theia-foreground)',
+                                    flex: 1
+                                }}>
+                                    {formula.text_output || `${formula.north} ${formula.east}`}
+                                </div>
+                                {onEditFormula && !isEditing && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleStartEdit(formula);
+                                        }}
+                                        style={{
+                                            padding: '4px 8px',
+                                            fontSize: '11px',
+                                            backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                            color: 'var(--theia-button-secondaryForeground)',
+                                            border: 'none',
+                                            borderRadius: '3px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '4px'
+                                        }}
+                                        title='Modifier la formule'
+                                    >
+                                        <span className='codicon codicon-edit'></span>
+                                        Modifier
+                                    </button>
+                                )}
                             </div>
 
                             {/* Détails Nord/Est */}
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: '1fr 1fr',
-                                gap: '8px',
-                                fontSize: '12px',
-                                color: 'var(--theia-descriptionForeground)'
-                            }}>
+                            {isEditing ? (
                                 <div>
-                                    <span style={{ fontWeight: 'bold' }}>Nord:</span>
                                     <div style={{
-                                        marginTop: '2px',
-                                        fontFamily: 'var(--theia-code-font-family)',
-                                        padding: '4px 6px',
-                                        backgroundColor: 'var(--theia-editor-background)',
-                                        borderRadius: '3px'
+                                        display: 'grid',
+                                        gridTemplateColumns: '1fr 1fr',
+                                        gap: '8px',
+                                        fontSize: '12px',
+                                        marginBottom: '8px'
                                     }}>
-                                        {formula.north}
+                                        <div>
+                                            <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Nord:</label>
+                                            <input
+                                                type='text'
+                                                value={editedNorth}
+                                                onChange={(e) => setEditedNorth(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '6px 8px',
+                                                    fontFamily: 'var(--theia-code-font-family)',
+                                                    fontSize: '12px',
+                                                    backgroundColor: 'var(--theia-input-background)',
+                                                    color: 'var(--theia-input-foreground)',
+                                                    border: '1px solid var(--theia-input-border)',
+                                                    borderRadius: '3px'
+                                                }}
+                                                placeholder='Ex: N 48° 5A.BCD'
+                                            />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>Est:</label>
+                                            <input
+                                                type='text'
+                                                value={editedEast}
+                                                onChange={(e) => setEditedEast(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '6px 8px',
+                                                    fontFamily: 'var(--theia-code-font-family)',
+                                                    fontSize: '12px',
+                                                    backgroundColor: 'var(--theia-input-background)',
+                                                    color: 'var(--theia-input-foreground)',
+                                                    border: '1px solid var(--theia-input-border)',
+                                                    borderRadius: '3px'
+                                                }}
+                                                placeholder='Ex: E 002° 1E.FGH'
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                        <button
+                                            onClick={() => handleCancelEdit()}
+                                            style={{
+                                                padding: '5px 12px',
+                                                fontSize: '12px',
+                                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                                color: 'var(--theia-button-secondaryForeground)',
+                                                border: 'none',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Annuler
+                                        </button>
+                                        <button
+                                            onClick={() => handleSaveEdit(formula)}
+                                            style={{
+                                                padding: '5px 12px',
+                                                fontSize: '12px',
+                                                backgroundColor: 'var(--theia-button-background)',
+                                                color: 'var(--theia-button-foreground)',
+                                                border: 'none',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                        >
+                                            <span className='codicon codicon-check'></span>
+                                            Valider
+                                        </button>
                                     </div>
                                 </div>
-                                <div>
-                                    <span style={{ fontWeight: 'bold' }}>Est:</span>
-                                    <div style={{
-                                        marginTop: '2px',
-                                        fontFamily: 'var(--theia-code-font-family)',
-                                        padding: '4px 6px',
-                                        backgroundColor: 'var(--theia-editor-background)',
-                                        borderRadius: '3px'
-                                    }}>
-                                        {formula.east}
+                            ) : (
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '1fr 1fr',
+                                    gap: '8px',
+                                    fontSize: '12px',
+                                    color: 'var(--theia-descriptionForeground)'
+                                }}>
+                                    <div>
+                                        <span style={{ fontWeight: 'bold' }}>Nord:</span>
+                                        <div style={{
+                                            marginTop: '2px',
+                                            fontFamily: 'var(--theia-code-font-family)',
+                                            padding: '4px 6px',
+                                            backgroundColor: 'var(--theia-editor-background)',
+                                            borderRadius: '3px'
+                                        }}>
+                                            {formula.north}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span style={{ fontWeight: 'bold' }}>Est:</span>
+                                        <div style={{
+                                            marginTop: '2px',
+                                            fontFamily: 'var(--theia-code-font-family)',
+                                            padding: '4px 6px',
+                                            backgroundColor: 'var(--theia-editor-background)',
+                                            borderRadius: '3px'
+                                        }}>
+                                            {formula.east}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
                             {/* Source si disponible */}
                             {formula.source && (

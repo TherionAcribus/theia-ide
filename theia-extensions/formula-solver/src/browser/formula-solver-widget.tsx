@@ -229,6 +229,40 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Modifie manuellement une formule détectée
+     */
+    protected handleEditFormula(formula: Formula, updatedNorth: string, updatedEast: string): void {
+        // Mise à jour de la formule dans la liste
+        const updatedFormulas = this.state.formulas.map(f => {
+            if (f.id === formula.id) {
+                return {
+                    ...f,
+                    north: updatedNorth,
+                    east: updatedEast,
+                    text_output: `${updatedNorth} ${updatedEast}`,
+                    confidence: 1.0 // Formule manuellement corrigée = confiance maximale
+                };
+            }
+            return f;
+        });
+
+        // Si c'est la formule sélectionnée, la mettre à jour aussi
+        const updatedSelectedFormula = this.state.selectedFormula?.id === formula.id
+            ? updatedFormulas.find(f => f.id === formula.id)
+            : this.state.selectedFormula;
+
+        this.updateState({
+            formulas: updatedFormulas,
+            selectedFormula: updatedSelectedFormula,
+            // Réinitialiser les questions car la formule a changé
+            questions: [],
+            values: new Map()
+        });
+
+        this.messageService.info('Formule modifiée avec succès');
+    }
+
+    /**
      * Extrait les questions pour une formule
      */
     protected async extractQuestions(formula: Formula): Promise<void> {
@@ -486,6 +520,7 @@ export class FormulaSolverWidget extends ReactWidget {
                         formulas={this.state.formulas}
                         selectedFormula={this.state.selectedFormula}
                         onSelect={(formula) => this.updateState({ selectedFormula: formula })}
+                        onEditFormula={(formula, north, east) => this.handleEditFormula(formula, north, east)}
                         loading={this.state.loading}
                     />
                 )}

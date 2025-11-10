@@ -361,19 +361,30 @@ export class FormulaSolverWidget extends ReactWidget {
 
     /**
      * Extrait les lettres (variables) d'une formule
+     * Ignore uniquement les lettres cardinales (N, S, E, W) en début de coordonnées
      */
     protected extractLettersFromFormula(formula: Formula): string[] {
-        const text = `${formula.north} ${formula.east}`;
+        // Supprimer les directions cardinales au début de chaque partie
+        // Ex: "N 48°AB.CDE" -> "48°AB.CDE", "E 007°FG.HIJ" -> "007°FG.HIJ"
+        const northCleaned = formula.north.replace(/^[NSEW]\s*/i, '');
+        const eastCleaned = formula.east.replace(/^[NSEW]\s*/i, '');
+        const text = `${northCleaned} ${eastCleaned}`;
+        
         const letters = new Set<string>();
         
-        // Trouver toutes les lettres A-Z sauf N, S, E, W (directions cardinales)
+        // Extraire toutes les lettres A-Z maintenant que les directions sont retirées
         const matches = text.matchAll(/([A-Z])/g);
         for (const match of matches) {
-            const letter = match[1];
-            if (!['N', 'S', 'E', 'W'].includes(letter)) {
-                letters.add(letter);
-            }
+            letters.add(match[1]);
         }
+        
+        console.log('[FORMULA-SOLVER] Lettres extraites:', {
+            north: formula.north,
+            east: formula.east,
+            northCleaned,
+            eastCleaned,
+            letters: Array.from(letters).sort()
+        });
         
         return Array.from(letters).sort();
     }

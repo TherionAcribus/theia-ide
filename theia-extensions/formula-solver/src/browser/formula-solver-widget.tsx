@@ -9,12 +9,12 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { FormulaSolverService } from './formula-solver-service';
 import { Formula, Question, LetterValue, FormulaSolverState } from '../common/types';
+import { parseValueList } from './utils/value-parser';
 import {
     DetectedFormulasComponent,
     QuestionFieldsComponent,
     ResultDisplayComponent,
-    FormulaPreviewComponent,
-    BruteForceComponent
+    FormulaPreviewComponent
 } from './components';
 
 @injectable()
@@ -406,16 +406,41 @@ export class FormulaSolverWidget extends ReactWidget {
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur : ${message}`);
-            this.updateState({ loading: false, error: message });
         }
     }
 
     /**
-     * Exécute le calcul en mode brute force pour toutes les combinaisons
+     * Exécute le brute force automatiquement depuis les champs remplis
      */
-    protected async executeBruteForce(combinations: Array<Record<string, number>>): Promise<void> {
+    protected async executeBruteForceFromFields(): Promise<void> {
         if (!this.state.selectedFormula) {
+            this.messageService.error('Aucune formule sélectionnée');
             return;
+        }
+
+        // Générer les combinaisons depuis les valeurs des champs
+        const letterValuesMap: Record<string, number[]> = {};
+        
+        for (const [letter, letterValue] of this.state.values.entries()) {
+            if (letterValue.values && letterValue.values.length > 0) {
+                // Utiliser la liste de valeurs
+                letterValuesMap[letter] = letterValue.values;
+            } else if (letterValue.value !== undefined && !isNaN(letterValue.value)) {
+                // Utiliser la valeur unique
+                letterValuesMap[letter] = [letterValue.value];
+            }
+        }
+
+        const combinations = this.generateCombinations(letterValuesMap);
+        
+        if (combinations.length === 0) {
+            this.messageService.warn('Aucune combinaison à tester');
+            return;
+        }
+
+        if (combinations.length > 1000) {
+            this.messageService.warn(`${combinations.length} combinaisons détectées. Limité à 1000 pour éviter les calculs trop longs.`);
+            combinations.splice(1000);
         }
 
         this.bruteForceMode = true;
@@ -436,7 +461,7 @@ export class FormulaSolverWidget extends ReactWidget {
                         values: combination
                     });
 
-                    if (result.status === 'success') {
+                    if (result.status === 'success' && result.coordinates) {
                         // Générer un ID unique basé sur les valeurs
                         const id = Object.entries(combination)
                             .map(([k, v]) => `${k}${v}`)
@@ -475,6 +500,37 @@ export class FormulaSolverWidget extends ReactWidget {
             this.messageService.error(`Erreur brute force : ${message}`);
             this.updateState({ loading: false, error: message });
         }
+    }
+
+    /**
+     * Génère toutes les combinaisons possibles à partir d'un mapping de valeurs
+     */
+    protected generateCombinations(letterValuesMap: Record<string, number[]>): Record<string, number>[] {
+        const letters = Object.keys(letterValuesMap);
+        
+        if (letters.length === 0) {
+            return [];
+        }
+
+        const combinations: Record<string, number>[] = [];
+        
+        const generate = (index: number, current: Record<string, number>) => {
+            if (index === letters.length) {
+                combinations.push({ ...current });
+                return;
+            }
+
+            const letter = letters[index];
+            const values = letterValuesMap[letter];
+
+            for (const value of values) {
+                current[letter] = value;
+                generate(index + 1, current);
+            }
+        };
+
+        generate(0, {});
+        return combinations;
     }
 
     /**
@@ -597,40 +653,83 @@ export class FormulaSolverWidget extends ReactWidget {
      * Met à jour la valeur d'une variable
      */
     protected updateValue(letter: string, rawValue: string, type: 'value' | 'checksum' | 'reduced' | 'length' | 'custom'): void {
-        let calculatedValue: number;
-
-        switch (type) {
-            case 'checksum':
-                calculatedValue = this.formulaSolverService.calculateChecksum(rawValue);
-                break;
-            case 'reduced':
-                calculatedValue = this.formulaSolverService.calculateReducedChecksum(rawValue);
-                break;
-            case 'length':
-                calculatedValue = this.formulaSolverService.calculateLength(rawValue);
-                break;
-            case 'custom':
-                // Pour custom, on considère que l'utilisateur a saisi directement la valeur
-                calculatedValue = parseInt(rawValue, 10) || 0;
-                break;
-            case 'value':
-            default:
-                calculatedValue = parseInt(rawValue, 10) || 0;
-                break;
+        // Parser la valeur pour détecter les listes (ex: "2,3,4" ou "1-5")
+        const parsed = parseValueList(rawValue);
+        
+        // Calculer la valeur pour le premier élément (ou 0 si vide)
+        let calculatedValue: number = 0;
+        let calculatedValues: number[] = [];
+        
+        if (parsed.values.length > 0) {
+            // Appliquer le type de calcul sur chaque valeur
+            for (const val of parsed.values) {
+                let calculated: number;
+                const strVal = val.toString();
+                
+                switch (type) {
+                    case 'checksum':
+                        calculated = this.formulaSolverService.calculateChecksum(strVal);
+                        break;
+                    case 'reduced':
+                        calculated = this.formulaSolverService.calculateReducedChecksum(strVal);
+                        break;
+                    case 'length':
+                        calculated = this.formulaSolverService.calculateLength(strVal);
+                        break;
+                    case 'custom':
+                    case 'value':
+                    default:
+                        calculated = val;
+                        break;
+                }
+                
+                calculatedValues.push(calculated);
+            }
+            
+            calculatedValue = calculatedValues[0];
         }
 
         const letterValue: LetterValue = {
             letter,
             rawValue,
             value: calculatedValue,
-            type
+            type,
+            values: calculatedValues.length > 0 ? calculatedValues : undefined,
+            isList: parsed.isList
         };
 
         this.state.values.set(letter, letterValue);
         this.update();
         
-        // Déclencher le calcul automatique si toutes les lettres sont remplies
-        this.tryAutoCalculate();
+        // Déclencher le calcul automatique ou brute force si applicable
+        this.tryAutoCalculateOrBruteForce();
+    }
+
+    /**
+     * Tente un calcul automatique simple ou lance le brute force si des listes sont détectées
+     */
+    protected tryAutoCalculateOrBruteForce(): void {
+        // Vérifier si tous les champs sont remplis
+        const allFilled = this.state.questions.every(q => {
+            const val = this.state.values.get(q.letter);
+            return val && val.rawValue.trim() !== '';
+        });
+        
+        if (!allFilled) {
+            return;
+        }
+        
+        // Vérifier si au moins un champ contient une liste
+        const hasLists = Array.from(this.state.values.values()).some(v => v.isList);
+        
+        if (hasLists) {
+            // Brute force automatique
+            console.log('[FORMULA-SOLVER] Listes détectées, déclenchement automatique du brute force');
+            this.executeBruteForceFromFields();
+        } else {
+            // Calcul simple
+            this.tryAutoCalculate();
+        }
     }
 
     /**
@@ -751,13 +850,6 @@ export class FormulaSolverWidget extends ReactWidget {
                         // Vérifier si les deux parties sont complètes pour calculer automatiquement
                         this.tryAutoCalculate();
                     }}
-                />
-                
-                {/* Mode Brute Force */}
-                <BruteForceComponent
-                    letters={this.extractLettersFromFormula(this.state.selectedFormula)}
-                    values={this.state.values}
-                    onBruteForceExecute={(combinations) => this.executeBruteForce(combinations)}
                 />
                 
                 {/* Résultat du calcul normal */}

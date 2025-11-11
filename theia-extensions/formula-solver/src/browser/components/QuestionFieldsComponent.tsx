@@ -219,30 +219,65 @@ export const QuestionFieldsComponent: React.FC<QuestionFieldsComponentProps> = (
                             {/* Champs de saisie */}
                             <div style={{
                                 display: 'grid',
-                                gridTemplateColumns: '1fr auto auto',
+                                gridTemplateColumns: 'minmax(0, 1fr) auto auto',
                                 gap: '8px',
                                 alignItems: 'center'
                             }}>
-                                {/* Input valeur */}
-                                <input
-                                    type='text'
-                                    placeholder='Valeur ou texte...'
-                                    style={{
-                                        padding: '8px 12px',
-                                        backgroundColor: 'var(--theia-input-background)',
-                                        color: 'var(--theia-input-foreground)',
-                                        border: `1px solid ${hasValue ? 'var(--theia-focusBorder)' : 'var(--theia-input-border)'}`,
-                                        borderRadius: '4px',
-                                        fontFamily: 'var(--theia-code-font-family)',
-                                        fontSize: '13px'
-                                    }}
-                                    value={letterValue?.rawValue || ''}
-                                    onChange={e => onValueChange(
-                                        question.letter,
-                                        e.target.value,
-                                        letterValue?.type || 'value'
+                                {/* Input valeur avec indicateur multi-valeurs */}
+                                <div style={{ position: 'relative', width: '100%' }}>
+                                    <input
+                                        type='text'
+                                        placeholder='Valeur ou *liste (ex: *2,3,4 ou *<5)...'
+                                        style={{
+                                            width: '100%',
+                                            padding: '8px 12px',
+                                            paddingRight: letterValue?.isList ? '50px' : '12px',
+                                            backgroundColor: 'var(--theia-input-background)',
+                                            color: 'var(--theia-input-foreground)',
+                                            border: `1px solid ${
+                                                letterValue?.isList 
+                                                    ? 'var(--theia-button-background)' 
+                                                    : hasValue 
+                                                        ? 'var(--theia-focusBorder)' 
+                                                        : 'var(--theia-input-border)'
+                                            }`,
+                                            borderRadius: '4px',
+                                            fontFamily: 'var(--theia-code-font-family)',
+                                            fontSize: '13px'
+                                        }}
+                                        value={letterValue?.rawValue || ''}
+                                        onChange={e => onValueChange(
+                                            question.letter,
+                                            e.target.value,
+                                            letterValue?.type || 'value'
+                                        )}
+                                    />
+                                    {/* Badge multi-valeurs */}
+                                    {letterValue?.isList && letterValue?.values && (
+                                        <div 
+                                            style={{
+                                                position: 'absolute',
+                                                right: '8px',
+                                                top: '50%',
+                                                transform: 'translateY(-50%)',
+                                                backgroundColor: 'var(--theia-button-background)',
+                                                color: 'var(--theia-button-foreground)',
+                                                padding: '2px 6px',
+                                                borderRadius: '3px',
+                                                fontSize: '11px',
+                                                fontWeight: 'bold',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}
+                                            title={`Brute force: ${letterValue.values.length} valeurs`}
+                                        >
+                                            <span>*</span>
+                                            <span className="codicon codicon-list-unordered" style={{ fontSize: '10px' }} />
+                                            {letterValue.values.length}
+                                        </div>
                                     )}
-                                />
+                                </div>
 
                                 {/* Select type */}
                                 <select
@@ -271,9 +306,9 @@ export const QuestionFieldsComponent: React.FC<QuestionFieldsComponentProps> = (
                                     ))}
                                 </select>
 
-                                {/* Valeur calculée */}
+                                {/* Valeur(s) calculée(s) */}
                                 <div style={{
-                                    minWidth: '80px',
+                                    minWidth: '100px',
                                     textAlign: 'right',
                                     display: 'flex',
                                     alignItems: 'center',
@@ -281,24 +316,47 @@ export const QuestionFieldsComponent: React.FC<QuestionFieldsComponentProps> = (
                                     justifyContent: 'flex-end'
                                 }}>
                                     {letterValue && hasValue ? (
-                                        <>
-                                            <span style={{
-                                                fontSize: '12px',
-                                                color: 'var(--theia-descriptionForeground)'
-                                            }}>
-                                                =
-                                            </span>
-                                            <span style={{
-                                                fontSize: '18px',
-                                                fontWeight: 'bold',
-                                                fontFamily: 'var(--theia-code-font-family)',
-                                                color: 'var(--theia-textLink-activeForeground)',
-                                                minWidth: '40px',
-                                                textAlign: 'right'
-                                            }}>
-                                                {letterValue.value}
-                                            </span>
-                                        </>
+                                        letterValue.isList && letterValue.values ? (
+                                            <>
+                                                <span style={{
+                                                    fontSize: '12px',
+                                                    color: 'var(--theia-descriptionForeground)'
+                                                }}>
+                                                    =
+                                                </span>
+                                                <span style={{
+                                                    fontSize: '13px',
+                                                    fontWeight: 'bold',
+                                                    fontFamily: 'var(--theia-code-font-family)',
+                                                    color: 'var(--theia-button-background)',
+                                                    minWidth: '60px',
+                                                    textAlign: 'right'
+                                                }} title={letterValue.values.join(', ')}>
+                                                    [{letterValue.values.slice(0, 3).join(',')}{
+                                                        letterValue.values.length > 3 ? '...' : ''
+                                                    }]
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span style={{
+                                                    fontSize: '12px',
+                                                    color: 'var(--theia-descriptionForeground)'
+                                                }}>
+                                                    =
+                                                </span>
+                                                <span style={{
+                                                    fontSize: '18px',
+                                                    fontWeight: 'bold',
+                                                    fontFamily: 'var(--theia-code-font-family)',
+                                                    color: 'var(--theia-textLink-activeForeground)',
+                                                    minWidth: '40px',
+                                                    textAlign: 'right'
+                                                }}>
+                                                    {letterValue.value}
+                                                </span>
+                                            </>
+                                        )
                                     ) : (
                                         <span style={{
                                             fontSize: '14px',

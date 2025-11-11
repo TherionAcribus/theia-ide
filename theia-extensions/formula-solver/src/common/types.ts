@@ -28,9 +28,11 @@ export interface Question {
  */
 export interface LetterValue {
     letter: string;
-    rawValue: string;          // Valeur brute saisie
-    value: number;              // Valeur numérique calculée
+    rawValue: string;          // Valeur brute saisie (peut être "2,3,4" ou "1-5")
+    value: number;              // Valeur numérique calculée (première valeur si liste)
     type: ValueType;            // Type de calcul appliqué
+    values?: number[];          // Liste de toutes les valeurs (pour brute force inline)
+    isList?: boolean;           // True si le champ contient plusieurs valeurs
 }
 
 /**

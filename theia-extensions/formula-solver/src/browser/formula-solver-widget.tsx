@@ -1081,6 +1081,7 @@ export class FormulaSolverWidget extends ReactWidget {
                             onClick={() => {
                                 this.bruteForceMode = false;
                                 this.bruteForceResults = [];
+                                window.dispatchEvent(new CustomEvent('geoapp-map-highlight-clear'));
                                 this.update();
                             }}
                             style={{

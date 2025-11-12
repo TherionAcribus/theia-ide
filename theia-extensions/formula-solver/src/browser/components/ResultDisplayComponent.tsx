@@ -9,6 +9,7 @@ export interface ResultDisplayComponentProps {
     result: CalculationResult;
     onCopy?: (text: string) => void;
     onCreateWaypoint?: () => void;
+    onAutoSaveWaypoint?: () => void;
     onProjectOnMap?: () => void;
 }
 
@@ -16,6 +17,7 @@ export const ResultDisplayComponent: React.FC<ResultDisplayComponentProps> = ({
     result,
     onCopy,
     onCreateWaypoint,
+    onAutoSaveWaypoint,
     onProjectOnMap
 }) => {
     if (!result || result.status !== 'success' || !result.coordinates) {
@@ -462,6 +464,29 @@ export const ResultDisplayComponent: React.FC<ResultDisplayComponentProps> = ({
                     >
                         <span className='codicon codicon-add'></span>
                         Créer waypoint
+                    </button>
+                )}
+
+                {onAutoSaveWaypoint && (
+                    <button
+                        style={{
+                            padding: '10px 14px',
+                            backgroundColor: 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            fontWeight: '500'
+                        }}
+                        onClick={onAutoSaveWaypoint}
+                    >
+                        <span className='codicon codicon-pass-filled'></span>
+                        Ajouter et valider
                     </button>
                 )}
             </div>

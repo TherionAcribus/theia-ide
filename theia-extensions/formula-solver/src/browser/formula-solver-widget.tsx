@@ -187,46 +187,75 @@ export class FormulaSolverWidget extends ReactWidget {
 
     /**
      * Crée un waypoint depuis le résultat
+     * Utilise le système d'événements pour créer le waypoint (comme les plugins)
      */
-    protected async createWaypoint(): Promise<void> {
+    protected async createWaypoint(autoSave: boolean = false): Promise<void> {
         if (!this.state.geocacheId || !this.state.result || !this.state.result.coordinates) {
             this.messageService.error('Impossible de créer le waypoint : données manquantes');
             return;
         }
 
         try {
-            // Préparer la note avec la formule et les valeurs
-            const formulaText = this.state.selectedFormula 
+            const coords = this.state.result.coordinates;
+
+            const formulaText = this.state.selectedFormula
                 ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
                 : 'Formule inconnue';
-            
+
             const valuesText = Array.from(this.state.values.entries())
                 .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue}, type: ${value.type})`)
                 .join('\n');
-            
-            const note = `Solution Formula Solver\n\nFormule:\n${formulaText}\n\nValeurs:\n${valuesText}`;
 
-            // Appeler le service pour créer le waypoint
-            const waypoint = await this.formulaSolverService.createWaypoint(
-                this.state.geocacheId,
-                {
-                    name: 'Solution formule',
-                    latitude: this.state.result.coordinates.latitude,
-                    longitude: this.state.result.coordinates.longitude,
-                    note: note,
-                    type: 'Reference Point'
+            const coordDetails = [coords.ddm, coords.dms, coords.decimal].filter(Boolean).join('\n');
+
+            const note = `Solution Formula Solver\n\nFormule:\n${formulaText}\n\nValeurs:\n${valuesText}\n\nCoordonnées:\n${coordDetails}`;
+
+            const gcCoords = this.formatGeocachingCoordinates(coords.latitude, coords.longitude);
+
+            window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
+                detail: {
+                    gcCoords,
+                    pluginName: 'Formula Solver',
+                    geocache: this.state.gcCode ? { gcCode: this.state.gcCode } : undefined,
+                    waypointTitle: 'Solution formule',
+                    waypointNote: note,
+                    sourceResultText: note,
+                    decimalLatitude: coords.latitude,
+                    decimalLongitude: coords.longitude,
+                    autoSave
                 }
-            );
+            }));
 
-            this.messageService.info(`Waypoint ${waypoint.prefix} créé avec succès !`);
-            
-            // TODO: Actualiser le GeocacheDetailsWidget
-            
+            if (autoSave) {
+                this.messageService.info('Waypoint validé automatiquement avec les coordonnées calculées');
+            } else {
+                this.messageService.info('Formulaire de waypoint ouvert avec les coordonnées calculées');
+            }
+
         } catch (error) {
-            console.error('[FORMULA-SOLVER] Erreur lors de la création du waypoint:', error);
+            console.error('[FORMULA-SOLVER] Erreur lors de la préparation du waypoint:', error);
             const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
-            this.messageService.error(`Erreur lors de la création du waypoint: ${errorMsg}`);
+            this.messageService.error(`Erreur: ${errorMsg}`);
         }
+    }
+
+    /**
+     * Convertit des coordonnées décimales au format Geocaching
+     */
+    private formatGeocachingCoordinates(lat: number, lon: number): string {
+        const latDir = lat >= 0 ? 'N' : 'S';
+        const lonDir = lon >= 0 ? 'E' : 'W';
+
+        const absLat = Math.abs(lat);
+        const absLon = Math.abs(lon);
+
+        const latDeg = Math.floor(absLat);
+        const latMin = (absLat - latDeg) * 60;
+
+        const lonDeg = Math.floor(absLon);
+        const lonMin = (absLon - lonDeg) * 60;
+
+        return `${latDir} ${latDeg}° ${latMin.toFixed(3)} ${lonDir} ${String(lonDeg).padStart(3, '0')}° ${lonMin.toFixed(3)}`;
     }
 
     /**
@@ -857,7 +886,8 @@ export class FormulaSolverWidget extends ReactWidget {
                     <ResultDisplayComponent
                         result={this.state.result}
                         onCopy={(text) => this.messageService.info(`Copié: ${text}`)}
-                        onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint() : undefined}
+                        onCreateWaypoint={this.state.geocacheId ? () => this.createWaypoint(false) : undefined}
+                        onAutoSaveWaypoint={this.state.geocacheId ? () => this.createWaypoint(true) : undefined}
                         onProjectOnMap={() => this.showOnMap()}
                     />
                 )}

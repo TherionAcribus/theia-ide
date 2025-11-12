@@ -197,46 +197,116 @@ export class FormulaSolverWidget extends ReactWidget {
 
         try {
             const coords = this.state.result.coordinates;
+            const note = this.buildWaypointNote(coords);
 
-            const formulaText = this.state.selectedFormula
-                ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
-                : 'Formule inconnue';
-
-            const valuesText = Array.from(this.state.values.entries())
-                .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue}, type: ${value.type})`)
-                .join('\n');
-
-            const coordDetails = [coords.ddm, coords.dms, coords.decimal].filter(Boolean).join('\n');
-
-            const note = `Solution Formula Solver\n\nFormule:\n${formulaText}\n\nValeurs:\n${valuesText}\n\nCoordonnées:\n${coordDetails}`;
-
-            const gcCoords = this.formatGeocachingCoordinates(coords.latitude, coords.longitude);
-
-            window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
-                detail: {
-                    gcCoords,
-                    pluginName: 'Formula Solver',
-                    geocache: this.state.gcCode ? { gcCode: this.state.gcCode } : undefined,
-                    waypointTitle: 'Solution formule',
-                    waypointNote: note,
-                    sourceResultText: note,
-                    decimalLatitude: coords.latitude,
-                    decimalLongitude: coords.longitude,
-                    autoSave
-                }
-            }));
-
-            if (autoSave) {
-                this.messageService.info('Waypoint validé automatiquement avec les coordonnées calculées');
-            } else {
-                this.messageService.info('Formulaire de waypoint ouvert avec les coordonnées calculées');
-            }
+            this.dispatchWaypointCreation({
+                coords,
+                note,
+                title: 'Solution formule',
+                pluginName: 'Formula Solver',
+                autoSave
+            });
 
         } catch (error) {
             console.error('[FORMULA-SOLVER] Erreur lors de la préparation du waypoint:', error);
             const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur: ${errorMsg}`);
         }
+    }
+
+    protected createWaypointFromBrute(resultId: string, autoSave: boolean = false): void {
+        if (!this.state.geocacheId) {
+            this.messageService.error('Aucune géocache chargée, impossible de créer le waypoint');
+            return;
+        }
+
+        const result = this.bruteForceResults.find(r => r.id === resultId);
+        if (!result) {
+            this.messageService.error('Résultat brute force introuvable');
+            return;
+        }
+
+        if (!result.coordinates) {
+            this.messageService.error('Ce résultat ne contient pas de coordonnées valides');
+            return;
+        }
+
+        try {
+            const note = this.buildWaypointNote(result.coordinates, result.values);
+
+            this.dispatchWaypointCreation({
+                coords: result.coordinates,
+                note,
+                title: result.label || 'Solution brute force',
+                pluginName: 'Formula Solver (Brute Force)',
+                autoSave
+            });
+
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur lors de la préparation du waypoint brute force:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.messageService.error(`Erreur: ${errorMsg}`);
+        }
+    }
+
+    private dispatchWaypointCreation(options: {
+        coords: {
+            latitude: number;
+            longitude: number;
+            ddm?: string;
+            dms?: string;
+            decimal?: string;
+        };
+        note: string;
+        title: string;
+        pluginName: string;
+        autoSave: boolean;
+    }): void {
+        const { coords, note, title, pluginName, autoSave } = options;
+
+        const gcCoords = this.formatGeocachingCoordinates(coords.latitude, coords.longitude);
+
+        window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
+            detail: {
+                gcCoords,
+                pluginName,
+                geocache: this.state.gcCode ? { gcCode: this.state.gcCode } : undefined,
+                waypointTitle: title,
+                waypointNote: note,
+                sourceResultText: note,
+                decimalLatitude: coords.latitude,
+                decimalLongitude: coords.longitude,
+                autoSave
+            }
+        }));
+
+        if (autoSave) {
+            this.messageService.info(`${title} validé automatiquement en waypoint`);
+        } else {
+            this.messageService.info(`${title}: formulaire de waypoint ouvert`);
+        }
+    }
+
+    private buildWaypointNote(coords: { ddm?: string; dms?: string; decimal?: string }, valuesOverride?: Record<string, number>): string {
+        const formulaText = this.state.selectedFormula
+            ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
+            : 'Formule inconnue';
+
+        let valuesText: string;
+        if (valuesOverride) {
+            const entries = Object.entries(valuesOverride)
+                .map(([letter, value]) => `${letter}=${value}`)
+                .join('\n');
+            valuesText = entries || 'Aucune valeur';
+        } else {
+            valuesText = Array.from(this.state.values.entries())
+                .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue}, type: ${value.type})`)
+                .join('\n');
+        }
+
+        const coordDetails = [coords.ddm, coords.dms, coords.decimal].filter(Boolean).join('\n');
+
+        return `Solution Formula Solver\n\nFormule:\n${formulaText}\n\nValeurs:\n${valuesText}\n\nCoordonnées:\n${coordDetails}`;
     }
 
     /**
@@ -910,60 +980,102 @@ export class FormulaSolverWidget extends ReactWidget {
                             overflowY: 'auto',
                             fontSize: '12px'
                         }}>
-                            {this.bruteForceResults.map((result) => (
-                                <div key={result.id} style={{
-                                    padding: '8px',
-                                    marginBottom: '8px',
-                                    backgroundColor: 'var(--theia-input-background)',
-                                    borderRadius: '4px',
-                                    borderLeft: '3px solid var(--theia-successText)',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'flex-start',
-                                    gap: '8px'
-                                }}>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-                                            {result.label}
+                            {this.bruteForceResults.map((result) => {
+                                const hasCoordinates = Boolean(result.coordinates);
+                                return (
+                                    <div key={result.id} style={{
+                                        padding: '8px',
+                                        marginBottom: '8px',
+                                        backgroundColor: 'var(--theia-input-background)',
+                                        borderRadius: '4px',
+                                        borderLeft: '3px solid var(--theia-successText)',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'flex-start',
+                                        gap: '12px'
+                                    }}>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                                                {result.label}
+                                            </div>
+                                            <div style={{ fontFamily: 'var(--theia-code-font-family)' }}>
+                                                Valeurs: {Object.entries(result.values)
+                                                    .map(([letter, value]) => `${letter}=${value}`)
+                                                    .join(', ')}
+                                            </div>
+                                            <div style={{ fontFamily: 'var(--theia-code-font-family)', color: 'var(--theia-descriptionForeground)' }}>
+                                                {result.coordinates?.ddm || '—'}
+                                            </div>
                                         </div>
-                                        <div style={{ fontFamily: 'var(--theia-code-font-family)' }}>
-                                            Valeurs: {Object.entries(result.values)
-                                                .map(([letter, value]) => `${letter}=${value}`)
-                                                .join(', ')}
-                                        </div>
-                                        <div style={{ fontFamily: 'var(--theia-code-font-family)', color: 'var(--theia-descriptionForeground)' }}>
-                                            {result.coordinates?.ddm}
+                                        <div style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '6px',
+                                            alignItems: 'flex-end'
+                                        }}>
+                                            <button
+                                                className='theia-button'
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    fontSize: '11px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px'
+                                                }}
+                                                disabled={!hasCoordinates}
+                                                title={hasCoordinates ? 'Ouvrir le formulaire de waypoint prérempli' : 'Aucune coordonnée pour ce résultat'}
+                                                onClick={() => hasCoordinates && this.createWaypointFromBrute(result.id, false)}
+                                            >
+                                                <span className='codicon codicon-add' />
+                                                Créer waypoint
+                                            </button>
+                                            <button
+                                                className='theia-button'
+                                                style={{
+                                                    padding: '6px 10px',
+                                                    fontSize: '11px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px'
+                                                }}
+                                                disabled={!hasCoordinates}
+                                                title={hasCoordinates ? 'Créer et valider immédiatement le waypoint' : 'Aucune coordonnée pour ce résultat'}
+                                                onClick={() => hasCoordinates && this.createWaypointFromBrute(result.id, true)}
+                                            >
+                                                <span className='codicon codicon-pass-filled' />
+                                                Ajouter & valider
+                                            </button>
+                                            <button
+                                                onClick={() => this.removeBruteForceResult(result.id)}
+                                                title="Supprimer cette solution"
+                                                style={{
+                                                    padding: '4px 8px',
+                                                    backgroundColor: 'transparent',
+                                                    color: 'var(--theia-errorForeground)',
+                                                    border: '1px solid var(--theia-errorForeground)',
+                                                    borderRadius: '3px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '11px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.backgroundColor = 'var(--theia-errorForeground)';
+                                                    e.currentTarget.style.color = 'var(--theia-editor-background)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                                    e.currentTarget.style.color = 'var(--theia-errorForeground)';
+                                                }}
+                                            >
+                                                <span className="codicon codicon-trash" />
+                                                Supprimer
+                                            </button>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => this.removeBruteForceResult(result.id)}
-                                        title="Supprimer cette solution"
-                                        style={{
-                                            padding: '4px 8px',
-                                            backgroundColor: 'transparent',
-                                            color: 'var(--theia-errorForeground)',
-                                            border: '1px solid var(--theia-errorForeground)',
-                                            borderRadius: '3px',
-                                            cursor: 'pointer',
-                                            fontSize: '11px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '4px',
-                                            flexShrink: 0
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = 'var(--theia-errorForeground)';
-                                            e.currentTarget.style.color = 'var(--theia-editor-background)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = 'transparent';
-                                            e.currentTarget.style.color = 'var(--theia-errorForeground)';
-                                        }}
-                                    >
-                                        <span className="codicon codicon-trash" />
-                                    </button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                         <button
                             onClick={() => {

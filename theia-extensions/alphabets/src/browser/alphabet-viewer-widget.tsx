@@ -371,13 +371,14 @@ export class AlphabetViewerWidget extends ReactWidget {
      */
     private handleContextMenu = (e: React.MouseEvent, index: number): void => {
         e.preventDefault();
+        console.log('Context menu triggered for symbol at index:', index, 'char:', this.enteredChars[index]);
         this.contextMenu = {
-            visible: true,
             x: e.clientX,
             y: e.clientY,
             symbolIndex: index
         };
         this.update();
+        console.log('Context menu set:', this.contextMenu);
     };
 
     /**
@@ -913,11 +914,10 @@ export class AlphabetViewerWidget extends ReactWidget {
                     <SymbolContextMenu
                         x={this.contextMenu.x}
                         y={this.contextMenu.y}
+                        symbolChar={this.enteredChars[this.contextMenu.symbolIndex]}
                         symbolIndex={this.contextMenu.symbolIndex}
                         onDelete={() => this.deleteSymbol(this.contextMenu!.symbolIndex)}
                         onDuplicate={() => this.duplicateSymbol(this.contextMenu!.symbolIndex)}
-                        onInsertBefore={() => this.insertBefore(this.contextMenu!.symbolIndex)}
-                        onInsertAfter={() => this.insertAfter(this.contextMenu!.symbolIndex)}
                         onClose={this.closeContextMenu}
                     />
                 )}

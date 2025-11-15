@@ -3,11 +3,10 @@ import * as React from 'react';
 export interface SymbolContextMenuProps {
     x: number;
     y: number;
+    symbolChar: string;
     symbolIndex: number;
     onDelete: () => void;
     onDuplicate: () => void;
-    onInsertBefore: () => void;
-    onInsertAfter: () => void;
     onClose: () => void;
 }
 
@@ -15,19 +14,29 @@ export interface SymbolContextMenuProps {
  * Menu contextuel pour un symbole entré.
  */
 export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
+    private mountedAt: number = 0;
 
     componentDidMount(): void {
-        // Fermer le menu si on clique en dehors
+        this.mountedAt = Date.now();
+        // Fermer le menu si on clique en dehors (avec un délai pour éviter la fermeture immédiate)
         document.addEventListener('click', this.handleOutsideClick);
         document.addEventListener('contextmenu', this.handleOutsideClick);
+        console.log('SymbolContextMenu mounted');
     }
 
     componentWillUnmount(): void {
         document.removeEventListener('click', this.handleOutsideClick);
         document.removeEventListener('contextmenu', this.handleOutsideClick);
+        console.log('SymbolContextMenu unmounted');
     }
 
-    private handleOutsideClick = () => {
+    private handleOutsideClick = (e: Event) => {
+        // Ignorer les événements pendant les 100ms suivant le montage pour éviter la fermeture immédiate
+        if (Date.now() - this.mountedAt < 100) {
+            console.log('Ignoring outside click too soon after mount');
+            return;
+        }
+        console.log('Outside click detected, closing menu');
         this.props.onClose();
     };
 
@@ -37,7 +46,8 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
     };
 
     render(): React.ReactNode {
-        const { x, y, symbolIndex } = this.props;
+        const { x, y, symbolChar, symbolIndex } = this.props;
+        console.log('SymbolContextMenu rendering with:', { x, y, symbolChar, symbolIndex });
 
         const menuStyle: React.CSSProperties = {
             position: 'fixed',
@@ -50,6 +60,14 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
             padding: '4px 0',
             zIndex: 10000,
             minWidth: '200px'
+        };
+
+        const headerStyle: React.CSSProperties = {
+            padding: '8px 16px',
+            fontSize: '12px',
+            color: 'var(--theia-descriptionForeground)',
+            borderBottom: '1px solid var(--theia-menu-separatorBackground)',
+            marginBottom: '4px'
         };
 
         const menuItemStyle: React.CSSProperties = {
@@ -72,6 +90,15 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
                 onClick={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.stopPropagation()}
             >
+                {/* En-tête avec info du symbole */}
+                <div style={headerStyle}>
+                    <div style={{ fontWeight: 'bold', fontSize: '14px', color: 'var(--theia-menu-foreground)', marginBottom: '4px' }}>
+                        Symbole "{symbolChar}"
+                    </div>
+                    <div>Position: {symbolIndex + 1}</div>
+                </div>
+
+                {/* Actions */}
                 <button
                     style={menuItemStyle}
                     onClick={() => this.handleMenuItemClick(this.props.onDelete)}
@@ -89,29 +116,6 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
                 >
                     <i className='fa fa-copy' style={{ width: '16px' }}></i>
                     <span>Dupliquer</span>
-                </button>
-                <div style={{
-                    height: '1px',
-                    backgroundColor: 'var(--theia-menu-separatorBackground)',
-                    margin: '4px 0'
-                }}></div>
-                <button
-                    style={menuItemStyle}
-                    onClick={() => this.handleMenuItemClick(this.props.onInsertBefore)}
-                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--theia-menu-selectionBackground)')}
-                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                >
-                    <i className='fa fa-arrow-left' style={{ width: '16px' }}></i>
-                    <span>Insérer avant</span>
-                </button>
-                <button
-                    style={menuItemStyle}
-                    onClick={() => this.handleMenuItemClick(this.props.onInsertAfter)}
-                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'var(--theia-menu-selectionBackground)')}
-                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                >
-                    <i className='fa fa-arrow-right' style={{ width: '16px' }}></i>
-                    <span>Insérer après</span>
                 </button>
             </div>
         );

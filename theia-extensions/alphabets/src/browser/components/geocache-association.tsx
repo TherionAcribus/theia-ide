@@ -3,18 +3,22 @@
  * Permet de sélectionner une géocache pour récupérer les coordonnées d'origine.
  */
 import * as React from '@theia/core/shared/react';
-import { AssociatedGeocache } from '../../common/alphabet-protocol';
+import { AssociatedGeocache, DistanceInfo } from '../../common/alphabet-protocol';
 
 export interface GeocacheAssociationProps {
     associatedGeocache?: AssociatedGeocache;
     onAssociate: (geocache: AssociatedGeocache) => void;
     onClear: () => void;
+    onShowMap?: (geocache: AssociatedGeocache) => void;
+    distanceInfo?: DistanceInfo;
 }
 
 export const GeocacheAssociation: React.FC<GeocacheAssociationProps> = ({
     associatedGeocache,
     onAssociate,
-    onClear
+    onClear,
+    onShowMap,
+    distanceInfo
 }) => {
     const [gcCode, setGcCode] = React.useState('');
     const [loading, setLoading] = React.useState(false);
@@ -144,33 +148,70 @@ export const GeocacheAssociation: React.FC<GeocacheAssociationProps> = ({
                             {associatedGeocache.code} - {associatedGeocache.name}
                         </div>
 
-                        {associatedGeocache.gc_lat && associatedGeocache.gc_lon && (
-                            <div style={{
-                                fontSize: '12px',
-                                fontFamily: 'monospace',
-                                color: 'var(--theia-descriptionForeground)'
-                            }}>
-                                <div>Latitude: {associatedGeocache.gc_lat}</div>
-                                <div>Longitude: {associatedGeocache.gc_lon}</div>
-                            </div>
-                        )}
+                        <div style={{
+                            fontSize: '12px',
+                            fontFamily: 'monospace',
+                            color: 'var(--theia-descriptionForeground)'
+                        }}>
+                            {associatedGeocache.gc_lat && associatedGeocache.gc_lon && (
+                                <>
+                                    <div>Latitude: {associatedGeocache.gc_lat}</div>
+                                    <div>Longitude: {associatedGeocache.gc_lon}</div>
+                                </>
+                            )}
+
+                            {distanceInfo && (
+                                <div style={{
+                                    marginTop: '4px',
+                                    color: distanceInfo.status === 'far' ? 'var(--theia-errorForeground)' :
+                                           distanceInfo.status === 'warning' ? 'var(--theia-textLink-foreground)' :
+                                           'var(--theia-textLink-activeForeground)',
+                                    fontWeight: 'bold'
+                                }}>
+                                    <i className='fa fa-route' style={{ marginRight: '4px' }}></i>
+                                    Distance: {distanceInfo.meters < 1000 ?
+                                        `${Math.round(distanceInfo.meters)} m` :
+                                        `${(distanceInfo.meters / 1000).toFixed(1)} km`}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
-                    <button
-                        onClick={onClear}
-                        style={{
-                            padding: '6px 12px',
-                            backgroundColor: 'var(--theia-button-secondary-background)',
-                            color: 'var(--theia-button-secondary-foreground)',
-                            border: '1px solid var(--theia-button-border)',
-                            borderRadius: '3px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
-                        }}
-                    >
-                        <i className='fa fa-times' style={{ marginRight: '6px' }}></i>
-                        Supprimer l'association
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {onShowMap && (
+                            <button
+                                onClick={() => onShowMap(associatedGeocache)}
+                                style={{
+                                    padding: '6px 12px',
+                                    backgroundColor: 'var(--theia-button-background)',
+                                    color: 'var(--theia-button-foreground)',
+                                    border: 'none',
+                                    borderRadius: '3px',
+                                    cursor: 'pointer',
+                                    fontSize: '12px'
+                                }}
+                            >
+                                <i className='fa fa-map' style={{ marginRight: '6px' }}></i>
+                                Afficher sur la carte !
+                            </button>
+                        )}
+
+                        <button
+                            onClick={onClear}
+                            style={{
+                                padding: '6px 12px',
+                                backgroundColor: 'var(--theia-button-secondary-background)',
+                                color: 'var(--theia-button-secondary-foreground)',
+                                border: '1px solid var(--theia-button-border)',
+                                borderRadius: '3px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                        >
+                            <i className='fa fa-times' style={{ marginRight: '6px' }}></i>
+                            Supprimer l'association
+                        </button>
+                    </div>
                 </div>
             )}
         </div>

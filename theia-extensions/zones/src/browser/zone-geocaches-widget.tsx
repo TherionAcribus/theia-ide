@@ -642,6 +642,43 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     }
 
+    /**
+     * Ouvre une carte centrée sur une géocache spécifique.
+     * Méthode publique utilisée par les autres extensions.
+     */
+    public async openGeocacheMap(geocache: {
+        id: number;
+        gc_code: string;
+        name: string;
+        latitude: number;
+        longitude: number;
+        cache_type?: string;
+        difficulty?: number;
+        terrain?: number;
+        found?: boolean;
+        is_corrected?: boolean;
+        original_latitude?: number;
+        original_longitude?: number;
+        waypoints?: any[];
+    }): Promise<void> {
+        try {
+            console.log('[ZoneGeocachesWidget] openGeocacheMap appelée pour géocache:', geocache.gc_code);
+            console.log('[ZoneGeocachesWidget] Données reçues:', geocache);
+
+            // Ouvrir une carte spécifique pour cette géocache
+            console.log('[ZoneGeocachesWidget] Appel de mapWidgetFactory.openMapForGeocache');
+            await this.mapWidgetFactory.openMapForGeocache(
+                geocache.id,
+                geocache.gc_code,
+                geocache
+            );
+            console.log('[ZoneGeocachesWidget] mapWidgetFactory.openMapForGeocache terminé');
+        } catch (error) {
+            console.error('[ZoneGeocachesWidget] Erreur lors de l\'ouverture de la carte:', error);
+            this.messages.error(`Erreur lors de l'ouverture de la carte pour ${geocache.gc_code}`);
+        }
+    }
+
     protected async handleRowClick(geocache: Geocache): Promise<void> {
         try {
             // Ouvrir une carte spécifique pour cette géocache si elle a des coordonnées

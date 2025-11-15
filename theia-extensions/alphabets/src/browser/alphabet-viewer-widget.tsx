@@ -6,6 +6,8 @@ import * as React from '@theia/core/shared/react';
 import { injectable, postConstruct, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
+import { ApplicationShell } from '@theia/core/lib/browser';
+import { WidgetManager } from '@theia/core/lib/browser';
 import { AlphabetsService } from './services/alphabets-service';
 import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo } from '../common/alphabet-protocol';
 import { CoordinatesDetector } from './components/coordinates-detector';
@@ -24,6 +26,12 @@ export class AlphabetViewerWidget extends ReactWidget {
 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
+
+    @inject(ApplicationShell)
+    protected readonly shell!: ApplicationShell;
+
+    @inject(WidgetManager)
+    protected readonly widgetManager!: WidgetManager;
 
     private alphabet: Alphabet | null = null;
     private alphabetId: string;
@@ -372,6 +380,7 @@ export class AlphabetViewerWidget extends ReactWidget {
     private handleContextMenu = (e: React.MouseEvent, index: number): void => {
         e.preventDefault();
         this.contextMenu = {
+            visible: true,
             x: e.clientX,
             y: e.clientY,
             symbolIndex: index
@@ -744,6 +753,104 @@ export class AlphabetViewerWidget extends ReactWidget {
     }
 
     /**
+     * Gestionnaire pour afficher la géocache sur la carte.
+     */
+    private handleShowMap = async (geocache: AssociatedGeocache): Promise<void> => {
+        try {
+            console.log('[AlphabetViewerWidget] Ouverture carte pour géocache:', geocache.code);
+
+            // Convertir les données AssociatedGeocache vers le format attendu par l'événement
+            const geocacheData = {
+                id: geocache.databaseId || geocache.id,
+                gc_code: geocache.code,
+                name: geocache.name,
+                latitude: this.parseCoordinates(geocache.gc_lat || ''),
+                longitude: this.parseCoordinates(geocache.gc_lon || ''),
+                cache_type: 'Unknown', // On ne l'a pas dans AssociatedGeocache
+                difficulty: undefined,
+                terrain: undefined,
+                found: false,
+                is_corrected: false,
+                original_latitude: undefined,
+                original_longitude: undefined,
+                waypoints: []
+            };
+
+            console.log('[AlphabetViewerWidget] Données géocache préparées:', geocacheData);
+
+            // Approche alternative : utiliser window.postMessage pour communiquer entre extensions
+            console.log('[AlphabetViewerWidget] Utilisation de window.postMessage pour communiquer avec l\'extension zones');
+
+            window.postMessage({
+                type: 'open-geocache-map',
+                geocache: geocacheData,
+                source: 'alphabets-extension'
+            }, '*');
+
+            // Fallback : événement avec délai plus long
+            console.log('[AlphabetViewerWidget] Fallback vers événement avec délai de 2 secondes');
+
+            setTimeout(() => {
+                console.log('[AlphabetViewerWidget] Dispatch de l\'événement open-geocache-map (fallback)');
+                const event = new CustomEvent('open-geocache-map', {
+                    detail: { geocache: geocacheData },
+                    bubbles: true,
+                    cancelable: true
+                });
+
+                // Essayer sur tous les contextes possibles
+                let result = false;
+                result = result || document.dispatchEvent(event);
+                result = result || window.dispatchEvent(event);
+
+                // Essayer aussi sur le document body et html
+                if (document.body) {
+                    result = result || document.body.dispatchEvent(event);
+                }
+                if (document.documentElement) {
+                    result = result || document.documentElement.dispatchEvent(event);
+                }
+
+                console.log('[AlphabetViewerWidget] Événement dispatché sur tous les contextes, result:', result);
+            }, 2000); // Délai plus long
+
+            this.messageService.info(`Ouverture de la carte pour ${geocache.code}...`);
+        } catch (error) {
+            console.error('[AlphabetViewerWidget] Erreur lors de l\'ouverture de la carte:', error);
+            this.messageService.error('Erreur lors de l\'ouverture de la carte');
+        }
+    };
+
+    /**
+     * Parse les coordonnées du format Geocaching (ex: "N 48° 35.220") vers décimal.
+     */
+    private parseCoordinates(coordStr: string): number | undefined {
+        if (!coordStr || coordStr.trim() === '') return undefined;
+
+        try {
+            // Format: "N 48° 35.220" ou "E 006° 29.770"
+            const parts = coordStr.trim().split(/\s+/);
+            if (parts.length < 3) return undefined;
+
+            const direction = parts[0].toUpperCase();
+            const degrees = parseInt(parts[1].replace('°', ''));
+            const minutes = parseFloat(parts[2]);
+
+            let decimal = degrees + (minutes / 60);
+
+            // Ajuster selon la direction
+            if (direction === 'S' || direction === 'W') {
+                decimal = -decimal;
+            }
+
+            return decimal;
+        } catch (error) {
+            console.warn('[AlphabetViewerWidget] Erreur parsing coordonnées:', coordStr, error);
+            return undefined;
+        }
+    }
+
+    /**
      * Rendu de l'association de géocache.
      */
     private renderGeocacheAssociation(): React.ReactNode {
@@ -762,6 +869,8 @@ export class AlphabetViewerWidget extends ReactWidget {
                         this.update();
                         this.messageService.info('Association supprimée');
                     }}
+                    onShowMap={this.handleShowMap}
+                    distanceInfo={this.distance}
                 />
             </div>
         );

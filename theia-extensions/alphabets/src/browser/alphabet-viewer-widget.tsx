@@ -33,7 +33,7 @@ export class AlphabetViewerWidget extends ReactWidget {
     
     // État du zoom par section
     private zoomState: ZoomState = {
-        enteredSymbols: 1,
+        enteredSymbols: 0.75,
         decodedText: 1,
         availableSymbols: 1,
         pinnedSymbols: 1,
@@ -246,7 +246,16 @@ export class AlphabetViewerWidget extends ReactWidget {
         const saved = localStorage.getItem(`alphabet_${this.alphabetId}_zoom`);
         if (saved) {
             try {
-                this.zoomState = JSON.parse(saved);
+                const loaded = JSON.parse(saved);
+                // Appliquer les nouvelles limites
+                this.zoomState = {
+                    enteredSymbols: Math.max(0.25, Math.min(1.5, loaded.enteredSymbols || 0.75)),
+                    decodedText: Math.max(0.5, Math.min(2.0, loaded.decodedText || 1)),
+                    availableSymbols: Math.max(0.5, Math.min(2.0, loaded.availableSymbols || 1)),
+                    pinnedSymbols: Math.max(0.25, Math.min(1.5, loaded.pinnedSymbols || 1)),
+                    pinnedText: Math.max(0.5, Math.min(2.0, loaded.pinnedText || 1)),
+                    pinnedCoordinates: Math.max(0.5, Math.min(2.0, loaded.pinnedCoordinates || 1))
+                };
             } catch (e) {
                 console.error('Error loading zoom state:', e);
             }
@@ -265,7 +274,17 @@ export class AlphabetViewerWidget extends ReactWidget {
      */
     private adjustZoom(section: keyof ZoomState, delta: number): void {
         const newZoom = this.zoomState[section] + delta;
-        if (newZoom >= 0.5 && newZoom <= 2.0) {
+
+        // Limites différentes selon la section
+        let minZoom = 0.5;
+        let maxZoom = 2.0;
+
+        if (section === 'enteredSymbols' || section === 'pinnedSymbols') {
+            minZoom = 0.25;
+            maxZoom = 1.5;
+        }
+
+        if (newZoom >= minZoom && newZoom <= maxZoom) {
             this.zoomState[section] = newZoom;
             this.saveZoomState();
             this.update();
@@ -810,7 +829,7 @@ export class AlphabetViewerWidget extends ReactWidget {
                         <div className='zoom-controls'>
                             <button
                                 onClick={() => this.adjustZoom(isPinned ? 'pinnedSymbols' : 'enteredSymbols', -0.25)}
-                                disabled={scale <= 0.5}
+                                disabled={scale <= 0.25}
                                 title='Diminuer'
                             >
                                 <i className='fa fa-minus'></i>
@@ -818,7 +837,7 @@ export class AlphabetViewerWidget extends ReactWidget {
                             <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
                             <button
                                 onClick={() => this.adjustZoom(isPinned ? 'pinnedSymbols' : 'enteredSymbols', 0.25)}
-                                disabled={scale >= 2.0}
+                                disabled={scale >= 1.5}
                                 title='Augmenter'
                             >
                                 <i className='fa fa-plus'></i>
@@ -857,18 +876,18 @@ export class AlphabetViewerWidget extends ReactWidget {
                     </div>
                 </div>
                 <div style={{
-                    minHeight: '120px',
-                    padding: '12px',
+                    minHeight: '30px',
+                    padding: '0px',
                     backgroundColor: 'var(--theia-input-background)',
                     border: '1px solid var(--theia-input-border)',
                     borderRadius: '4px',
                     display: 'flex',
                     flexWrap: 'wrap',
-                    gap: `${8 * scale}px`,
+                    gap: '-1px',
                     alignItems: 'center'
                 }}>
                     {this.enteredChars.length === 0 ? (
-                        <span style={{ color: 'var(--theia-descriptionForeground)', fontSize: '13px' }}>
+                        <span style={{ color: 'var(--theia-descriptionForeground)', fontSize: '13px', padding: '8px' }}>
                             Cliquez sur les symboles ci-dessous pour commencer...
                         </span>
                     ) : (
@@ -880,7 +899,8 @@ export class AlphabetViewerWidget extends ReactWidget {
                                 scale={scale}
                                 fontFamily={fontName}
                                 isDraggable={true}
-                                showIndex={true}
+                                showIndex={false}
+                                compact={true}
                                 onDragStart={this.handleDragStart}
                                 onDragOver={this.handleDragOver}
                                 onDragEnd={this.handleDragEnd}

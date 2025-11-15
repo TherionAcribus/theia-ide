@@ -4,10 +4,12 @@ export interface SymbolItemProps {
     char: string;
     index: number;
     scale: number;
+    size?: number;  // Taille de base en pixels (défaut: 96)
     fontFamily?: string;
     imagePath?: string;
     isDraggable?: boolean;
     showIndex?: boolean;
+    compact?: boolean;  // Mode compact (case ajustée à la taille de la font)
     onDragStart?: (index: number) => void;
     onDragOver?: (index: number) => void;
     onDragEnd?: () => void;
@@ -56,28 +58,33 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
     };
 
     render(): React.ReactNode {
-        const { char, index, scale, fontFamily, imagePath, isDraggable, showIndex } = this.props;
+        const { char, index, scale, size = 96, fontFamily, imagePath, isDraggable, showIndex, compact = false } = this.props;
+
+        // En mode compact, la case s'adapte à la taille de la font
+        const fontSize = compact ? Math.round(size * 0.42) : Math.round(size * 0.42);
+        const baseSize = compact ? fontSize + 8 : size; // Font + petit padding en compact
 
         const symbolStyle: React.CSSProperties = {
-            width: `${96 * scale}px`,
-            height: `${96 * scale}px`,
+            width: `${baseSize * scale}px`,
+            height: `${baseSize * scale}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: `${40 * scale}px`,
+            fontSize: `${fontSize * scale}px`,
             position: 'relative',
             cursor: isDraggable ? 'move' : (this.props.onClick ? 'pointer' : 'default'),
-            backgroundColor: 'var(--theia-input-background)',
-            border: '1px solid var(--theia-input-border)',
-            borderRadius: '4px',
+            backgroundColor: compact ? 'transparent' : 'var(--theia-input-background)',
+            border: compact ? 'none' : '1px solid var(--theia-input-border)',
+            borderRadius: compact ? '0px' : '2px',
             transition: 'all 0.2s',
-            userSelect: 'none'
+            userSelect: 'none',
+            margin: '0px'
         };
 
         const content = fontFamily ? (
             <span style={{
                 fontFamily: `"${fontFamily}", monospace`,
-                fontSize: `${40 * scale}px`
+                fontSize: `${fontSize * scale}px`
             }}>
                 {char}
             </span>

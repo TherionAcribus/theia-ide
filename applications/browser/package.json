@@ -118,7 +118,8 @@
     "theia-ide-product-ext": "1.65.100",
     "theia-ide-zones-ext": "file:../../theia-extensions/zones",
     "@mysterai/theia-plugins": "1.0.0",
-    "@mysterai/theia-formula-solver": "1.0.0"
+    "@mysterai/theia-formula-solver": "1.0.0",
+    "@mysterai/theia-alphabets": "1.0.0"
   },
   "devDependencies": {
     "@theia/cli": "1.65.1",

@@ -1,0 +1,1269 @@
+/**
+ * Widget de visualisation d'un alphabet (panel central).
+ * Affiche l'interface complète de décodage avec symboles, texte, et coordonnées.
+ */
+import * as React from '@theia/core/shared/react';
+import { injectable, postConstruct, inject } from '@theia/core/shared/inversify';
+import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { MessageService } from '@theia/core';
+import { AlphabetsService } from './services/alphabets-service';
+import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo } from '../common/alphabet-protocol';
+import { CoordinatesDetector } from './components/coordinates-detector';
+import { GeocacheAssociation } from './components/geocache-association';
+import { SymbolItem } from './components/symbol-item';
+import { SymbolContextMenu } from './components/symbol-context-menu';
+import './font-api';
+
+@injectable()
+export class AlphabetViewerWidget extends ReactWidget {
+
+    static readonly ID_PREFIX = 'alphabet-viewer';
+
+    @inject(AlphabetsService)
+    protected readonly alphabetsService!: AlphabetsService;
+
+    @inject(MessageService)
+    protected readonly messageService!: MessageService;
+
+    private alphabet: Alphabet | null = null;
+    private alphabetId: string;
+    
+    // État des symboles entrés
+    private enteredChars: string[] = [];
+    
+    // État du zoom par section
+    private zoomState: ZoomState = {
+        enteredSymbols: 1,
+        decodedText: 1,
+        availableSymbols: 1,
+        pinnedSymbols: 1,
+        pinnedText: 1,
+        pinnedCoordinates: 1
+    };
+    
+    // État de l'épinglage
+    private pinnedState: PinnedState = {
+        symbols: false,
+        text: false,
+        coordinates: false
+    };
+    
+    // Géocache associée et distance
+    private associatedGeocache?: AssociatedGeocache;
+    private distance?: DistanceInfo;
+    
+    // Polices chargées
+    private fontLoaded: boolean = false;
+    private loading: boolean = true;
+
+    // État du drag & drop
+    private draggedIndex: number | null = null;
+    private dragOverIndex: number | null = null;
+
+    // État du menu contextuel
+    private contextMenu: {
+        visible: boolean;
+        x: number;
+        y: number;
+        symbolIndex: number;
+    } | null = null;
+
+    // Historique pour undo/redo
+    private history: string[][] = [];
+    private historyIndex: number = -1;
+    private maxHistorySize: number = 50;
+
+    constructor(@inject('alphabetId') alphabetId: string) {
+        super();
+        console.log('AlphabetViewerWidget: constructor called with alphabetId:', alphabetId);
+        this.alphabetId = alphabetId;
+    }
+
+    @postConstruct()
+    protected init(): void {
+        console.log('AlphabetViewerWidget: init called for:', this.alphabetId);
+        console.log('AlphabetViewerWidget: Widget ID is:', this.id);
+        this.title.closable = true;
+        this.title.iconClass = 'fa fa-language';
+
+        // Charger le zoom depuis localStorage
+        this.loadZoomState();
+
+        // Configurer les raccourcis clavier
+        this.setupKeyboardShortcuts();
+
+        this.update();
+        console.log('AlphabetViewerWidget: Initial update called');
+
+        // Initialiser de manière asynchrone sans bloquer la construction
+        this.initializeAsync();
+    }
+
+    /**
+     * Configure les raccourcis clavier.
+     */
+    private setupKeyboardShortcuts(): void {
+        this.node.addEventListener('keydown', this.handleKeyDown);
+        this.node.tabIndex = 0; // Permet de recevoir les événements clavier
+    }
+
+    /**
+     * Nettoyage lors de la destruction du widget.
+     */
+    protected onBeforeDetach(): void {
+        this.node.removeEventListener('keydown', this.handleKeyDown);
+    }
+
+    /**
+     * Gestionnaire des événements clavier.
+     */
+    private handleKeyDown = (e: KeyboardEvent): void => {
+        // Undo: Ctrl+Z (ou Cmd+Z sur Mac)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            this.undo();
+        }
+        // Redo: Ctrl+Y ou Ctrl+Shift+Z (ou Cmd+Y/Cmd+Shift+Z sur Mac)
+        else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+            e.preventDefault();
+            this.redo();
+        }
+        // Supprimer le dernier symbole: Backspace
+        else if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            this.deleteLastSymbol();
+        }
+        // Tout effacer: Ctrl+Backspace
+        else if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace') {
+            e.preventDefault();
+            this.clearSymbols();
+        }
+        // Export: Ctrl+E
+        else if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+            e.preventDefault();
+            this.exportState();
+        }
+        // Import: Ctrl+I
+        else if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+            e.preventDefault();
+            this.importState();
+        }
+    };
+
+    private async initializeAsync(): Promise<void> {
+        try {
+            await this.loadAlphabet();
+            console.log('AlphabetViewerWidget: loadAlphabet completed');
+        } catch (error) {
+            console.error('AlphabetViewerWidget: Error during async initialization:', error);
+        }
+    }
+
+    /**
+     * Charge l'alphabet depuis le backend.
+     */
+    private async loadAlphabet(): Promise<void> {
+        console.log('AlphabetViewerWidget: loadAlphabet started for:', this.alphabetId);
+        try {
+            this.loading = true;
+            this.update();
+            console.log('AlphabetViewerWidget: Set loading=true and updated');
+            
+            this.alphabet = await this.alphabetsService.getAlphabet(this.alphabetId);
+            console.log('AlphabetViewerWidget: Alphabet loaded:', this.alphabet);
+            this.title.label = this.alphabet.name;
+            this.title.caption = this.alphabet.description;
+            console.log('AlphabetViewerWidget: Title set to:', this.alphabet.name);
+            
+            // Si alphabet basé sur police, charger la police
+            if (this.alphabet.alphabetConfig.type === 'font') {
+                console.log('AlphabetViewerWidget: Loading font...');
+                await this.loadFont();
+            } else {
+                console.log('AlphabetViewerWidget: No font to load (images type)');
+                this.fontLoaded = true;
+            }
+            
+            this.loading = false;
+            this.update();
+            console.log('AlphabetViewerWidget: Loading complete, updated widget');
+        } catch (error) {
+            console.error('AlphabetViewerWidget: Error loading alphabet:', error);
+            this.messageService.error(`Erreur lors du chargement de l'alphabet ${this.alphabetId}`);
+            this.loading = false;
+            this.update();
+        }
+    }
+
+    /**
+     * Charge la police d'un alphabet basé sur police.
+     */
+    private async loadFont(): Promise<void> {
+        if (!this.alphabet || this.alphabet.alphabetConfig.type !== 'font') {
+            return;
+        }
+
+        const fontUrl = this.alphabetsService.getFontUrl(this.alphabetId);
+        const fontName = `Alphabet-${this.alphabetId}`;
+
+        // Créer un élément style pour @font-face
+        const styleId = `font-style-${this.alphabetId}`;
+        let styleElement = document.getElementById(styleId) as HTMLStyleElement;
+        
+        if (!styleElement) {
+            styleElement = document.createElement('style');
+            styleElement.id = styleId;
+            document.head.appendChild(styleElement);
+        }
+
+        styleElement.textContent = `
+            @font-face {
+                font-family: "${fontName}";
+                src: url("${fontUrl}") format("truetype");
+                font-display: block;
+            }
+        `;
+
+        // Attendre le chargement de la police
+        try {
+            const font = new FontFace(fontName, `url(${fontUrl})`);
+            await font.load();
+            document.fonts.add(font);
+            this.fontLoaded = true;
+            this.update();
+        } catch (error) {
+            console.error('Error loading font:', error);
+            this.messageService.warn('Impossible de charger la police, affichage en texte brut');
+            this.fontLoaded = true; // Continuer quand même
+            this.update();
+        }
+    }
+
+    /**
+     * Charge l'état du zoom depuis localStorage.
+     */
+    private loadZoomState(): void {
+        const saved = localStorage.getItem(`alphabet_${this.alphabetId}_zoom`);
+        if (saved) {
+            try {
+                this.zoomState = JSON.parse(saved);
+            } catch (e) {
+                console.error('Error loading zoom state:', e);
+            }
+        }
+    }
+
+    /**
+     * Sauvegarde l'état du zoom dans localStorage.
+     */
+    private saveZoomState(): void {
+        localStorage.setItem(`alphabet_${this.alphabetId}_zoom`, JSON.stringify(this.zoomState));
+    }
+
+    /**
+     * Ajuste le zoom d'une section.
+     */
+    private adjustZoom(section: keyof ZoomState, delta: number): void {
+        const newZoom = this.zoomState[section] + delta;
+        if (newZoom >= 0.5 && newZoom <= 2.0) {
+            this.zoomState[section] = newZoom;
+            this.saveZoomState();
+            this.update();
+        }
+    }
+
+    /**
+     * Ajoute un symbole aux symboles entrés.
+     */
+    private addSymbol(char: string): void {
+        this.enteredChars.push(char);
+        this.saveState();
+        this.update();
+    }
+
+    /**
+     * Supprime le dernier symbole.
+     */
+    public deleteLastSymbol(): void {
+        if (this.enteredChars.length > 0) {
+            this.enteredChars.pop();
+            this.saveState();
+            this.update();
+        }
+    }
+
+    /**
+     * Efface tous les symboles.
+     */
+    private clearSymbols(): void {
+        this.enteredChars = [];
+        this.saveState();
+        this.update();
+    }
+
+    /**
+     * Obtient le texte décodé à partir des symboles entrés.
+     */
+    private getDecodedText(): string {
+        return this.enteredChars.join('');
+    }
+
+    // =================== Gestion du drag & drop ===================
+
+    /**
+     * Début du drag d'un symbole.
+     */
+    private handleDragStart = (index: number): void => {
+        this.draggedIndex = index;
+    };
+
+    /**
+     * Survol d'un symbole pendant le drag.
+     */
+    private handleDragOver = (index: number): void => {
+        if (this.draggedIndex !== null && this.draggedIndex !== index) {
+            // Réorganiser les symboles
+            const newChars = [...this.enteredChars];
+            const [draggedChar] = newChars.splice(this.draggedIndex, 1);
+            newChars.splice(index, 0, draggedChar);
+            
+            this.enteredChars = newChars;
+            this.draggedIndex = index;
+            this.update();
+        }
+    };
+
+    /**
+     * Fin du drag.
+     */
+    private handleDragEnd = (): void => {
+        if (this.draggedIndex !== null) {
+            this.saveState();
+        }
+        this.draggedIndex = null;
+        this.dragOverIndex = null;
+        this.update();
+    };
+
+    // =================== Gestion du menu contextuel ===================
+
+    /**
+     * Affiche le menu contextuel pour un symbole.
+     */
+    private handleContextMenu = (e: React.MouseEvent, index: number): void => {
+        e.preventDefault();
+        this.contextMenu = {
+            visible: true,
+            x: e.clientX,
+            y: e.clientY,
+            symbolIndex: index
+        };
+        this.update();
+    };
+
+    /**
+     * Ferme le menu contextuel.
+     */
+    private closeContextMenu = (): void => {
+        this.contextMenu = null;
+        this.update();
+    };
+
+    /**
+     * Supprime un symbole à l'index donné.
+     */
+    private deleteSymbol = (index: number): void => {
+        this.enteredChars.splice(index, 1);
+        this.saveState();
+        this.update();
+    };
+
+    /**
+     * Duplique un symbole à l'index donné.
+     */
+    private duplicateSymbol = (index: number): void => {
+        const char = this.enteredChars[index];
+        this.enteredChars.splice(index + 1, 0, char);
+        this.saveState();
+        this.update();
+    };
+
+    /**
+     * Insère un espace avant le symbole à l'index donné.
+     */
+    private insertBefore = (index: number): void => {
+        this.enteredChars.splice(index, 0, ' ');
+        this.saveState();
+        this.update();
+    };
+
+    /**
+     * Insère un espace après le symbole à l'index donné.
+     */
+    private insertAfter = (index: number): void => {
+        this.enteredChars.splice(index + 1, 0, ' ');
+        this.saveState();
+        this.update();
+    };
+
+    // =================== Historique (Undo/Redo) ===================
+
+    /**
+     * Sauvegarde l'état actuel dans l'historique.
+     */
+    private saveState(): void {
+        // Supprimer tout l'historique après l'index actuel
+        this.history = this.history.slice(0, this.historyIndex + 1);
+        
+        // Ajouter le nouvel état
+        this.history.push([...this.enteredChars]);
+        
+        // Limiter la taille de l'historique
+        if (this.history.length > this.maxHistorySize) {
+            this.history.shift();
+        } else {
+            this.historyIndex++;
+        }
+    }
+
+    /**
+     * Annule la dernière action (Undo).
+     */
+    private undo(): void {
+        if (this.historyIndex > 0) {
+            this.historyIndex--;
+            this.enteredChars = [...this.history[this.historyIndex]];
+            this.update();
+            this.messageService.info(`Annulation (${this.history.length - this.historyIndex - 1} à refaire)`);
+        } else {
+            this.messageService.info('Rien à annuler');
+        }
+    }
+
+    /**
+     * Refait la dernière action annulée (Redo).
+     */
+    private redo(): void {
+        if (this.historyIndex < this.history.length - 1) {
+            this.historyIndex++;
+            this.enteredChars = [...this.history[this.historyIndex]];
+            this.update();
+            this.messageService.info(`Rétablissement (${this.historyIndex + 1}/${this.history.length})`);
+        } else {
+            this.messageService.info('Rien à refaire');
+        }
+    }
+
+    // =================== Export/Import ===================
+
+    /**
+     * Exporte l'état actuel (symboles, zoom, épinglage).
+     */
+    private exportState(): void {
+        const state = {
+            alphabetId: this.alphabetId,
+            enteredChars: this.enteredChars,
+            zoomState: this.zoomState,
+            pinnedState: this.pinnedState,
+            associatedGeocache: this.associatedGeocache,
+            timestamp: new Date().toISOString()
+        };
+
+        const json = JSON.stringify(state, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `alphabet-${this.alphabetId}-${Date.now()}.json`;
+        a.click();
+        
+        URL.revokeObjectURL(url);
+        this.messageService.info('État exporté avec succès');
+    }
+
+    /**
+     * Importe un état depuis un fichier JSON.
+     */
+    private importState(): void {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json';
+        
+        input.onchange = async (e: Event) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+            
+            try {
+                const text = await file.text();
+                const state = JSON.parse(text);
+                
+                // Valider que c'est le bon alphabet
+                if (state.alphabetId !== this.alphabetId) {
+                    this.messageService.warn(
+                        `Cet export est pour l'alphabet "${state.alphabetId}", pas "${this.alphabetId}"`
+                    );
+                    return;
+                }
+                
+                // Restaurer l'état
+                this.enteredChars = state.enteredChars || [];
+                this.zoomState = { ...this.zoomState, ...state.zoomState };
+                this.pinnedState = { ...this.pinnedState, ...state.pinnedState };
+                this.associatedGeocache = state.associatedGeocache;
+                
+                this.saveState();
+                this.saveZoomState();
+                this.update();
+                
+                this.messageService.info('État importé avec succès');
+            } catch (error) {
+                this.messageService.error(`Erreur lors de l'import: ${error}`);
+            }
+        };
+        
+        input.click();
+    };
+
+    // =================== Épinglage ===================
+
+    /**
+     * Bascule l'état d'épinglage pour une section.
+     */
+    private togglePin = (section: 'symbols' | 'text' | 'coordinates'): void => {
+        this.pinnedState[section] = !this.pinnedState[section];
+        this.update();
+        
+        const status = this.pinnedState[section] ? 'épinglée' : 'désépinglée';
+        this.messageService.info(`Section ${section} ${status}`);
+    };
+
+    /**
+     * Rendu du widget.
+     */
+    protected render(): React.ReactNode {
+        if (this.loading) {
+            return this.renderLoading();
+        }
+
+        if (!this.alphabet) {
+            return this.renderError();
+        }
+
+        return (
+            <div className='alphabet-viewer-container' style={{
+                height: '100%',
+                overflow: 'auto',
+                backgroundColor: 'var(--theia-editor-background)',
+                color: 'var(--theia-editor-foreground)',
+                position: 'relative'
+            }}>
+                {this.renderHeader()}
+                {this.renderToolbar()}
+                {this.renderGeocacheAssociation()}
+                
+                {/* Zone épinglée */}
+                {(this.pinnedState.symbols || this.pinnedState.text || this.pinnedState.coordinates) && (
+                    <div className='pinned-area' style={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 100,
+                        backgroundColor: 'var(--theia-sideBar-background)',
+                        borderBottom: '2px solid var(--theia-sideBar-border)',
+                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                        marginBottom: '16px'
+                    }}>
+                        {this.pinnedState.symbols && this.renderEnteredSymbols(true)}
+                        {this.pinnedState.text && this.renderDecodedText(true)}
+                        {this.pinnedState.coordinates && this.renderCoordinatesDetector(true)}
+                    </div>
+                )}
+                
+                {/* Contenu normal */}
+                {!this.pinnedState.symbols && this.renderEnteredSymbols(false)}
+                {!this.pinnedState.text && this.renderDecodedText(false)}
+                {!this.pinnedState.coordinates && this.renderCoordinatesDetector(false)}
+                {this.renderAvailableSymbols()}
+                {this.renderSources()}
+            </div>
+        );
+    }
+
+    /**
+     * Rendu de la barre d'outils.
+     */
+    private renderToolbar(): React.ReactNode {
+        const canUndo = this.historyIndex > 0;
+        const canRedo = this.historyIndex < this.history.length - 1;
+
+        return (
+            <div style={{
+                padding: '12px 16px',
+                backgroundColor: 'var(--theia-toolbar-background)',
+                borderBottom: '1px solid var(--theia-panel-border)',
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center',
+                flexWrap: 'wrap'
+            }}>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                        onClick={() => this.undo()}
+                        disabled={!canUndo}
+                        title='Annuler (Ctrl+Z)'
+                        style={{
+                            padding: '6px 12px',
+                            backgroundColor: 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: canUndo ? 'pointer' : 'not-allowed',
+                            opacity: canUndo ? 1 : 0.5
+                        }}
+                    >
+                        <i className='fa fa-undo'></i>
+                    </button>
+                    <button
+                        onClick={() => this.redo()}
+                        disabled={!canRedo}
+                        title='Refaire (Ctrl+Y)'
+                        style={{
+                            padding: '6px 12px',
+                            backgroundColor: 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: canRedo ? 'pointer' : 'not-allowed',
+                            opacity: canRedo ? 1 : 0.5
+                        }}
+                    >
+                        <i className='fa fa-redo'></i>
+                    </button>
+                </div>
+
+                <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--theia-panel-border)' }}></div>
+
+                <button
+                    onClick={() => this.exportState()}
+                    title='Exporter (Ctrl+E)'
+                    style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'var(--theia-button-background)',
+                        color: 'var(--theia-button-foreground)',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <i className='fa fa-download'></i> Exporter
+                </button>
+
+                <button
+                    onClick={() => this.importState()}
+                    title='Importer (Ctrl+I)'
+                    style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'var(--theia-button-background)',
+                        color: 'var(--theia-button-foreground)',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                    }}
+                >
+                    <i className='fa fa-upload'></i> Importer
+                </button>
+
+                {this.history.length > 0 && (
+                    <span style={{
+                        marginLeft: 'auto',
+                        fontSize: '12px',
+                        color: 'var(--theia-descriptionForeground)'
+                    }}>
+                        {this.historyIndex + 1} / {this.history.length}
+                    </span>
+                )}
+            </div>
+        );
+    }
+
+    /**
+     * Rendu du chargement.
+     */
+    private renderLoading(): React.ReactNode {
+        return (
+            <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                height: '100%',
+                color: 'var(--theia-descriptionForeground)'
+            }}>
+                <i className='fa fa-spinner fa-spin' style={{ marginRight: '8px', fontSize: '24px' }}></i>
+                <span>Chargement de l'alphabet...</span>
+            </div>
+        );
+    }
+
+    /**
+     * Rendu de l'erreur.
+     */
+    private renderError(): React.ReactNode {
+        return (
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                height: '100%',
+                color: 'var(--theia-errorForeground)',
+                padding: '20px'
+            }}>
+                <i className='fa fa-exclamation-triangle' style={{ fontSize: '48px', marginBottom: '16px' }}></i>
+                <h3>Erreur de chargement</h3>
+                <p>Impossible de charger l'alphabet "{this.alphabetId}"</p>
+            </div>
+        );
+    }
+
+    /**
+     * Rendu de l'association de géocache.
+     */
+    private renderGeocacheAssociation(): React.ReactNode {
+        return (
+            <div style={{ padding: '16px' }}>
+                <GeocacheAssociation
+                    associatedGeocache={this.associatedGeocache}
+                    onAssociate={(geocache) => {
+                        this.associatedGeocache = geocache;
+                        this.update();
+                        this.messageService.info(`Géocache ${geocache.code} associée`);
+                    }}
+                    onClear={() => {
+                        this.associatedGeocache = undefined;
+                        this.distance = undefined;
+                        this.update();
+                        this.messageService.info('Association supprimée');
+                    }}
+                />
+            </div>
+        );
+    }
+
+    /**
+     * Rendu de l'en-tête.
+     */
+    private renderHeader(): React.ReactNode {
+        if (!this.alphabet) return null;
+
+        return (
+            <div style={{
+                padding: '16px',
+                borderBottom: '1px solid var(--theia-panel-border)',
+                backgroundColor: 'var(--theia-sideBar-background)'
+            }}>
+                <h2 style={{ margin: '0 0 8px 0', fontSize: '20px' }}>{this.alphabet.name}</h2>
+                <p style={{ margin: '0', color: 'var(--theia-descriptionForeground)', fontSize: '13px' }}>
+                    {this.alphabet.description}
+                </p>
+                {this.alphabet.tags && this.alphabet.tags.length > 0 && (
+                    <div style={{ marginTop: '8px' }}>
+                        {this.alphabet.tags.map(tag => (
+                            <span key={tag} style={{
+                                display: 'inline-block',
+                                marginRight: '6px',
+                                padding: '2px 8px',
+                                fontSize: '11px',
+                                backgroundColor: 'var(--theia-badge-background)',
+                                color: 'var(--theia-badge-foreground)',
+                                borderRadius: '3px'
+                            }}>
+                                {tag}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    /**
+     * Rendu des symboles entrés.
+     */
+    private renderEnteredSymbols(isPinned: boolean): React.ReactNode {
+        const scale = isPinned ? this.zoomState.pinnedSymbols : this.zoomState.enteredSymbols;
+        const fontName = this.alphabet?.alphabetConfig?.type === 'font' 
+            ? `Alphabet-${this.alphabetId}` 
+            : undefined;
+
+        return (
+            <div style={{ padding: '16px' }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px'
+                }}>
+                    <h3 style={{ margin: 0, fontSize: '16px' }}>
+                        Symboles entrés {isPinned && <i className='fa fa-thumbtack' style={{ marginLeft: '8px', fontSize: '12px' }}></i>}
+                    </h3>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div className='zoom-controls'>
+                            <button
+                                onClick={() => this.adjustZoom(isPinned ? 'pinnedSymbols' : 'enteredSymbols', -0.25)}
+                                disabled={scale <= 0.5}
+                                title='Diminuer'
+                            >
+                                <i className='fa fa-minus'></i>
+                            </button>
+                            <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
+                            <button
+                                onClick={() => this.adjustZoom(isPinned ? 'pinnedSymbols' : 'enteredSymbols', 0.25)}
+                                disabled={scale >= 2.0}
+                                title='Augmenter'
+                            >
+                                <i className='fa fa-plus'></i>
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => this.togglePin('symbols')}
+                            title={this.pinnedState.symbols ? 'Désépingler' : 'Épingler'}
+                            style={{
+                                padding: '4px 8px',
+                                backgroundColor: this.pinnedState.symbols 
+                                    ? 'var(--theia-button-hoverBackground)' 
+                                    : 'var(--theia-button-background)',
+                                color: 'var(--theia-button-foreground)',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <i className='fa fa-thumbtack'></i>
+                        </button>
+                        <button
+                            onClick={() => this.clearSymbols()}
+                            title='Tout effacer'
+                            style={{
+                                padding: '4px 8px',
+                                backgroundColor: 'var(--theia-button-background)',
+                                color: 'var(--theia-button-foreground)',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <i className='fa fa-trash'></i> Effacer
+                        </button>
+                    </div>
+                </div>
+                <div style={{
+                    minHeight: '120px',
+                    padding: '12px',
+                    backgroundColor: 'var(--theia-input-background)',
+                    border: '1px solid var(--theia-input-border)',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: `${8 * scale}px`,
+                    alignItems: 'center'
+                }}>
+                    {this.enteredChars.length === 0 ? (
+                        <span style={{ color: 'var(--theia-descriptionForeground)', fontSize: '13px' }}>
+                            Cliquez sur les symboles ci-dessous pour commencer...
+                        </span>
+                    ) : (
+                        this.enteredChars.map((char, idx) => (
+                            <SymbolItem
+                                key={`entered-${idx}`}
+                                char={char}
+                                index={idx}
+                                scale={scale}
+                                fontFamily={fontName}
+                                isDraggable={true}
+                                showIndex={true}
+                                onDragStart={this.handleDragStart}
+                                onDragOver={this.handleDragOver}
+                                onDragEnd={this.handleDragEnd}
+                                onContextMenu={this.handleContextMenu}
+                            />
+                        ))
+                    )}
+                </div>
+                {this.contextMenu && (
+                    <SymbolContextMenu
+                        x={this.contextMenu.x}
+                        y={this.contextMenu.y}
+                        symbolIndex={this.contextMenu.symbolIndex}
+                        onDelete={() => this.deleteSymbol(this.contextMenu!.symbolIndex)}
+                        onDuplicate={() => this.duplicateSymbol(this.contextMenu!.symbolIndex)}
+                        onInsertBefore={() => this.insertBefore(this.contextMenu!.symbolIndex)}
+                        onInsertAfter={() => this.insertAfter(this.contextMenu!.symbolIndex)}
+                        onClose={this.closeContextMenu}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    /**
+     * Rendu du texte décodé.
+     */
+    private renderDecodedText(isPinned: boolean): React.ReactNode {
+        const scale = isPinned ? this.zoomState.pinnedText : this.zoomState.decodedText;
+        const decodedText = this.getDecodedText();
+
+        return (
+            <div style={{ padding: '16px' }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px'
+                }}>
+                    <h3 style={{ margin: 0, fontSize: '16px' }}>
+                        Texte décodé {isPinned && <i className='fa fa-thumbtack' style={{ marginLeft: '8px', fontSize: '12px' }}></i>}
+                    </h3>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div className='zoom-controls'>
+                            <button
+                                onClick={() => this.adjustZoom(isPinned ? 'pinnedText' : 'decodedText', -0.25)}
+                                disabled={scale <= 0.5}
+                                title='Diminuer'
+                            >
+                                <i className='fa fa-minus'></i>
+                            </button>
+                            <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
+                            <button
+                                onClick={() => this.adjustZoom(isPinned ? 'pinnedText' : 'decodedText', 0.25)}
+                                disabled={scale >= 2.0}
+                                title='Augmenter'
+                            >
+                                <i className='fa fa-plus'></i>
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => this.togglePin('text')}
+                            title={this.pinnedState.text ? 'Désépingler' : 'Épingler'}
+                            style={{
+                                padding: '4px 8px',
+                                backgroundColor: this.pinnedState.text 
+                                    ? 'var(--theia-button-hoverBackground)' 
+                                    : 'var(--theia-button-background)',
+                                color: 'var(--theia-button-foreground)',
+                                border: 'none',
+                                borderRadius: '3px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <i className='fa fa-thumbtack'></i>
+                        </button>
+                    </div>
+                </div>
+                <textarea
+                    value={decodedText}
+                    onChange={e => {
+                        this.enteredChars = e.target.value.split('');
+                        this.update();
+                    }}
+                    placeholder='Le texte décodé apparaîtra ici...'
+                    style={{
+                        width: '100%',
+                        minHeight: '100px',
+                        padding: '12px',
+                        fontSize: `${14 * scale}px`,
+                        backgroundColor: 'var(--theia-input-background)',
+                        color: 'var(--theia-input-foreground)',
+                        border: '1px solid var(--theia-input-border)',
+                        borderRadius: '4px',
+                        fontFamily: 'monospace',
+                        resize: 'vertical'
+                    }}
+                />
+            </div>
+        );
+    }
+
+    /**
+     * Rendu du détecteur de coordonnées.
+     */
+    private renderCoordinatesDetector(isPinned: boolean): React.ReactNode {
+        const decodedText = this.getDecodedText();
+        
+        // Obtenir les coordonnées d'origine depuis la géocache associée
+        const originCoords = this.associatedGeocache ? {
+            ddm_lat: this.associatedGeocache.gc_lat || '',
+            ddm_lon: this.associatedGeocache.gc_lon || ''
+        } : undefined;
+
+        return (
+            <div style={{ padding: '0 16px' }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px'
+                }}>
+                    <h3 style={{ margin: 0, fontSize: '16px' }}>
+                        Détecteur de coordonnées {isPinned && <i className='fa fa-thumbtack' style={{ marginLeft: '8px', fontSize: '12px' }}></i>}
+                    </h3>
+                    <button
+                        onClick={() => this.togglePin('coordinates')}
+                        title={this.pinnedState.coordinates ? 'Désépingler' : 'Épingler'}
+                        style={{
+                            padding: '4px 8px',
+                            backgroundColor: this.pinnedState.coordinates 
+                                ? 'var(--theia-button-hoverBackground)' 
+                                : 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        <i className='fa fa-thumbtack'></i>
+                    </button>
+                </div>
+                <CoordinatesDetector
+                    text={decodedText}
+                    alphabetsService={this.alphabetsService}
+                    originCoords={originCoords}
+                    associatedGeocache={this.associatedGeocache}
+                    onDistanceCalculated={(dist) => {
+                        this.distance = dist;
+                        this.update();
+                    }}
+                />
+            </div>
+        );
+    }
+
+    /**
+     * Rendu des symboles disponibles.
+     */
+    private renderAvailableSymbols(): React.ReactNode {
+        if (!this.alphabet || !this.fontLoaded) {
+            return null;
+        }
+
+        const scale = this.zoomState.availableSymbols;
+        const config = this.alphabet.alphabetConfig;
+
+        return (
+            <div style={{ padding: '16px' }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px'
+                }}>
+                    <h3 style={{ margin: 0, fontSize: '16px' }}>Symboles disponibles</h3>
+                    <div className='zoom-controls'>
+                        <button
+                            onClick={() => this.adjustZoom('availableSymbols', -0.25)}
+                            disabled={scale <= 0.5}
+                            title='Diminuer'
+                        >
+                            <i className='fa fa-minus'></i>
+                        </button>
+                        <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
+                        <button
+                            onClick={() => this.adjustZoom('availableSymbols', 0.25)}
+                            disabled={scale >= 2.0}
+                            title='Augmenter'
+                        >
+                            <i className='fa fa-plus'></i>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Lettres minuscules */}
+                {this.renderSymbolSection('Lettres minuscules', this.getLetters(false), scale)}
+
+                {/* Lettres majuscules (si disponibles) */}
+                {config.hasUpperCase && this.renderSymbolSection('Lettres majuscules', this.getLetters(true), scale)}
+
+                {/* Chiffres */}
+                {this.renderSymbolSection('Chiffres', this.getNumbers(), scale)}
+
+                {/* Symboles spéciaux */}
+                {config.characters.special && Object.keys(config.characters.special).length > 0 && 
+                    this.renderSymbolSection('Symboles spéciaux', Object.keys(config.characters.special), scale)}
+            </div>
+        );
+    }
+
+    /**
+     * Rendu d'une section de symboles.
+     */
+    private renderSymbolSection(title: string, chars: string[], scale: number): React.ReactNode {
+        if (chars.length === 0) {
+            return null;
+        }
+
+        const fontName = this.alphabet?.alphabetConfig?.type === 'font' 
+            ? `Alphabet-${this.alphabetId}` 
+            : undefined;
+
+        return (
+            <div style={{ marginBottom: '20px' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: 'var(--theia-descriptionForeground)' }}>
+                    {title}
+                </h4>
+                <div className='alphabet-symbols-grid' style={{
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${96 * scale}px, 1fr))`,
+                    gap: `${12 * scale}px`
+                }}>
+                    {chars.map((char, idx) => (
+                        <SymbolItem
+                            key={`available-${title}-${char}`}
+                            char={char}
+                            index={idx}
+                            scale={scale}
+                            fontFamily={fontName}
+                            isDraggable={false}
+                            showIndex={false}
+                            onClick={(c) => this.addSymbol(c)}
+                        />
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    /**
+     * Obtient l'URL d'une image de symbole.
+     */
+    private getImageUrl(char: string): string {
+        if (!this.alphabet) return '';
+
+        const config = this.alphabet.alphabetConfig;
+        const imageDir = config.imageDir || 'images';
+        const format = config.imageFormat || 'png';
+
+        // Déterminer le nom du fichier
+        let filename: string;
+        
+        if (char.match(/[a-z]/)) {
+            // Lettre minuscule
+            const suffix = config.lowercaseSuffix || 'lowercase';
+            filename = `${char}_${suffix}.${format}`;
+        } else if (char.match(/[A-Z]/)) {
+            // Lettre majuscule
+            const suffix = config.uppercaseSuffix || 'uppercase';
+            filename = `${char.toLowerCase()}_${suffix}.${format}`;
+        } else if (char.match(/[0-9]/)) {
+            // Chiffre
+            filename = `${char}.${format}`;
+        } else {
+            // Symbole spécial
+            const specialName = config.characters.special?.[char] || char;
+            filename = `${specialName}.${format}`;
+        }
+
+        return this.alphabetsService.getResourceUrl(this.alphabetId, `${imageDir}/${filename}`);
+    }
+
+    /**
+     * Obtient la liste des lettres.
+     */
+    private getLetters(uppercase: boolean): string[] {
+        if (!this.alphabet) return [];
+
+        const config = this.alphabet.alphabetConfig;
+        const letters = config.characters.letters;
+
+        if (letters === 'all') {
+            const start = uppercase ? 'A'.charCodeAt(0) : 'a'.charCodeAt(0);
+            return Array.from({ length: 26 }, (_, i) => String.fromCharCode(start + i));
+        } else {
+            return uppercase ? letters.map(l => l.toUpperCase()) : letters;
+        }
+    }
+
+    /**
+     * Obtient la liste des chiffres.
+     */
+    private getNumbers(): string[] {
+        if (!this.alphabet) return [];
+
+        const config = this.alphabet.alphabetConfig;
+        const numbers = config.characters.numbers;
+
+        if (numbers === 'all') {
+            return Array.from({ length: 10 }, (_, i) => String(i));
+        } else {
+            return numbers;
+        }
+    }
+
+    /**
+     * Rendu des sources et crédits.
+     */
+    private renderSources(): React.ReactNode {
+        if (!this.alphabet || !this.alphabet.sources || this.alphabet.sources.length === 0) {
+            return null;
+        }
+
+        return (
+            <div style={{
+                padding: '16px',
+                borderTop: '1px solid var(--theia-panel-border)',
+                backgroundColor: 'var(--theia-sideBar-background)'
+            }}>
+                <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>Sources et crédits</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {this.alphabet.sources.map((source, idx) => (
+                        <div key={idx} style={{
+                            padding: '8px',
+                            backgroundColor: 'var(--theia-list-activeSelectionBackground)',
+                            borderRadius: '4px',
+                            fontSize: '12px'
+                        }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                                {source.type === 'reference' && '📚 '}
+                                {source.type === 'font' && '🔤 '}
+                                {source.type === 'author' && '👤 '}
+                                {source.type === 'credit' && '©️ '}
+                                {source.label}
+                            </div>
+                            {source.url && (
+                                <a
+                                    href={source.url}
+                                    target='_blank'
+                                    rel='noopener noreferrer'
+                                    style={{
+                                        color: 'var(--theia-textLink-foreground)',
+                                        textDecoration: 'none'
+                                    }}
+                                >
+                                    {source.url}
+                                </a>
+                            )}
+                            {source.author && <div>Auteur: {source.author}</div>}
+                            {source.description && (
+                                <div style={{ color: 'var(--theia-descriptionForeground)', marginTop: '4px' }}>
+                                    {source.description}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    /**
+     * Cleanup lors de la destruction du widget.
+     */
+    dispose(): void {
+        // Supprimer le style de police si présent
+        const styleId = `font-style-${this.alphabetId}`;
+        const styleElement = document.getElementById(styleId);
+        if (styleElement) {
+            styleElement.remove();
+        }
+        super.dispose();
+    }
+}
+

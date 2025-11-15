@@ -21,22 +21,18 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
         // Fermer le menu si on clique en dehors (avec un délai pour éviter la fermeture immédiate)
         document.addEventListener('click', this.handleOutsideClick);
         document.addEventListener('contextmenu', this.handleOutsideClick);
-        console.log('SymbolContextMenu mounted');
     }
 
     componentWillUnmount(): void {
         document.removeEventListener('click', this.handleOutsideClick);
         document.removeEventListener('contextmenu', this.handleOutsideClick);
-        console.log('SymbolContextMenu unmounted');
     }
 
     private handleOutsideClick = (e: Event) => {
         // Ignorer les événements pendant les 100ms suivant le montage pour éviter la fermeture immédiate
         if (Date.now() - this.mountedAt < 100) {
-            console.log('Ignoring outside click too soon after mount');
             return;
         }
-        console.log('Outside click detected, closing menu');
         this.props.onClose();
     };
 
@@ -47,7 +43,6 @@ export class SymbolContextMenu extends React.Component<SymbolContextMenuProps> {
 
     render(): React.ReactNode {
         const { x, y, symbolChar, symbolIndex } = this.props;
-        console.log('SymbolContextMenu rendering with:', { x, y, symbolChar, symbolIndex });
 
         const menuStyle: React.CSSProperties = {
             position: 'fixed',

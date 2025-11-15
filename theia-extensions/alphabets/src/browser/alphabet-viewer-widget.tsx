@@ -371,14 +371,12 @@ export class AlphabetViewerWidget extends ReactWidget {
      */
     private handleContextMenu = (e: React.MouseEvent, index: number): void => {
         e.preventDefault();
-        console.log('Context menu triggered for symbol at index:', index, 'char:', this.enteredChars[index]);
         this.contextMenu = {
             x: e.clientX,
             y: e.clientY,
             symbolIndex: index
         };
         this.update();
-        console.log('Context menu set:', this.contextMenu);
     };
 
     /**
@@ -846,11 +844,11 @@ export class AlphabetViewerWidget extends ReactWidget {
                         </div>
                         <button
                             onClick={() => this.togglePin('symbols')}
-                            title={this.pinnedState.symbols ? 'Désépingler' : 'Épingler'}
+                            title={this.pinnedState.symbols ? 'Désépingler les symboles' : 'Épingler les symboles'}
                             style={{
                                 padding: '4px 8px',
-                                backgroundColor: this.pinnedState.symbols 
-                                    ? 'var(--theia-button-hoverBackground)' 
+                                backgroundColor: this.pinnedState.symbols
+                                    ? 'var(--theia-button-hoverBackground)'
                                     : 'var(--theia-button-background)',
                                 color: 'var(--theia-button-foreground)',
                                 border: 'none',
@@ -858,7 +856,7 @@ export class AlphabetViewerWidget extends ReactWidget {
                                 cursor: 'pointer'
                             }}
                         >
-                            <i className='fa fa-thumbtack'></i>
+                            📌
                         </button>
                         <button
                             onClick={() => this.clearSymbols()}
@@ -963,11 +961,11 @@ export class AlphabetViewerWidget extends ReactWidget {
                         </div>
                         <button
                             onClick={() => this.togglePin('text')}
-                            title={this.pinnedState.text ? 'Désépingler' : 'Épingler'}
+                            title={this.pinnedState.text ? 'Désépingler le texte' : 'Épingler le texte'}
                             style={{
                                 padding: '4px 8px',
-                                backgroundColor: this.pinnedState.text 
-                                    ? 'var(--theia-button-hoverBackground)' 
+                                backgroundColor: this.pinnedState.text
+                                    ? 'var(--theia-button-hoverBackground)'
                                     : 'var(--theia-button-background)',
                                 color: 'var(--theia-button-foreground)',
                                 border: 'none',
@@ -975,7 +973,7 @@ export class AlphabetViewerWidget extends ReactWidget {
                                 cursor: 'pointer'
                             }}
                         >
-                            <i className='fa fa-thumbtack'></i>
+                            📌
                         </button>
                     </div>
                 </div>
@@ -1028,11 +1026,11 @@ export class AlphabetViewerWidget extends ReactWidget {
                     </h3>
                     <button
                         onClick={() => this.togglePin('coordinates')}
-                        title={this.pinnedState.coordinates ? 'Désépingler' : 'Épingler'}
+                        title={this.pinnedState.coordinates ? 'Désépingler les coordonnées' : 'Épingler les coordonnées'}
                         style={{
                             padding: '4px 8px',
-                            backgroundColor: this.pinnedState.coordinates 
-                                ? 'var(--theia-button-hoverBackground)' 
+                            backgroundColor: this.pinnedState.coordinates
+                                ? 'var(--theia-button-hoverBackground)'
                                 : 'var(--theia-button-background)',
                             color: 'var(--theia-button-foreground)',
                             border: 'none',
@@ -1040,7 +1038,7 @@ export class AlphabetViewerWidget extends ReactWidget {
                             cursor: 'pointer'
                         }}
                     >
-                        <i className='fa fa-thumbtack'></i>
+                        📌
                     </button>
                 </div>
                 <CoordinatesDetector

@@ -43,14 +43,22 @@ export const GeocacheAssociation: React.FC<GeocacheAssociationProps> = ({
 
             const data = await response.json();
             
-            onAssociate({
+            const geocacheData = {
                 id: data.id,
                 databaseId: data.database_id,
                 code: data.gc_code,
                 name: data.name,
                 gc_lat: data.gc_lat,
                 gc_lon: data.gc_lon
-            });
+            };
+
+            onAssociate(geocacheData);
+
+            // Ouvrir automatiquement la carte après l'association
+            if (onShowMap) {
+                console.log('[GeocacheAssociation] Ouverture automatique de la carte pour la nouvelle géocache associée');
+                onShowMap(geocacheData);
+            }
 
             setGcCode('');
             setLoading(false);

@@ -9,6 +9,184 @@ import { MessageService, CommandService } from '@theia/core';
 import { AlphabetsService } from './services/alphabets-service';
 import { Alphabet, AlphabetsCommands } from '../common/alphabet-protocol';
 
+const PRESET_EXAMPLE_OPTIONS: Array<{ label: string; value: string }> = [
+    { label: 'ABC…', value: 'ABCDEFGHIJKLM' },
+    { label: 'GEOCACHING', value: 'GEOCACHING' },
+    { label: 'MYSTERY AI', value: 'MYSTERY AI' },
+    { label: '12345 67890', value: '12345 67890' }
+];
+
+const MAX_FONT_PREVIEW_LENGTH = 40;
+const IMAGE_PREVIEW_LENGTH = 10;
+const VALID_IMAGE_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const FONT_FAMILY_PREFIX = 'alphabet-font-';
+
+const sanitizeAlphabetId = (alphabetId: string): string =>
+    alphabetId.replace(/[^a-zA-Z0-9_-]/g, '-');
+
+const getFontFamily = (alphabetId: string): string =>
+    `${FONT_FAMILY_PREFIX}${sanitizeAlphabetId(alphabetId)}`;
+
+const isValidImageChar = (char: string): boolean =>
+    VALID_IMAGE_CHARS.includes(char.toLowerCase());
+
+const loadedFonts = new Set<string>();
+const loadingFonts: Map<string, Promise<void>> = new Map();
+
+interface AlphabetPreviewProps {
+    alphabet: Alphabet;
+    previewText: string;
+    fontSize: number;
+    alphabetsService: AlphabetsService;
+}
+
+const AlphabetPreview: React.FC<AlphabetPreviewProps> = React.memo(
+    ({ alphabet, previewText, fontSize, alphabetsService }) => {
+        const { alphabetConfig } = alphabet;
+        const fontFamily = React.useMemo(() => getFontFamily(alphabet.id), [alphabet.id]);
+        const characterArray = React.useMemo(() => {
+            if (!previewText) {
+                return [];
+            }
+            return Array.from(previewText);
+        }, [previewText]);
+
+        React.useEffect(() => {
+            if (typeof document === 'undefined' || typeof FontFace === 'undefined') {
+                return;
+            }
+            if (!previewText || alphabetConfig.type !== 'font') {
+                return;
+            }
+            if (loadedFonts.has(fontFamily) || loadingFonts.has(fontFamily)) {
+                return;
+            }
+            try {
+                const fontUrl = alphabetsService.getFontUrl(alphabet.id);
+                const fontFace = new FontFace(fontFamily, `url(${fontUrl})`);
+                const loadPromise = fontFace
+                    .load()
+                    .then(loadedFace => {
+                        document.fonts.add(loadedFace);
+                        loadedFonts.add(fontFamily);
+                    })
+                    .catch(error =>
+                        console.error(`AlphabetsListWidget: Erreur de chargement de police ${alphabet.id}`, error)
+                    )
+                    .finally(() => {
+                        loadingFonts.delete(fontFamily);
+                    });
+                loadingFonts.set(fontFamily, loadPromise);
+            } catch (error) {
+                console.error(`AlphabetsListWidget: FontFace non disponible pour ${alphabet.id}`, error);
+            }
+        }, [alphabet.id, alphabetConfig.type, previewText, alphabetsService, fontFamily]);
+
+        if (!previewText) {
+            return null;
+        }
+
+        if (!alphabetConfig) {
+            return (
+                <div style={{ color: 'var(--theia-descriptionForeground)', fontSize: '11px' }}>
+                    Prévisualisation indisponible
+                </div>
+            );
+        }
+
+        if (alphabetConfig.type === 'font') {
+            return (
+                <div
+                    style={{
+                        marginTop: '10px',
+                        padding: '8px',
+                        borderRadius: '4px',
+                        backgroundColor: 'var(--theia-editor-background)',
+                        overflowX: 'auto'
+                    }}
+                >
+                    <span
+                        style={{
+                            fontFamily,
+                            fontSize: `${fontSize}px`,
+                            color: 'var(--theia-foreground)'
+                        }}
+                    >
+                        {characterArray.slice(0, MAX_FONT_PREVIEW_LENGTH).join('')}
+                    </span>
+                </div>
+            );
+        }
+
+        const hasImageConfig = Boolean(alphabetConfig.imageDir && alphabetConfig.imageFormat);
+
+        if (alphabetConfig.type === 'images' && hasImageConfig) {
+            const previewChars = characterArray.slice(0, IMAGE_PREVIEW_LENGTH);
+            const size = Math.round(fontSize * 1.5);
+
+            return (
+                <div
+                    style={{
+                        marginTop: '10px',
+                        padding: '8px',
+                        borderRadius: '4px',
+                        backgroundColor: 'var(--theia-editor-background)',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '6px'
+                    }}
+                >
+                    {previewChars.map((char, index) => {
+                        const lowerChar = char.toLowerCase();
+                        if (isValidImageChar(lowerChar)) {
+                            const resourcePath = `${alphabetConfig.imageDir}/${lowerChar}.${alphabetConfig.imageFormat}`;
+                            const src = alphabetsService.getResourceUrl(alphabet.id, resourcePath);
+                            return (
+                                <img
+                                    key={`${alphabet.id}-${index}-${char}`}
+                                    src={src}
+                                    alt={char}
+                                    style={{
+                                        width: `${size}px`,
+                                        height: `${size}px`,
+                                        objectFit: 'contain',
+                                        backgroundColor: 'var(--theia-layout-color1)',
+                                        borderRadius: '3px'
+                                    }}
+                                />
+                            );
+                        }
+                        return (
+                            <div
+                                key={`${alphabet.id}-${index}-${char}`}
+                                style={{
+                                    width: `${size}px`,
+                                    height: `${size}px`,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: 'var(--theia-layout-color2)',
+                                    borderRadius: '3px',
+                                    color: 'var(--theia-descriptionForeground)',
+                                    fontSize: '12px'
+                                }}
+                            >
+                                {char}
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+
+        return (
+            <div style={{ color: 'var(--theia-descriptionForeground)', fontSize: '11px', marginTop: '8px' }}>
+                Prévisualisation non disponible pour ce type d'alphabet
+            </div>
+        );
+    }
+);
+
 @injectable()
 export class AlphabetsListWidget extends ReactWidget {
 
@@ -31,6 +209,10 @@ export class AlphabetsListWidget extends ReactWidget {
     private searchInTags: boolean = true;
     private searchInReadme: boolean = false;
     private debounceTimer: NodeJS.Timeout | null = null;
+    private showExamples: boolean = false;
+    private exampleTextOption: string = PRESET_EXAMPLE_OPTIONS[0].value;
+    private customExampleText: string = '';
+    private fontSize: number = 32;
 
     @postConstruct()
     protected init(): void {
@@ -91,6 +273,21 @@ export class AlphabetsListWidget extends ReactWidget {
     }
 
     /**
+     * Retourne le texte à afficher pour les exemples.
+     */
+    private getPreviewText(): string {
+        if (!this.showExamples) {
+            return '';
+        }
+
+        if (this.exampleTextOption === 'custom') {
+            return (this.customExampleText || '').substring(0, MAX_FONT_PREVIEW_LENGTH);
+        }
+
+        return this.exampleTextOption.substring(0, MAX_FONT_PREVIEW_LENGTH);
+    }
+
+    /**
      * Actualise la liste des alphabets.
      */
     public async refresh(): Promise<void> {
@@ -126,6 +323,7 @@ export class AlphabetsListWidget extends ReactWidget {
                 backgroundColor: 'var(--theia-layout-color1)'
             }}>
                 {this.renderHeader()}
+                {this.renderExampleControls()}
                 {this.renderContent()}
             </div>
         );
@@ -284,6 +482,144 @@ export class AlphabetsListWidget extends ReactWidget {
     }
 
     /**
+     * Rendu des contrôles d'exemple (texte, taille, affichage).
+     */
+    private renderExampleControls(): React.ReactNode {
+        const showCustomInput = this.showExamples && this.exampleTextOption === 'custom';
+        const controlsDisabled = !this.showExamples;
+
+        return (
+            <div
+                style={{
+                    marginBottom: '15px',
+                    borderBottom: '1px solid var(--theia-border-color1)',
+                    paddingBottom: '12px'
+                }}
+            >
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        marginBottom: '10px'
+                    }}
+                >
+                    <span style={{ fontSize: '12px', color: 'var(--theia-foreground)' }}>Exemples :</span>
+                    <select
+                        value={this.showExamples ? 'true' : 'false'}
+                        onChange={e => {
+                            this.showExamples = e.target.value === 'true';
+                            this.update();
+                        }}
+                        style={{
+                            padding: '4px 8px',
+                            borderRadius: '3px',
+                            backgroundColor: 'var(--theia-input-background)',
+                            color: 'var(--theia-input-foreground)',
+                            border: '1px solid var(--theia-input-border)'
+                        }}
+                    >
+                        <option value='false'>Masquer</option>
+                        <option value='true'>Afficher</option>
+                    </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '11px' }}>
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            opacity: controlsDisabled ? 0.6 : 1
+                        }}
+                    >
+                        <span style={{ width: '70px', color: 'var(--theia-descriptionForeground)' }}>Texte :</span>
+                        <select
+                            value={this.exampleTextOption}
+                            onChange={e => {
+                                this.exampleTextOption = e.target.value;
+                                this.update();
+                            }}
+                            disabled={controlsDisabled}
+                            style={{
+                                flex: 1,
+                                padding: '4px 8px',
+                                borderRadius: '3px',
+                                backgroundColor: 'var(--theia-input-background)',
+                                color: 'var(--theia-input-foreground)',
+                                border: '1px solid var(--theia-input-border)'
+                            }}
+                        >
+                            {PRESET_EXAMPLE_OPTIONS.map(option => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                            <option value='custom'>Personnalisé</option>
+                        </select>
+                    </div>
+
+                    {showCustomInput && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ width: '70px', color: 'var(--theia-descriptionForeground)' }}>Texte perso :</span>
+                            <input
+                                type='text'
+                                value={this.customExampleText}
+                                onChange={e => {
+                                    this.customExampleText = e.target.value;
+                                    this.update();
+                                }}
+                                placeholder='Saisissez votre texte...'
+                                style={{
+                                    flex: 1,
+                                    padding: '4px 8px',
+                                    borderRadius: '3px',
+                                    backgroundColor: 'var(--theia-input-background)',
+                                    color: 'var(--theia-input-foreground)',
+                                    border: '1px solid var(--theia-input-border)'
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            opacity: controlsDisabled ? 0.6 : 1
+                        }}
+                    >
+                        <span style={{ width: '70px', color: 'var(--theia-descriptionForeground)' }}>Taille :</span>
+                        <select
+                            value={String(this.fontSize)}
+                            onChange={e => {
+                                const value = parseInt(e.target.value, 10);
+                                this.fontSize = Number.isNaN(value) ? 32 : value;
+                                this.update();
+                            }}
+                            disabled={controlsDisabled}
+                            style={{
+                                flex: 1,
+                                padding: '4px 8px',
+                                borderRadius: '3px',
+                                backgroundColor: 'var(--theia-input-background)',
+                                color: 'var(--theia-input-foreground)',
+                                border: '1px solid var(--theia-input-border)'
+                            }}
+                        >
+                            <option value='16'>Petite</option>
+                            <option value='24'>Moyenne</option>
+                            <option value='32'>Grande</option>
+                            <option value='48'>Très grande</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    /**
      * Rendu du contenu (liste des alphabets ou loading).
      */
     private renderContent(): React.ReactNode {
@@ -304,9 +640,14 @@ export class AlphabetsListWidget extends ReactWidget {
             );
         }
 
+        const previewText = this.getPreviewText();
+        const shouldRenderPreview = this.showExamples && previewText.length > 0;
+
         return (
             <div>
-                {this.alphabets.map(alphabet => this.renderAlphabetItem(alphabet))}
+                {this.alphabets.map(alphabet =>
+                    this.renderAlphabetItem(alphabet, shouldRenderPreview ? previewText : '')
+                )}
             </div>
         );
     }
@@ -314,7 +655,13 @@ export class AlphabetsListWidget extends ReactWidget {
     /**
      * Rendu d'un item d'alphabet.
      */
-    private renderAlphabetItem(alphabet: Alphabet): React.ReactNode {
+    private renderAlphabetItem(alphabet: Alphabet, previewText: string): React.ReactNode {
+        const hasSearchMatches = Boolean(
+            this.searchQuery &&
+            alphabet.search_matches &&
+            alphabet.search_matches.length > 0
+        );
+
         return (
             <div
                 key={alphabet.id}
@@ -366,6 +713,29 @@ export class AlphabetsListWidget extends ReactWidget {
                 }}>
                     {alphabet.description}
                 </div>
+                {hasSearchMatches && (
+                    <div style={{ marginBottom: '4px' }}>
+                        <div style={{ color: 'var(--theia-linkForeground)', fontSize: '10px', fontWeight: 600 }}>
+                            Correspondances trouvées :
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                            {alphabet.search_matches!.map(match => (
+                                <span
+                                    key={`${alphabet.id}-match-${match}`}
+                                    style={{
+                                        backgroundColor: 'var(--theia-badge-background)',
+                                        color: 'var(--theia-badge-foreground)',
+                                        borderRadius: '3px',
+                                        padding: '2px 6px',
+                                        fontSize: '10px'
+                                    }}
+                                >
+                                    {match}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 {alphabet.tags && alphabet.tags.length > 0 && (
                     <div style={{ 
                         fontSize: '10px',
@@ -383,6 +753,14 @@ export class AlphabetsListWidget extends ReactWidget {
                             </span>
                         ))}
                     </div>
+                )}
+                {previewText && (
+                    <AlphabetPreview
+                        alphabet={alphabet}
+                        previewText={previewText}
+                        fontSize={this.fontSize}
+                        alphabetsService={this.alphabetsService}
+                    />
                 )}
             </div>
         );

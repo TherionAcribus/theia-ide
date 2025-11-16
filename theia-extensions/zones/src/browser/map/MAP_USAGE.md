@@ -75,6 +75,11 @@ Utilisez le sélecteur en haut de la carte :
 - Les géocaches trouvées apparaissent en transparence (60%)
 - La géocache sélectionnée a un cercle bleu autour
 
+**Menu contextuel :**
+- **Clic droit** sur une géocache pour ouvrir son menu contextuel
+- **"Ouvrir la cache"** : ouvre la page de détails de la géocache dans un nouvel onglet
+- **Carte associée** : crée automatiquement une carte spécifique à cette géocache (même comportement que le tableau)
+
 ### Afficher les géocaches voisines
 
 Pour voir les autres géocaches dans un rayon de 5km autour d'une géocache spécifique :

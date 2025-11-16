@@ -20,12 +20,13 @@ export interface MapViewProps {
     onAddWaypoint?: (options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }) => void;  // ✅ Callback pour ajouter un waypoint
     onDeleteWaypoint?: (waypointId: number) => void;  // ✅ Callback pour supprimer un waypoint
     onSetWaypointAsCorrectedCoords?: (waypointId: number) => void;  // ✅ Callback pour définir comme coordonnées corrigées
+    onOpenGeocacheDetails?: (geocacheId: number, geocacheName: string) => void;  // ✅ Callback pour ouvrir les détails d'une géocache
 }
 
 /**
  * Composant React qui affiche la carte OpenLayers
  */
-export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint, onDeleteWaypoint, onSetWaypointAsCorrectedCoords }) => {
+export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint, onDeleteWaypoint, onSetWaypointAsCorrectedCoords, onOpenGeocacheDetails }) => {
     const mapRef = React.useRef<HTMLDivElement>(null);
     const popupRef = React.useRef<HTMLDivElement>(null);
     const mapInstanceRef = React.useRef<any>(null);
@@ -304,8 +305,39 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     });
                     return;
                 }
+
+                // Menu pour géocache normale
+                if (props.id !== undefined && !props.isWaypoint && !props.isDetectedCoordinate) {
+                    const items: ContextMenuItem[] = [
+                        {
+                            label: `📍 ${props.gc_code || 'Cache inconnue'}`,
+                            disabled: true
+                        },
+                        {
+                            label: props.name || 'Sans nom',
+                            disabled: true
+                        },
+                        { separator: true },
+                        {
+                            label: 'Ouvrir la cache',
+                            icon: '📖',
+                            action: () => {
+                                if (onOpenGeocacheDetails && props.id !== undefined) {
+                                    onOpenGeocacheDetails(props.id, props.name || props.gc_code || 'Cache inconnue');
+                                }
+                            }
+                        }
+                    ];
+
+                    setContextMenu({
+                        items,
+                        x: event.clientX,
+                        y: event.clientY
+                    });
+                    return;
+                }
             }
-            
+
             // Menu contextuel par défaut (coordonnées)
             if (coordinate) {
                 const [lon, lat] = mapCoordinateToLonLat(coordinate);

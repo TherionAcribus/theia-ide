@@ -56,6 +56,9 @@ export class ZoneGeocachesWidget extends ReactWidget {
                 this.handleOpenZoneGeocaches(detail.zoneId, detail.zoneName);
             }
         });
+
+        // Écouter les événements d'ouverture de détails de géocache depuis les cartes
+        window.addEventListener('geoapp-open-geocache-details', this.handleOpenGeocacheDetailsFromMap.bind(this));
     }
 
     private async handleOpenZoneGeocaches(zoneId: number, zoneName?: string): Promise<void> {
@@ -468,6 +471,81 @@ export class ZoneGeocachesWidget extends ReactWidget {
         this.moveSelectedDialog = null;
         this.update();
     }
+
+    /**
+     * Gère l'ouverture de détails de géocache depuis une carte (événement personnalisé)
+     */
+    private handleOpenGeocacheDetailsFromMap = async (event: CustomEvent): Promise<void> => {
+        const { geocacheId, geocacheName } = event.detail;
+        console.log(`[ZoneGeocachesWidget] Ouverture de carte pour géocache ${geocacheId} depuis la carte`);
+
+        try {
+            // Trouver la géocache dans la liste actuelle
+            const geocache = this.rows.find(row => row.id === geocacheId);
+            if (geocache) {
+                // Ouvrir la carte comme si on cliquait sur la ligne du tableau
+                await this.handleRowClick(geocache);
+            } else {
+                // Si la géocache n'est pas dans la liste actuelle, récupérer ses données et ouvrir quand même
+                const backendBaseUrl = 'http://127.0.0.1:8000';
+                const response = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}`, { credentials: 'include' });
+
+                if (response.ok) {
+                    const geocacheData = await response.json();
+
+                    // Créer un objet géocache temporaire
+                    const tempGeocache = {
+                        id: geocacheData.id,
+                        gc_code: geocacheData.gc_code,
+                        name: geocacheData.name,
+                        cache_type: geocacheData.cache_type,
+                        difficulty: geocacheData.difficulty,
+                        terrain: geocacheData.terrain,
+                        size: geocacheData.size,
+                        solved: geocacheData.solved,
+                        found: geocacheData.found,
+                        favorites_count: geocacheData.favorites_count,
+                        hidden_date: geocacheData.placed_at,
+                        latitude: geocacheData.latitude,
+                        longitude: geocacheData.longitude,
+                        is_corrected: geocacheData.is_corrected,
+                        original_latitude: geocacheData.original_latitude,
+                        original_longitude: geocacheData.original_longitude,
+                        waypoints: geocacheData.waypoints || []
+                    };
+
+                    // Ouvrir la carte pour cette géocache
+                    if (tempGeocache.latitude !== null && tempGeocache.latitude !== undefined &&
+                        tempGeocache.longitude !== null && tempGeocache.longitude !== undefined) {
+
+                        const mapGeocacheData = {
+                            id: tempGeocache.id,
+                            gc_code: tempGeocache.gc_code,
+                            name: tempGeocache.name,
+                            cache_type: tempGeocache.cache_type,
+                            latitude: tempGeocache.latitude,
+                            longitude: tempGeocache.longitude,
+                            difficulty: tempGeocache.difficulty,
+                            terrain: tempGeocache.terrain,
+                            found: tempGeocache.found,
+                            is_corrected: tempGeocache.is_corrected,
+                            original_latitude: tempGeocache.original_latitude,
+                            original_longitude: tempGeocache.original_longitude,
+                            waypoints: tempGeocache.waypoints || []
+                        };
+
+                        await this.mapWidgetFactory.openMapForGeocache(
+                            geocacheId,
+                            tempGeocache.gc_code,
+                            mapGeocacheData
+                        );
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[ZoneGeocachesWidget] Erreur lors de l\'ouverture de carte depuis la carte:', error);
+        }
+    };
 
     protected async performMoveSelected(geocacheIds: number[], targetZoneId: number): Promise<void> {
         let movedCount = 0;

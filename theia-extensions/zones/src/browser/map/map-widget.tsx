@@ -2,6 +2,8 @@ import { injectable, inject, postConstruct } from '@theia/core/shared/inversify'
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { ApplicationShell } from '@theia/core/lib/browser';
+import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
+import { GeocacheDetailsWidget } from '../geocache-details-widget';
 import * as React from 'react';
 import { MapView } from './map-view';
 import { MapService } from './map-service';
@@ -26,16 +28,12 @@ export class MapWidget extends ReactWidget {
     private context: MapContext;
     private geocaches: MapGeocache[] = [];  // ✅ Données propres à ce widget
 
-    @inject(MapService)
-    protected readonly mapService!: MapService;
-
-    @inject(MessageService)
-    protected readonly messageService!: MessageService;
-
-    @inject(ApplicationShell)
-    protected readonly shell!: ApplicationShell;
-
-    constructor() {
+    constructor(
+        @inject(MapService) protected readonly mapService: MapService,
+        @inject(MessageService) protected readonly messageService: MessageService,
+        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+    ) {
         super();
         // Contexte par défaut
         this.context = {
@@ -134,13 +132,14 @@ export class MapWidget extends ReactWidget {
         const onSetWaypointAsCorrectedCoords = isGeocacheMap ? this.handleSetWaypointAsCorrectedCoords : undefined;
 
         return (
-            <MapView 
+            <MapView
                 mapService={this.mapService}
                 geocaches={this.geocaches}
                 onMapReady={this.handleMapReady}
                 onAddWaypoint={onAddWaypoint}
                 onDeleteWaypoint={onDeleteWaypoint}
                 onSetWaypointAsCorrectedCoords={onSetWaypointAsCorrectedCoords}
+                onOpenGeocacheDetails={this.handleOpenGeocacheDetails}
             />
         );
     }
@@ -206,6 +205,33 @@ export class MapWidget extends ReactWidget {
             await (detailsWidget as any).setWaypointAsCorrectedCoords(waypointId);
         } else {
             this.messageService.warn('Veuillez ouvrir les détails de la géocache pour définir les coordonnées corrigées');
+        }
+    };
+
+    /**
+     * Gère l'ouverture des détails d'une géocache depuis le menu contextuel
+     */
+    private handleOpenGeocacheDetails = async (geocacheId: number, geocacheName: string): Promise<void> => {
+        try {
+            console.log(`[MapWidget] Ouverture des détails de la géocache ${geocacheId}: ${geocacheName}`);
+
+            // Dispatcher un événement personnalisé pour que les widgets parents gèrent l'ouverture de la carte
+            window.dispatchEvent(new CustomEvent('geoapp-open-geocache-details', {
+                detail: { geocacheId, geocacheName }
+            }));
+
+            // Ouvrir le widget de détails de la géocache
+            const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
+            widget.setGeocache({ geocacheId, name: geocacheName });
+
+            if (!widget.isAttached) {
+                this.shell.addWidget(widget, { area: 'main' });
+            }
+
+            this.shell.activateWidget(widget.id);
+        } catch (error) {
+            console.error('[MapWidget] Erreur lors de l\'ouverture des détails de la géocache:', error);
+            this.messageService.error('Impossible d\'ouvrir les détails de la géocache');
         }
     };
 

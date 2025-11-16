@@ -8,9 +8,11 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { CommandContribution, CommandRegistry, MenuContribution, MenuModelRegistry } from '@theia/core/lib/common';
 import { AbstractViewContribution, FrontendApplicationContribution } from '@theia/core/lib/browser';
+import { MessageService } from '@theia/core';
 import { PluginsBrowserWidget } from './plugins-browser-widget';
 import { PluginExecutorWidget, GeocacheContext } from './plugin-executor-widget';
 import { CommonMenus } from '@theia/core/lib/browser';
+import { PluginToolsManager } from './plugin-tools-manager';
 
 /**
  * Commandes disponibles pour l'extension Plugins.
@@ -30,10 +32,15 @@ export namespace PluginsCommands {
         id: 'plugins.discover',
         label: 'Plugins: Redécouvrir les plugins'
     };
-    
+
     export const OPEN_PLUGIN_EXECUTOR = {
         id: 'plugins.openExecutor',
         label: 'Plugins: Exécuter un plugin'
+    };
+
+    export const CHECK_TOOLS_STATUS = {
+        id: 'plugins.checkTools',
+        label: 'Plugins: Vérifier le statut des tools IA'
     };
 }
 
@@ -42,8 +49,13 @@ export namespace PluginsCommands {
  */
 @injectable()
 export class PluginsBrowserContribution extends AbstractViewContribution<PluginsBrowserWidget> {
-    
-    constructor() {
+
+    @inject(MessageService)
+    protected readonly messages!: MessageService;
+
+    constructor(
+        @inject(PluginToolsManager) protected readonly pluginToolsManager: PluginToolsManager
+    ) {
         super({
             widgetId: PluginsBrowserWidget.ID,
             widgetName: PluginsBrowserWidget.LABEL,
@@ -68,6 +80,7 @@ export class PluginsBrowserContribution extends AbstractViewContribution<Plugins
                 if (widget) {
                     widget.refresh();
                 }
+                void this.pluginToolsManager.refreshTools({ silent: true });
             },
             isEnabled: () => this.tryGetWidget() !== undefined
         });
@@ -79,8 +92,23 @@ export class PluginsBrowserContribution extends AbstractViewContribution<Plugins
                 if (widget) {
                     widget.discoverPlugins();
                 }
+                void this.pluginToolsManager.refreshTools({ silent: true });
             },
             isEnabled: () => this.tryGetWidget() !== undefined
+        });
+
+        // Commande pour vérifier le statut des tools IA
+        registry.registerCommand(PluginsCommands.CHECK_TOOLS_STATUS, {
+            execute: () => {
+                const status = this.pluginToolsManager.getToolsStatus();
+                this.pluginToolsManager.logToolsStatus();
+
+                if (status.total === 0) {
+                    this.messages.error('Aucun tool IA enregistré - vérifiez que les plugins sont actifs');
+                } else {
+                    this.messages.info(`${status.total} tools IA actifs: ${status.names.join(', ')}`);
+                }
+            }
         });
     }
     

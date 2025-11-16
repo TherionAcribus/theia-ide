@@ -16,6 +16,7 @@ import { TasksServiceImpl } from './services/tasks-service';
 import { PluginsBrowserWidget } from './plugins-browser-widget';
 import { PluginExecutorWidget } from './plugin-executor-widget';
 import { PluginsBrowserContribution, PluginExecutorContribution, PluginsFrontendApplicationContribution } from './plugins-contribution';
+import { PluginToolsManager } from './plugin-tools-manager';
 
 import './style/plugins-browser.css';
 import './style/plugin-executor.css';
@@ -52,4 +53,6 @@ export default new ContainerModule(bind => {
     bind(MenuContribution).toService(PluginExecutorContribution);
     
     bind(FrontendApplicationContribution).to(PluginsFrontendApplicationContribution).inSingletonScope();
+    bind(PluginToolsManager).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(PluginToolsManager);
 });

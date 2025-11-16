@@ -9,7 +9,7 @@ import { MessageService } from '@theia/core';
 import { ApplicationShell } from '@theia/core/lib/browser';
 import { WidgetManager } from '@theia/core/lib/browser';
 import { AlphabetsService } from './services/alphabets-service';
-import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo } from '../common/alphabet-protocol';
+import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo, DetectedCoordinates } from '../common/alphabet-protocol';
 import { CoordinatesDetector } from './components/coordinates-detector';
 import { GeocacheAssociation } from './components/geocache-association';
 import { SymbolItem } from './components/symbol-item';
@@ -59,6 +59,9 @@ export class AlphabetViewerWidget extends ReactWidget {
     // Géocache associée et distance
     private associatedGeocache?: AssociatedGeocache;
     private distance?: DistanceInfo;
+    private detectedCoordinates: DetectedCoordinates | null = null;
+    private hasActiveCoordinateHighlight = false;
+    private lastOpenedGeocacheCode?: string;
     
     // Polices chargées
     private fontLoaded: boolean = false;
@@ -157,6 +160,22 @@ export class AlphabetViewerWidget extends ReactWidget {
             this.importState();
         }
     };
+
+    private formatGeocachingCoordinates(lat: number, lon: number): string {
+        const latDir = lat >= 0 ? 'N' : 'S';
+        const lonDir = lon >= 0 ? 'E' : 'W';
+
+        const absLat = Math.abs(lat);
+        const absLon = Math.abs(lon);
+
+        const latDeg = Math.floor(absLat);
+        const lonDeg = Math.floor(absLon);
+
+        const latMin = (absLat - latDeg) * 60;
+        const lonMin = (absLon - lonDeg) * 60;
+
+        return `${latDir} ${latDeg.toString().padStart(2, '0')}° ${latMin.toFixed(3)} ${lonDir} ${lonDeg.toString().padStart(3, '0')}° ${lonMin.toFixed(3)}`;
+    }
 
     private async initializeAsync(): Promise<void> {
         try {
@@ -758,6 +777,7 @@ export class AlphabetViewerWidget extends ReactWidget {
     private handleShowMap = async (geocache: AssociatedGeocache): Promise<void> => {
         try {
             console.log('[AlphabetViewerWidget] Ouverture carte pour géocache:', geocache.code);
+            this.lastOpenedGeocacheCode = geocache.code;
 
             // Convertir les données AssociatedGeocache vers le format attendu par l'événement
             const geocacheData = {
@@ -860,12 +880,21 @@ export class AlphabetViewerWidget extends ReactWidget {
                     associatedGeocache={this.associatedGeocache}
                     onAssociate={(geocache) => {
                         this.associatedGeocache = geocache;
+                        this.lastOpenedGeocacheCode = geocache.code;
                         this.update();
                         this.messageService.info(`Géocache ${geocache.code} associée`);
+                        if (this.detectedCoordinates) {
+                            this.highlightDetectedCoordinateOnMap(this.detectedCoordinates);
+                        }
                     }}
                     onClear={() => {
                         this.associatedGeocache = undefined;
                         this.distance = undefined;
+                         this.lastOpenedGeocacheCode = undefined;
+                         this.clearDetectedCoordinateHighlight();
+                        if (this.detectedCoordinates) {
+                            this.highlightDetectedCoordinateOnMap(this.detectedCoordinates);
+                        }
                         this.update();
                         this.messageService.info('Association supprimée');
                     }}
@@ -1159,9 +1188,421 @@ export class AlphabetViewerWidget extends ReactWidget {
                         this.distance = dist;
                         this.update();
                     }}
+                    onCoordinatesDetected={this.handleCoordinatesDetected}
                 />
+                {this.renderWaypointActions()}
             </div>
         );
+    }
+
+    private handleCoordinatesDetected = (coordinates: DetectedCoordinates | null): void => {
+        const normalized = coordinates && coordinates.exist ? coordinates : null;
+        if (!this.haveDetectedCoordinatesChanged(normalized)) {
+            return;
+        }
+
+        this.detectedCoordinates = normalized;
+        this.update();
+
+        if (normalized) {
+            this.highlightDetectedCoordinateOnMap(normalized);
+        } else {
+            this.clearDetectedCoordinateHighlight();
+        }
+    };
+
+    private haveDetectedCoordinatesChanged(newCoords: DetectedCoordinates | null): boolean {
+        if (!this.detectedCoordinates && !newCoords) {
+            return false;
+        }
+        if (!this.detectedCoordinates || !newCoords) {
+            return true;
+        }
+
+        return (
+            this.detectedCoordinates.ddm !== newCoords.ddm ||
+            this.detectedCoordinates.ddm_lat !== newCoords.ddm_lat ||
+            this.detectedCoordinates.ddm_lon !== newCoords.ddm_lon ||
+            this.detectedCoordinates.decimal_latitude !== newCoords.decimal_latitude ||
+            this.detectedCoordinates.decimal_longitude !== newCoords.decimal_longitude
+        );
+    }
+
+    private renderWaypointActions(): React.ReactNode {
+        const coords = this.detectedCoordinates;
+
+        if (!coords || !coords.exist) {
+            if (this.associatedGeocache) {
+                return null;
+            }
+
+            if (this.getDecodedText().trim().length === 0) {
+                return null;
+            }
+
+            return (
+                <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    border: '1px dashed var(--theia-panel-border)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    color: 'var(--theia-descriptionForeground)'
+                }}>
+                    Associez une géocache pour transformer les coordonnées détectées en waypoint.
+                </div>
+            );
+        }
+
+        if (!this.associatedGeocache) {
+            return (
+                <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '4px',
+                    fontSize: '12px'
+                }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>
+                        Coordonnées prêtes
+                    </div>
+                    <div style={{ fontFamily: 'monospace', marginBottom: '8px' }}>
+                        {this.formatDetectedDdm(coords)}
+                    </div>
+                    <div style={{ color: 'var(--theia-descriptionForeground)' }}>
+                        Associez une géocache pour pouvoir créer un waypoint automatiquement.
+                    </div>
+                </div>
+            );
+        }
+
+        const ddmDisplay = this.formatDetectedDdm(coords);
+
+        return (
+            <div style={{
+                marginTop: '16px',
+                padding: '16px',
+                backgroundColor: 'var(--theia-editor-background)',
+                border: '1px solid var(--theia-panel-border)',
+                borderRadius: '6px'
+            }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '14px' }}>
+                    Waypoints pour {this.associatedGeocache.code} · {this.associatedGeocache.name}
+                </div>
+                <div style={{
+                    fontFamily: 'monospace',
+                    backgroundColor: 'var(--theia-input-background)',
+                    borderRadius: '4px',
+                    padding: '10px',
+                    fontSize: '13px',
+                    marginBottom: '10px'
+                }}>
+                    {ddmDisplay}
+                </div>
+                {this.distance && (
+                    <div style={{
+                        fontSize: '12px',
+                        color: 'var(--theia-descriptionForeground)',
+                        marginBottom: '12px'
+                    }}>
+                        Distance estimée: {Math.round(this.distance.meters)} m ({this.distance.status})
+                    </div>
+                )}
+                <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '10px'
+                }}>
+                    <button
+                        style={{
+                            flex: '1 1 200px',
+                            padding: '10px 14px',
+                            backgroundColor: 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px'
+                        }}
+                        onClick={() => this.createWaypointFromDetectedCoordinates(false)}
+                    >
+                        <span className='codicon codicon-add'></span>
+                        Créer waypoint
+                    </button>
+                    <button
+                        style={{
+                            flex: '1 1 200px',
+                            padding: '10px 14px',
+                            backgroundColor: 'var(--theia-button-background)',
+                            color: 'var(--theia-button-foreground)',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px'
+                        }}
+                        onClick={() => this.createWaypointFromDetectedCoordinates(true)}
+                    >
+                        <span className='codicon codicon-pass-filled'></span>
+                        Ajouter & valider
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    private highlightDetectedCoordinateOnMap(coords: DetectedCoordinates): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const lat = this.getDecimalLatitudeFromDetection(coords);
+        const lon = this.getDecimalLongitudeFromDetection(coords);
+
+        if (lat === undefined || lon === undefined) {
+            console.warn('[AlphabetViewerWidget] Coordonnées détectées invalides, impossible de les afficher sur la carte', coords);
+            this.hasActiveCoordinateHighlight = false;
+            return;
+        }
+
+        if (this.associatedGeocache) {
+            this.ensureGeocacheMapOpen(this.associatedGeocache);
+        } else {
+            this.ensureGeneralMapOpen();
+        }
+
+        const ddmDisplay = this.formatDetectedDdm(coords);
+        const decimalDisplay = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        const note = this.buildDetectedWaypointNote(coords, ddmDisplay, decimalDisplay);
+
+        console.log('[AlphabetViewerWidget] Highlight des coordonnées détectées sur la carte', {
+            lat,
+            lon,
+            gc: this.associatedGeocache?.code || 'general'
+        });
+
+        try {
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+                detail: {
+                    gcCode: this.associatedGeocache?.code,
+                    pluginName: 'Alphabet Viewer',
+                    coordinates: {
+                        latitude: lat,
+                        longitude: lon,
+                        formatted: ddmDisplay
+                    },
+                    waypointTitle: this.associatedGeocache
+                        ? `Coordonnées détectées (${this.associatedGeocache.code})`
+                        : 'Coordonnées détectées',
+                    waypointNote: note,
+                    sourceResultText: ddmDisplay,
+                    replaceExisting: true
+                }
+            }));
+            this.hasActiveCoordinateHighlight = true;
+        } catch (error) {
+            console.error('[AlphabetViewerWidget] Échec de l\'envoi de l\'événement highlight carte', error);
+        }
+    }
+
+    private ensureGeocacheMapOpen(geocache?: AssociatedGeocache): void {
+        if (!geocache) {
+            return;
+        }
+
+        if (this.lastOpenedGeocacheCode === geocache.code) {
+            return;
+        }
+
+        console.log('[AlphabetViewerWidget] Ouverture forcée de la carte géocache pour highlight', geocache.code);
+        this.lastOpenedGeocacheCode = geocache.code;
+        void this.handleShowMap(geocache);
+    }
+
+    private ensureGeneralMapOpen(): void {
+        console.log('[AlphabetViewerWidget] Demande d\'ouverture de la carte générale');
+        this.requestGeneralMapOpen();
+    }
+
+    private requestGeneralMapOpen(): void {
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            return;
+        }
+
+        try {
+            window.postMessage({
+                type: 'open-general-map',
+                source: 'alphabets-extension'
+            }, '*');
+
+            const targets: Array<EventTarget | null | undefined> = [
+                document,
+                window,
+                document.body,
+                document.documentElement
+            ];
+
+            targets.forEach(target => {
+                if (!target) {
+                    return;
+                }
+                const event = new CustomEvent('open-general-map', {
+                    detail: { source: 'alphabets-extension' },
+                    bubbles: true,
+                    cancelable: true
+                });
+                target.dispatchEvent(event);
+            });
+        } catch (error) {
+            console.error('[AlphabetViewerWidget] Erreur lors de la demande d\'ouverture de la carte générale', error);
+        }
+    }
+
+    private clearDetectedCoordinateHighlight(): void {
+        if (!this.hasActiveCoordinateHighlight || typeof window === 'undefined') {
+            this.hasActiveCoordinateHighlight = false;
+            return;
+        }
+
+        try {
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-clear'));
+        } catch (error) {
+            console.error('[AlphabetViewerWidget] Impossible de nettoyer le highlight de la carte', error);
+        }
+        this.hasActiveCoordinateHighlight = false;
+    }
+
+    private createWaypointFromDetectedCoordinates(autoSave: boolean): void {
+        if (!this.associatedGeocache) {
+            this.messageService.warn('Associez une géocache pour créer un waypoint.');
+            return;
+        }
+
+        if (!this.detectedCoordinates || !this.detectedCoordinates.exist) {
+            this.messageService.warn('Aucune coordonnée détectée à transformer en waypoint.');
+            return;
+        }
+
+        const lat = this.getDecimalLatitudeFromDetection(this.detectedCoordinates);
+        const lon = this.getDecimalLongitudeFromDetection(this.detectedCoordinates);
+
+        if (lat === undefined || lon === undefined) {
+            this.messageService.error('Impossible de convertir les coordonnées détectées.');
+            return;
+        }
+
+        const ddmDisplay = this.formatDetectedDdm(this.detectedCoordinates);
+        const decimalDisplay = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+
+        const note = this.buildDetectedWaypointNote(this.detectedCoordinates, ddmDisplay, decimalDisplay);
+
+        this.dispatchWaypointCreation({
+            coords: {
+                latitude: lat,
+                longitude: lon,
+                ddm: ddmDisplay,
+                decimal: decimalDisplay
+            },
+            note,
+            title: 'Coordonnées détectées',
+            pluginName: 'Alphabet Viewer',
+            autoSave
+        });
+    }
+
+    private buildDetectedWaypointNote(coords: DetectedCoordinates, ddmDisplay: string, decimalDisplay: string): string {
+        const lines: string[] = [
+            'Coordonnées détectées via Alphabet Viewer',
+            this.alphabet ? `Alphabet: ${this.alphabet.name}` : undefined,
+            this.associatedGeocache ? `Geocache: ${this.associatedGeocache.code} - ${this.associatedGeocache.name}` : undefined,
+            '',
+            'Coordonnées:',
+            ddmDisplay,
+            `Décimal: ${decimalDisplay}`,
+            this.distance ? `Distance estimée: ${Math.round(this.distance.meters)} m (${this.distance.status})` : undefined,
+            coords.source ? `Source: ${coords.source}` : undefined
+        ].filter((line): line is string => Boolean(line));
+
+        return lines.join('\n');
+    }
+
+    private formatDetectedDdm(coords: DetectedCoordinates): string {
+        if (coords.ddm && coords.ddm.trim()) {
+            return coords.ddm.trim();
+        }
+
+        const lat = coords.ddm_lat?.trim() ?? '';
+        const lon = coords.ddm_lon?.trim() ?? '';
+        const combined = `${lat} ${lon}`.trim();
+        return combined || 'Coordonnées indisponibles';
+    }
+
+    private getDecimalLatitudeFromDetection(coords: DetectedCoordinates): number | undefined {
+        if (typeof coords.decimal_latitude === 'number') {
+            return coords.decimal_latitude;
+        }
+        if (coords.ddm_lat) {
+            return this.parseCoordinates(coords.ddm_lat);
+        }
+        return undefined;
+    }
+
+    private getDecimalLongitudeFromDetection(coords: DetectedCoordinates): number | undefined {
+        if (typeof coords.decimal_longitude === 'number') {
+            return coords.decimal_longitude;
+        }
+        if (coords.ddm_lon) {
+            return this.parseCoordinates(coords.ddm_lon);
+        }
+        return undefined;
+    }
+
+    private dispatchWaypointCreation(options: {
+        coords: {
+            latitude: number;
+            longitude: number;
+            ddm?: string;
+            decimal?: string;
+        };
+        note: string;
+        title: string;
+        pluginName: string;
+        autoSave: boolean;
+    }): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const gcCoords = options.coords.ddm || this.formatGeocachingCoordinates(options.coords.latitude, options.coords.longitude);
+
+        window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
+            detail: {
+                gcCoords,
+                pluginName: options.pluginName,
+                geocache: this.associatedGeocache?.code ? { gcCode: this.associatedGeocache.code } : undefined,
+                waypointTitle: options.title,
+                waypointNote: options.note,
+                sourceResultText: options.note,
+                decimalLatitude: options.coords.latitude,
+                decimalLongitude: options.coords.longitude,
+                autoSave: options.autoSave
+            }
+        }));
+
+        if (options.autoSave) {
+            this.messageService.info(`${options.title} validé automatiquement en waypoint`);
+        } else {
+            this.messageService.info(`${options.title}: formulaire de waypoint ouvert`);
+        }
     }
 
     /**

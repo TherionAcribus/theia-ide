@@ -3,6 +3,7 @@ import { FrontendApplication, FrontendApplicationContribution, WidgetManager, Wi
 import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { MapManagerWidget } from './map/map-manager-widget';
+import { MapWidgetFactory } from './map/map-widget-factory';
 
 @injectable()
 export class ZonesFrontendContribution implements FrontendApplicationContribution {
@@ -13,6 +14,9 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
 
     @inject(WidgetManager)
     protected readonly widgetManager: WidgetManager;
+
+    @inject(MapWidgetFactory)
+    protected readonly mapWidgetFactory: MapWidgetFactory;
 
     async onStart(app: FrontendApplication): Promise<void> {
         console.log('[ZonesFrontendContribution] ========== onStart appelé - extension zones initialisée ==========');
@@ -90,6 +94,20 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
         window.addEventListener('open-geocache-map', eventHandler);
         console.log('[ZonesFrontendContribution] ========== Écouteurs CustomEvent enregistrés sur document et window ==========');
 
+        // Écouteurs pour la carte générale
+        console.log('[ZonesFrontendContribution] ========== Enregistrement des écouteurs open-general-map ==========');
+        const generalMapHandler = async () => {
+            try {
+                console.log('[ZonesFrontendContribution] Événement open-general-map reçu');
+                await this.mapWidgetFactory.openGeneralMap();
+                console.log('[ZonesFrontendContribution] Carte générale ouverte/activée');
+            } catch (error) {
+                console.error('[ZonesFrontendContribution] Erreur lors de l\'ouverture de la carte générale', error);
+            }
+        };
+        document.addEventListener('open-general-map', generalMapHandler);
+        window.addEventListener('open-general-map', generalMapHandler);
+
         // Écouter aussi les messages window.postMessage
         const messageHandler = async (messageEvent: MessageEvent) => {
             console.log('[ZonesFrontendContribution] !!!!! MESSAGE REÇU (tous types) !!!!!', messageEvent.data);
@@ -110,6 +128,14 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
                     }
                 } else {
                     console.warn('[ZonesFrontendContribution] Données geocache invalides:', geocache);
+                }
+            } else if (messageEvent.data && messageEvent.data.type === 'open-general-map' && messageEvent.data.source === 'alphabets-extension') {
+                console.log('[ZonesFrontendContribution] !!!!! MESSAGE POSTMESSAGE OPEN-GENERAL-MAP REÇU !!!!!');
+                try {
+                    await this.mapWidgetFactory.openGeneralMap();
+                    console.log('[ZonesFrontendContribution] Carte générale ouverte via postMessage');
+                } catch (error) {
+                    console.error('[ZonesFrontendContribution] Erreur lors de l\'ouverture de la carte générale via postMessage', error);
                 }
             }
         };

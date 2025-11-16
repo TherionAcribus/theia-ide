@@ -11,6 +11,7 @@ export interface CoordinatesDetectorProps {
     originCoords?: { ddm_lat: string; ddm_lon: string };
     associatedGeocache?: AssociatedGeocache;
     onDistanceCalculated?: (distance: DistanceInfo) => void;
+    onCoordinatesDetected?: (coordinates: DetectedCoordinates | null) => void;
 }
 
 export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
@@ -18,7 +19,8 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
     alphabetsService,
     originCoords,
     associatedGeocache,
-    onDistanceCalculated
+    onDistanceCalculated,
+    onCoordinatesDetected
 }) => {
     const [coordinates, setCoordinates] = React.useState<DetectedCoordinates | null>(null);
     const [distance, setDistance] = React.useState<DistanceInfo | null>(null);
@@ -36,6 +38,9 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
             setCoordinates(null);
             setDistance(null);
             setError(null);
+            if (onCoordinatesDetected) {
+                onCoordinatesDetected(null);
+            }
             return;
         }
 
@@ -46,6 +51,9 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
                 
                 const detected = await alphabetsService.detectCoordinates(text, originCoords);
                 setCoordinates(detected);
+                if (onCoordinatesDetected) {
+                    onCoordinatesDetected(detected && detected.exist ? detected : null);
+                }
 
                 // Si des coordonnées sont détectées ET qu'on a une origine, calculer la distance
                 if (detected.exist && originCoords && detected.ddm_lat && detected.ddm_lon) {
@@ -74,6 +82,9 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
                 setError(err.message || 'Erreur lors de la détection');
                 setCoordinates(null);
                 setDistance(null);
+                if (onCoordinatesDetected) {
+                    onCoordinatesDetected(null);
+                }
                 setDetecting(false);
             }
         }, 1000); // 1 seconde de debounce
@@ -83,7 +94,7 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
                 clearTimeout(timerRef.current);
             }
         };
-    }, [text, originCoords, alphabetsService]);
+    }, [text, originCoords, alphabetsService, onCoordinatesDetected]);
 
     // Rendu du status
     const renderStatus = () => {

@@ -73,7 +73,7 @@ export function createGeocacheStyle(feature: Feature<Geometry>, resolution: numb
                 src: getIconPath(iconKey),
                 scale: scale,
                 opacity: opacity,
-                anchor: [0.5, 1], // Ancre au bas de l'icône (comme un pin)
+                anchor: [0.5, 0.5], // Ancre au centre de l'icône (pour les disques)
             }),
             zIndex: isSelected ? 1000 : 1
         });

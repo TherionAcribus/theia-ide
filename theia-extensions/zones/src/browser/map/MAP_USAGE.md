@@ -194,11 +194,11 @@ export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
 
 ### Personnaliser les styles
 
-Éditez `map-geocache-style.ts` :
+Éditez `map-geocache-style-sprite.ts` :
 
 ```typescript
-export function createGeocacheStyle(feature, resolution) {
-    // Modifier scale, opacity, anchor, etc.
+export function createGeocacheStyleFromSprite(feature, resolution) {
+    // Modifier scale, opacity, anchor (centré sur [0.5, 0.5]), etc.
 }
 ```
 

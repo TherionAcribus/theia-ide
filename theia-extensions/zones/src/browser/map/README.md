@@ -243,7 +243,7 @@ createWaypointStyleFromSprite(feature, resolution): Style
 - Icônes depuis sprite Geocaching.com
 - Sélection avec halo jaune
 - Opacité réduite si trouvée
-- Ancrage au bas de l'icône
+- Ancrage au centre de l'icône (pour les disques)
 
 **Interface** :
 ```typescript

@@ -55,7 +55,7 @@ export function createGeocacheStyleFromSprite(feature: Feature<Geometry>, resolu
             offset: [iconDef.x, iconDef.y],
             scale: scale,
             opacity: opacity,
-            anchor: [0.5, 1], // Ancre au bas de l'icône (comme un pin)
+            anchor: [0.5, 0.5], // Ancre au centre de l'icône (pour les disques)
         }),
         zIndex: isSelected ? 1000 : 1
     });

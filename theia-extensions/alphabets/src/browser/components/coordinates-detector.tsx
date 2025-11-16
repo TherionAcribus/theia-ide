@@ -27,28 +27,52 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
     const [detecting, setDetecting] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const timerRef = React.useRef<NodeJS.Timeout | null>(null);
+    const lastAnalyzedTextRef = React.useRef<string>('');
+    const lastAnalyzedOriginRef = React.useRef<string>('');
 
-    // Détection automatique avec debouncing
+    // Détection automatique avec debouncing intelligent
     React.useEffect(() => {
         if (timerRef.current) {
             clearTimeout(timerRef.current);
         }
 
-        if (!text || text.trim() === '') {
+        // Créer des clés pour comparer les changements
+        const currentTextKey = text?.trim() || '';
+        const currentOriginKey = JSON.stringify(originCoords) || '';
+
+        // Ne déclencher l'analyse que si le texte ou l'origine ont changé
+        const shouldAnalyze = currentTextKey !== lastAnalyzedTextRef.current ||
+                             (currentTextKey && currentOriginKey !== lastAnalyzedOriginRef.current);
+
+        if (!currentTextKey) {
+            // Texte vide : réinitialiser tout
             setCoordinates(null);
             setDistance(null);
             setError(null);
+            lastAnalyzedTextRef.current = '';
+            lastAnalyzedOriginRef.current = '';
             if (onCoordinatesDetected) {
                 onCoordinatesDetected(null);
             }
             return;
         }
 
+        if (!shouldAnalyze) {
+            // Rien n'a changé, ne pas relancer l'analyse
+            return;
+        }
+
+        // Mettre à jour les références pour éviter les analyses répétées
+        lastAnalyzedTextRef.current = currentTextKey;
+        lastAnalyzedOriginRef.current = currentOriginKey;
+
         timerRef.current = setTimeout(async () => {
             try {
                 setDetecting(true);
                 setError(null);
-                
+
+                console.log('[CoordinatesDetector] Analyse du texte:', currentTextKey.substring(0, 50) + '...');
+
                 const detected = await alphabetsService.detectCoordinates(text, originCoords);
                 setCoordinates(detected);
                 if (onCoordinatesDetected) {
@@ -77,8 +101,9 @@ export const CoordinatesDetector: React.FC<CoordinatesDetectorProps> = ({
                 }
 
                 setDetecting(false);
+                console.log('[CoordinatesDetector] Analyse terminée:', detected.exist ? 'Coordonnées trouvées' : 'Aucune coordonnée');
             } catch (err: any) {
-                console.error('Error detecting coordinates:', err);
+                console.error('[CoordinatesDetector] Error detecting coordinates:', err);
                 setError(err.message || 'Erreur lors de la détection');
                 setCoordinates(null);
                 setDistance(null);

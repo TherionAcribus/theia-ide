@@ -35,6 +35,8 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
     const [currentProvider, setCurrentProvider] = React.useState('osm');
     const [popupData, setPopupData] = React.useState<GeocacheFeatureProperties | null>(null);
     const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
+    const [showNearbyGeocaches, setShowNearbyGeocaches] = React.useState(false);
+    const [selectedGeocacheId, setSelectedGeocacheId] = React.useState<number | null>(null);
 
     // Initialisation de la carte
     React.useEffect(() => {
@@ -414,6 +416,9 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                 return;
             }
 
+            // Mettre à jour l'état de la géocache sélectionnée
+            setSelectedGeocacheId(geocache.id);
+
             // Sélectionner visuellement la géocache
             layerManagerRef.current.selectGeocache(geocache.id);
 
@@ -440,6 +445,10 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             if (layerManagerRef.current) {
                 layerManagerRef.current.deselectAllGeocaches();
             }
+            // Remettre à zéro la géocache sélectionnée
+            setSelectedGeocacheId(null);
+            // Désactiver l'affichage des géocaches voisines
+            setShowNearbyGeocaches(false);
         });
 
         return () => disposable.dispose();
@@ -580,6 +589,60 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         }
     }, [geocaches, isInitialized]);
 
+    // Gestion de l'affichage des géocaches voisines
+    React.useEffect(() => {
+        if (!layerManagerRef.current || !selectedGeocacheId || !showNearbyGeocaches) {
+            // Effacer les géocaches voisines si elles ne doivent pas être affichées
+            if (layerManagerRef.current) {
+                layerManagerRef.current.clearNearbyGeocaches();
+            }
+            return;
+        }
+
+        // Récupérer les géocaches voisines
+        const fetchNearbyGeocaches = async () => {
+            try {
+                console.log('[MapView] Récupération des géocaches voisines pour geocache', selectedGeocacheId);
+                const backendBaseUrl = 'http://127.0.0.1:8000';
+                const response = await fetch(`${backendBaseUrl}/api/geocaches/${selectedGeocacheId}/nearby?radius=5`, {
+                    credentials: 'include'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Erreur HTTP: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('[MapView] Géocaches voisines reçues:', data.nearby_geocaches.length);
+
+                // Convertir les données pour MapGeocache
+                const nearbyGeocaches: MapGeocache[] = data.nearby_geocaches.map((gc: any) => ({
+                    id: gc.id,
+                    gc_code: gc.gc_code,
+                    name: gc.name,
+                    cache_type: gc.cache_type,
+                    latitude: gc.latitude,
+                    longitude: gc.longitude,
+                    difficulty: gc.difficulty,
+                    terrain: gc.terrain,
+                    found: gc.found,
+                    is_corrected: gc.is_corrected
+                }));
+
+                // Ajouter les géocaches voisines à la carte
+                if (layerManagerRef.current) {
+                    layerManagerRef.current.addNearbyGeocaches(nearbyGeocaches);
+                }
+
+            } catch (error) {
+                console.error('[MapView] Erreur lors de la récupération des géocaches voisines:', error);
+            }
+        };
+
+        fetchNearbyGeocaches();
+
+    }, [selectedGeocacheId, showNearbyGeocaches, isInitialized]);
+
     // Écoute des événements du MapService - Changement de fond de carte
     React.useEffect(() => {
         if (!layerManagerRef.current) {
@@ -619,13 +682,13 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                 alignItems: 'center',
                 gap: '12px'
             }}>
-                <label style={{ 
+                <label style={{
                     fontSize: '12px',
                     color: 'var(--theia-foreground)'
                 }}>
-                    Fond de carteszzzm:
+                    Fond de cartes:
                 </label>
-                <select 
+                <select
                     value={currentProvider}
                     onChange={handleProviderChange}
                     style={{
@@ -644,6 +707,27 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         </option>
                     ))}
                 </select>
+
+                {/* Bouton pour afficher/masquer les géocaches voisines */}
+                <label style={{
+                    fontSize: '12px',
+                    color: 'var(--theia-foreground)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                }}>
+                    <input
+                        type="checkbox"
+                        checked={showNearbyGeocaches}
+                        onChange={(e) => setShowNearbyGeocaches(e.target.checked)}
+                        disabled={!selectedGeocacheId}
+                        style={{
+                            margin: 0,
+                            cursor: selectedGeocacheId ? 'pointer' : 'not-allowed'
+                        }}
+                    />
+                    Géocaches voisines (5km)
+                </label>
             </div>
 
             {/* Conteneur de la carte */}

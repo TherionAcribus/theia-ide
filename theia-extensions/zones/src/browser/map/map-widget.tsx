@@ -82,6 +82,28 @@ export class MapWidget extends ReactWidget {
     loadGeocaches(geocaches: MapGeocache[]): void {
         console.log(`[MapWidget ${this.id}] loadGeocaches:`, geocaches.length, 'géocaches');
         this.geocaches = geocaches;
+
+        // Si c'est une carte pour une géocache spécifique, la sélectionner automatiquement
+        if (this.context.type === 'geocache' && this.context.id && geocaches.length > 0) {
+            // Trouver la géocache correspondante
+            const geocacheToSelect = geocaches.find(gc => gc.id === this.context.id);
+            if (geocacheToSelect) {
+                console.log(`[MapWidget ${this.id}] Sélection automatique de la géocache ${this.context.id} dans le MapService`);
+                // Déléguer la sélection au MapService après un délai plus long pour laisser le temps au MapView de charger les géocaches
+                setTimeout(() => {
+                    console.log(`[MapWidget ${this.id}] Appel de selectGeocache pour ${this.context.id}`);
+                    this.mapService.selectGeocache({
+                        id: geocacheToSelect.id,
+                        gc_code: geocacheToSelect.gc_code,
+                        name: geocacheToSelect.name,
+                        latitude: geocacheToSelect.latitude,
+                        longitude: geocacheToSelect.longitude,
+                        cache_type: geocacheToSelect.cache_type
+                    });
+                }, 500);
+            }
+        }
+
         this.update();  // Force le re-render
     }
 

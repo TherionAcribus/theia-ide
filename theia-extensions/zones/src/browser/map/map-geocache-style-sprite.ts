@@ -21,9 +21,17 @@ export interface GeocacheFeatureProperties {
 }
 
 /**
+ * Options pour le style des géocaches
+ */
+export interface GeocacheStyleOptions {
+    opacity?: number;
+    scale?: number;
+}
+
+/**
  * Crée le style pour une feature géocache individuelle en utilisant le sprite sheet
  */
-export function createGeocacheStyleFromSprite(feature: Feature<Geometry>, resolution: number): Style | Style[] {
+export function createGeocacheStyleFromSprite(feature: Feature<Geometry>, resolution: number, options?: GeocacheStyleOptions): Style | Style[] {
     const properties = feature.getProperties() as GeocacheFeatureProperties;
     const isSelected = properties.selected === true;
     
@@ -32,11 +40,13 @@ export function createGeocacheStyleFromSprite(feature: Feature<Geometry>, resolu
     
     if (!iconDef) {
         // Fallback vers un style par défaut si le type n'est pas trouvé
-        return createFallbackStyle(isSelected, properties.found);
+        return createFallbackStyle(isSelected, properties.found, options);
     }
 
-    const scale = isSelected ? 1.0 : 0.8;
-    const opacity = properties.found ? 0.6 : 1.0;
+    const baseScale = isSelected ? 1.0 : 0.8;
+    const scale = options?.scale ? baseScale * options.scale : baseScale;
+    const baseOpacity = properties.found ? 0.6 : 1.0;
+    const opacity = options?.opacity !== undefined ? baseOpacity * options.opacity : baseOpacity;
 
     const style = new Style({
         image: new Icon({
@@ -76,9 +86,11 @@ export function createGeocacheStyleFromSprite(feature: Feature<Geometry>, resolu
 /**
  * Style de secours si le type de cache n'est pas trouvé
  */
-function createFallbackStyle(isSelected: boolean, found?: boolean): Style {
-    const radius = isSelected ? 10 : 8;
-    const opacity = found ? 0.6 : 1.0;
+function createFallbackStyle(isSelected: boolean, found?: boolean, options?: GeocacheStyleOptions): Style {
+    const baseRadius = isSelected ? 10 : 8;
+    const radius = options?.scale ? baseRadius * options.scale : baseRadius;
+    const baseOpacity = found ? 0.6 : 1.0;
+    const opacity = options?.opacity !== undefined ? baseOpacity * options.opacity : baseOpacity;
 
     return new Style({
         image: new Circle({

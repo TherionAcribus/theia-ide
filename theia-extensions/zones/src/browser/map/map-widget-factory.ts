@@ -93,12 +93,17 @@ export class MapWidgetFactory {
     async openMapForGeocache(geocacheId: number, gcCode: string, geocacheData: any): Promise<MapWidget> {
         // Préparer les données : la géocache + ses waypoints
         const geocaches = [geocacheData];
-        
-        return this.openMapForContext({
+
+        const widget = await this.openMapForContext({
             type: 'geocache',
             id: geocacheId,
             label: `Géocache: ${gcCode}`
         }, geocaches);
+
+        // La sélection automatique sera faite dans loadGeocaches() du widget
+        console.log(`[MapWidgetFactory] Carte ouverte pour géocache ${gcCode} (id=${geocacheId})`);
+
+        return widget;
     }
 
     /**

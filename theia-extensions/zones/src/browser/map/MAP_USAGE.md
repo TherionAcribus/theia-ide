@@ -10,6 +10,7 @@ Le système de carte GeoApp permet d'afficher et d'interagir avec les géocaches
 
 - ✅ Carte interactive OpenLayers dans le Bottom Layer
 - ✅ Affichage des géocaches avec icônes personnalisées par type
+- ✅ **Affichage des géocaches voisines** (dans un rayon de 5km autour d'une géocache sélectionnée)
 - ✅ Clustering automatique pour les performances (>500 géocaches)
 - ✅ Multiple fonds de carte (OSM, Topo, Satellite, etc.)
 - ✅ Contrôles de zoom, plein écran, échelle
@@ -72,6 +73,20 @@ Utilisez le sélecteur en haut de la carte :
 - Les géocaches sont représentées par leurs icônes officielles
 - Les géocaches trouvées apparaissent en transparence (60%)
 - La géocache sélectionnée a un cercle bleu autour
+
+### Afficher les géocaches voisines
+
+Pour voir les autres géocaches dans un rayon de 5km autour d'une géocache spécifique :
+
+1. **Sélectionnez une géocache** en cliquant dessus dans le tableau ou sur la carte
+2. **Activez l'affichage** en cochant la case "Géocaches voisines (5km)" dans la barre d'outils de la carte
+3. Les géocaches voisines apparaissent automatiquement avec un style plus discret (plus petites et plus transparentes)
+4. **Désactivez** la case pour masquer les géocaches voisines
+
+Cette fonctionnalité vous aide à :
+- Évaluer la densité de géocaches dans une zone
+- Identifier les coordonnées suspectes (trop isolées ou trop proches d'autres caches)
+- Planifier vos sorties de géocaching
 
 ### Clustering
 

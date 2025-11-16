@@ -5,7 +5,7 @@ import { Point } from 'ol/geom';
 import Map from 'ol/Map';
 import { createClusterSource } from './map-clustering';
 import { createClusterStyle } from './map-geocache-style';
-import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties } from './map-geocache-style-sprite';
+import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties, GeocacheStyleOptions } from './map-geocache-style-sprite';
 import { lonLatToMapCoordinate } from './map-utils';
 import { createTileLayer, DEFAULT_PROVIDER_ID } from './map-tile-providers';
 import { DetectedCoordinateHighlight } from './map-service';
@@ -58,6 +58,8 @@ export class MapLayerManager {
     private waypointLayer: any;
     private detectedCoordinateSource: VectorSource<Feature<Point>>;
     private detectedCoordinateLayer: any;
+    private nearbyGeocacheVectorSource: VectorSource<Feature<Point>>;
+    private nearbyGeocacheLayer: any;
     private currentTileProviderId: string;
 
     constructor(map: Map) {
@@ -106,6 +108,21 @@ export class MapLayerManager {
             zIndex: 30
         });
         this.map.addLayer(this.detectedCoordinateLayer);
+
+        // Couche pour les géocaches voisines
+        this.nearbyGeocacheVectorSource = new VectorSource<Feature<Point>>();
+        this.nearbyGeocacheLayer = new VectorLayer({
+            source: this.nearbyGeocacheVectorSource,
+            style: (feature, resolution) => {
+                const styleOptions: GeocacheStyleOptions = { opacity: 0.6, scale: 0.7 };
+                return createGeocacheStyleFromSprite(feature, resolution, styleOptions);
+            },
+            properties: {
+                name: 'nearby-geocaches'
+            },
+            zIndex: 5 // En dessous des géocaches normales
+        });
+        this.map.addLayer(this.nearbyGeocacheLayer);
     }
 
     /**
@@ -262,6 +279,8 @@ export class MapLayerManager {
      * Met en surbrillance une géocache (la sélectionne visuellement)
      */
     selectGeocache(geocacheId: number): void {
+        console.log(`[MapLayerManager] selectGeocache appelé pour geocacheId:`, geocacheId);
+
         // Désélectionner toutes les géocaches
         this.geocacheVectorSource.getFeatures().forEach(feature => {
             feature.set('selected', false);
@@ -270,9 +289,13 @@ export class MapLayerManager {
         // Sélectionner la géocache demandée
         const feature = this.geocacheVectorSource.getFeatureById(geocacheId);
         if (feature) {
+            console.log(`[MapLayerManager] Feature trouvée pour geocacheId ${geocacheId}, sélection en cours`);
             feature.set('selected', true);
             // Forcer le recalcul du style
             feature.changed();
+        } else {
+            console.warn(`[MapLayerManager] Aucune feature trouvée pour geocacheId ${geocacheId}. Features disponibles:`,
+                this.geocacheVectorSource.getFeatures().map(f => f.getId()));
         }
     }
 
@@ -445,12 +468,59 @@ export class MapLayerManager {
     }
 
     /**
+     * Ajoute les géocaches voisines à afficher
+     */
+    addNearbyGeocaches(geocaches: MapGeocache[]): void {
+        console.log('[MapLayerManager] addNearbyGeocaches appelé avec:', geocaches.length, 'géocaches voisines');
+
+        // Effacer les géocaches voisines existantes
+        this.clearNearbyGeocaches();
+
+        const features = geocaches.map(geocache => {
+            const coordinate = lonLatToMapCoordinate(geocache.longitude, geocache.latitude);
+            console.log(`[MapLayerManager] Géocache voisine ${geocache.gc_code}: lon=${geocache.longitude}, lat=${geocache.latitude} -> coord=`, coordinate);
+
+            const feature = new Feature({
+                geometry: new Point(coordinate)
+            });
+
+            feature.setId(`nearby_${geocache.id}`);
+            feature.setProperties({
+                id: geocache.id,
+                gc_code: geocache.gc_code,
+                name: geocache.name,
+                cache_type: geocache.cache_type,
+                difficulty: geocache.difficulty,
+                terrain: geocache.terrain,
+                found: geocache.found,
+                selected: false,
+                isNearby: true  // Marquer comme géocache voisine
+            } as GeocacheFeatureProperties);
+
+            return feature;
+        });
+
+        console.log('[MapLayerManager] Features voisines créées:', features.length);
+        this.nearbyGeocacheVectorSource.addFeatures(features);
+        console.log('[MapLayerManager] Features voisines ajoutées à la source vectorielle');
+    }
+
+    /**
+     * Efface toutes les géocaches voisines
+     */
+    clearNearbyGeocaches(): void {
+        console.log('[MapLayerManager] clearNearbyGeocaches');
+        this.nearbyGeocacheVectorSource.clear();
+    }
+
+    /**
      * Nettoie toutes les couches
      */
     dispose(): void {
         this.clearGeocaches();
         this.clearWaypoints();
         this.clearDetectedCoordinate();
+        this.clearNearbyGeocaches();
     }
 }
 

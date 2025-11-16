@@ -126,7 +126,8 @@
     "fs-extra": "^9.0.1",
     "theia-ide-launcher-ext": "1.65.100",
     "theia-ide-product-ext": "1.65.100",
-    "theia-ide-updater-ext": "1.65.100"
+    "theia-ide-updater-ext": "1.65.100",
+    "@mysterai/theia-preferences": "1.0.0"
   },
   "devDependencies": {
     "@theia/cli": "1.65.1",

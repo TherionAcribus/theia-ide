@@ -13,6 +13,13 @@ import { fromLonLat } from 'ol/proj';
 import { GeocacheFeatureProperties } from './map-geocache-style-sprite';
 import { ContextMenu, ContextMenuItem } from '../context-menu';
 
+export interface MapViewPreferences {
+    defaultProvider: string;
+    defaultZoom: number;
+    showExclusionZones: boolean;
+    showNearbyGeocaches: boolean;
+}
+
 export interface MapViewProps {
     mapService: MapService;
     geocaches: MapGeocache[];  // ✅ Données propres à cette carte
@@ -21,25 +28,51 @@ export interface MapViewProps {
     onDeleteWaypoint?: (waypointId: number) => void;  // ✅ Callback pour supprimer un waypoint
     onSetWaypointAsCorrectedCoords?: (waypointId: number) => void;  // ✅ Callback pour définir comme coordonnées corrigées
     onOpenGeocacheDetails?: (geocacheId: number, geocacheName: string) => void;  // ✅ Callback pour ouvrir les détails d'une géocache
+    preferences?: MapViewPreferences;
+    onPreferenceChange?: (key: string, value: unknown) => void;
 }
 
 /**
  * Composant React qui affiche la carte OpenLayers
  */
-export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapReady, onAddWaypoint, onDeleteWaypoint, onSetWaypointAsCorrectedCoords, onOpenGeocacheDetails }) => {
+export const MapView: React.FC<MapViewProps> = ({
+    mapService,
+    geocaches,
+    onMapReady,
+    onAddWaypoint,
+    onDeleteWaypoint,
+    onSetWaypointAsCorrectedCoords,
+    onOpenGeocacheDetails,
+    preferences,
+    onPreferenceChange
+}) => {
     const mapRef = React.useRef<HTMLDivElement>(null);
     const popupRef = React.useRef<HTMLDivElement>(null);
     const mapInstanceRef = React.useRef<any>(null);
     const layerManagerRef = React.useRef<MapLayerManager | null>(null);
     const overlayRef = React.useRef<Overlay | null>(null);
     const [isInitialized, setIsInitialized] = React.useState(false);
-    const [currentProvider, setCurrentProvider] = React.useState('osm');
+    const initialZoomRef = React.useRef(preferences?.defaultZoom ?? 6);
+    const [currentProvider, setCurrentProvider] = React.useState(preferences?.defaultProvider ?? 'osm');
     const [popupData, setPopupData] = React.useState<GeocacheFeatureProperties | null>(null);
     const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
-    const [showNearbyGeocaches, setShowNearbyGeocaches] = React.useState(false);
-    const [showExclusionZones, setShowExclusionZones] = React.useState(false);
+    const [showNearbyGeocaches, setShowNearbyGeocaches] = React.useState(preferences?.showNearbyGeocaches ?? false);
+    const [showExclusionZones, setShowExclusionZones] = React.useState(preferences?.showExclusionZones ?? false);
     const [selectedGeocacheId, setSelectedGeocacheId] = React.useState<number | null>(null);
     const [nearbyGeocaches, setNearbyGeocaches] = React.useState<MapGeocache[]>([]);
+
+    React.useEffect(() => {
+        if (!preferences) {
+            return;
+        }
+        setCurrentProvider(preferences.defaultProvider);
+        setShowNearbyGeocaches(preferences.showNearbyGeocaches);
+        setShowExclusionZones(preferences.showExclusionZones);
+
+        if (mapInstanceRef.current) {
+            mapInstanceRef.current.getView().setZoom(preferences.defaultZoom);
+        }
+    }, [preferences]);
 
     // Initialisation de la carte
     React.useEffect(() => {
@@ -66,7 +99,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             }),
             view: new View({
                 center: fromLonLat([2.3522, 48.8566]), // Paris par défaut
-                zoom: 6,
+                zoom: initialZoomRef.current,
                 minZoom: 3,
                 maxZoom: 19
             })
@@ -467,7 +500,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         });
 
         return () => disposable.dispose();
-    }, [isInitialized, mapService]);
+    }, [isInitialized, mapService, onPreferenceChange]);
 
     // Écoute des événements du MapService - Désélection
     React.useEffect(() => {
@@ -711,6 +744,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             if (layerManagerRef.current) {
                 layerManagerRef.current.changeTileProvider(providerId);
                 setCurrentProvider(providerId);
+                onPreferenceChange?.('geoApp.map.defaultProvider', providerId);
             }
         });
 
@@ -721,6 +755,17 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
     const handleProviderChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
         const providerId = event.target.value;
         mapService.changeTileProvider(providerId);
+        onPreferenceChange?.('geoApp.map.defaultProvider', providerId);
+    };
+
+    const handleNearbyToggle = (checked: boolean) => {
+        setShowNearbyGeocaches(checked);
+        onPreferenceChange?.('geoApp.map.showNearbyGeocaches', checked);
+    };
+
+    const handleExclusionToggle = (checked: boolean) => {
+        setShowExclusionZones(checked);
+        onPreferenceChange?.('geoApp.map.showExclusionZones', checked);
     };
 
     return (
@@ -777,7 +822,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     <input
                         type="checkbox"
                         checked={showNearbyGeocaches}
-                        onChange={(e) => setShowNearbyGeocaches(e.target.checked)}
+                        onChange={e => handleNearbyToggle(e.target.checked)}
                         disabled={!selectedGeocacheId}
                         style={{
                             margin: 0,
@@ -798,7 +843,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     <input
                         type="checkbox"
                         checked={showExclusionZones}
-                        onChange={(e) => setShowExclusionZones(e.target.checked)}
+                        onChange={e => handleExclusionToggle(e.target.checked)}
                         style={{
                             margin: 0,
                             cursor: 'pointer'

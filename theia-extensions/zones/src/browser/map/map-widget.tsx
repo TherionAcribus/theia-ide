@@ -5,9 +5,11 @@ import { ApplicationShell } from '@theia/core/lib/browser';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { GeocacheDetailsWidget } from '../geocache-details-widget';
 import * as React from 'react';
-import { MapView } from './map-view';
+import { MapView, MapViewPreferences } from './map-view';
 import { MapService } from './map-service';
 import { MapGeocache } from './map-layer-manager';
+import { PreferenceService, PreferenceChange } from '@theia/core/lib/common/preferences/preference-service';
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 
 export interface MapContext {
     type: 'zone' | 'geocache' | 'general';
@@ -27,12 +29,20 @@ export class MapWidget extends ReactWidget {
     private mapInstance: any = null;
     private context: MapContext;
     private geocaches: MapGeocache[] = [];  // ✅ Données propres à ce widget
+    private mapPreferences: MapViewPreferences;
+    private readonly mapPreferenceKeys = [
+        'geoApp.map.defaultProvider',
+        'geoApp.map.defaultZoom',
+        'geoApp.map.showExclusionZones',
+        'geoApp.map.showNearbyGeocaches'
+    ];
 
     constructor(
         @inject(MapService) protected readonly mapService: MapService,
         @inject(MessageService) protected readonly messageService: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(PreferenceService) private readonly preferenceService: PreferenceService,
     ) {
         super();
         // Contexte par défaut
@@ -40,6 +50,8 @@ export class MapWidget extends ReactWidget {
             type: 'general',
             label: 'Carte Générale'
         };
+        this.mapPreferences = this.readMapPreferences();
+        this.preferenceService.onPreferenceChanged((event: PreferenceChange) => this.handleMapPreferenceChanged(event));
     }
 
     /**
@@ -140,6 +152,8 @@ export class MapWidget extends ReactWidget {
                 onDeleteWaypoint={onDeleteWaypoint}
                 onSetWaypointAsCorrectedCoords={onSetWaypointAsCorrectedCoords}
                 onOpenGeocacheDetails={this.handleOpenGeocacheDetails}
+                preferences={this.mapPreferences}
+                onPreferenceChange={this.handlePreferenceUpdate}
             />
         );
     }
@@ -206,6 +220,27 @@ export class MapWidget extends ReactWidget {
         } else {
             this.messageService.warn('Veuillez ouvrir les détails de la géocache pour définir les coordonnées corrigées');
         }
+    };
+
+    private readMapPreferences(): MapViewPreferences {
+        return {
+            defaultProvider: this.preferenceService.get('geoApp.map.defaultProvider', 'osm'),
+            defaultZoom: this.preferenceService.get('geoApp.map.defaultZoom', 6),
+            showExclusionZones: this.preferenceService.get('geoApp.map.showExclusionZones', true),
+            showNearbyGeocaches: this.preferenceService.get('geoApp.map.showNearbyGeocaches', false)
+        };
+    }
+
+    private handleMapPreferenceChanged(event: PreferenceChange): void {
+        if (!event.preferenceName || !this.mapPreferenceKeys.includes(event.preferenceName)) {
+            return;
+        }
+        this.mapPreferences = this.readMapPreferences();
+        this.update();
+    }
+
+    private handlePreferenceUpdate = (key: string, value: unknown): void => {
+        void this.preferenceService.set(key, value, PreferenceScope.User);
     };
 
     /**

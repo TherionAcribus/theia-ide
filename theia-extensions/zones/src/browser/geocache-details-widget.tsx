@@ -4,7 +4,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core';
-import { ChatService, ChatAgentLocation, ChatSession, MutableChatModel, isSessionDeletedEvent } from '@theia/ai-chat';
+import { ChatService, ChatAgentLocation, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
@@ -1477,10 +1477,6 @@ export class GeocacheDetailsWidget extends ReactWidget {
     private findGeocacheChatSession(geocacheId: number): ChatSession | undefined {
         return this.chatService.getSessions()
             .find(session => GeocacheDetailsWidget.geocacheChatSessions.get(session.id)?.geocacheId === geocacheId);
-    }
-
-    private getSessionGeocacheMetadata(session: ChatSession): GeocacheChatMetadata | undefined {
-        return GeocacheDetailsWidget.geocacheChatSessions.get(session.id);
     }
 
     private setSessionGeocacheMetadata(session: ChatSession, metadata: GeocacheChatMetadata): void {

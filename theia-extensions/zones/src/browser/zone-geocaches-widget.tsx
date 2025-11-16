@@ -476,7 +476,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
      * Gère l'ouverture de détails de géocache depuis une carte (événement personnalisé)
      */
     private handleOpenGeocacheDetailsFromMap = async (event: CustomEvent): Promise<void> => {
-        const { geocacheId, geocacheName } = event.detail;
+        const { geocacheId } = event.detail;
         console.log(`[ZoneGeocachesWidget] Ouverture de carte pour géocache ${geocacheId} depuis la carte`);
 
         try {

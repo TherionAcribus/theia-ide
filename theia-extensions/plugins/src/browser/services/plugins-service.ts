@@ -5,8 +5,9 @@
  * pour la gestion des plugins.
  */
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import axios, { AxiosInstance } from 'axios';
+import { PreferenceService, PreferenceChange } from '@theia/core/lib/common/preferences/preference-service';
 import {
     Plugin,
     PluginDetails,
@@ -20,19 +21,19 @@ import {
 @injectable()
 export class PluginsServiceImpl implements IPluginsService {
     
-    private readonly client: AxiosInstance;
-    private readonly baseUrl: string;
+    private client: AxiosInstance;
+    private baseUrl: string;
     
-    constructor() {
-        // URL du backend Flask
-        // TODO: Rendre configurable via les préférences Theia
-        this.baseUrl = 'http://localhost:8000';
-        
-        this.client = axios.create({
-            baseURL: this.baseUrl,
-            timeout: 30000, // 30 secondes
-            headers: {
-                'Content-Type': 'application/json'
+    constructor(
+        @inject(PreferenceService) private readonly preferenceService: PreferenceService,
+    ) {
+        const initialUrl = String(this.preferenceService.get('geoApp.backend.apiBaseUrl', 'http://localhost:8000') || 'http://localhost:8000');
+        this.baseUrl = this.normalizeBaseUrl(initialUrl);
+        this.client = this.createClient(this.baseUrl);
+
+        this.preferenceService.onPreferenceChanged((event: PreferenceChange) => {
+            if (event.preferenceName === 'geoApp.backend.apiBaseUrl') {
+                this.updateBaseUrl(String(event.newValue || 'http://localhost:8000'));
             }
         });
     }
@@ -197,5 +198,33 @@ export class PluginsServiceImpl implements IPluginsService {
         }
         
         return error.message || 'Erreur inconnue';
+    }
+
+    private createClient(baseURL: string): AxiosInstance {
+        return axios.create({
+            baseURL,
+            timeout: 30000,
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+    }
+
+    private updateBaseUrl(url: string): void {
+        const normalized = this.normalizeBaseUrl(url);
+        if (normalized === this.baseUrl) {
+            return;
+        }
+        this.baseUrl = normalized;
+        this.client = this.createClient(this.baseUrl);
+        console.info('[PluginsService] URL backend mise à jour:', this.baseUrl);
+    }
+
+    private normalizeBaseUrl(url: string): string {
+        const trimmed = (url || '').trim();
+        if (!trimmed) {
+            return 'http://localhost:8000';
+        }
+        return trimmed.replace(/\/+$/, '');
     }
 }

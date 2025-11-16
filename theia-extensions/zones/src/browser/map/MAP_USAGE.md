@@ -300,5 +300,13 @@ Constructor
 - [Theia Widget Guide](https://theia-ide.org/docs/composing_applications/)
 - [Geocaching Icon Guide](../GEOCACHE_ICONS.md)
 
+---
 
+## ⚙️ Préférences utiles
 
+- `geoApp.map.defaultProvider` : sélectionne le fournisseur de tuiles appliqué à l'ouverture (synchronisé avec le sélecteur de la barre d'outils).
+- `geoApp.map.defaultZoom` : définit le zoom initial injecté dans `MapView`.
+- `geoApp.map.showNearbyGeocaches` et `geoApp.map.showExclusionZones` : définissent l'état des deux toggles (toute modification est automatiquement reflétée dans les préférences).
+- `geoApp.map.clipboardWatcher` : réservé à l'activation future du watcher presse-papiers.
+
+Tous ces réglages se configurent depuis **GeoApp ▸ Préférences** et sont persistés dans `.theia/settings.json`. Les préférences pertinentes sont également propagées au backend via `/api/preferences`.

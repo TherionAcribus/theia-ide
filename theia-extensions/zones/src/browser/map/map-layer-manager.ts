@@ -1,9 +1,9 @@
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
-import { Feature } from 'ol';
-import { Point } from 'ol/geom';
+import Feature from 'ol/Feature';
 import Map from 'ol/Map';
-import { Circle } from 'ol/geom';
+import { Point, Circle } from 'ol/geom';
+import Geometry from 'ol/geom/Geometry';
 import { Style, Fill, Stroke } from 'ol/style';
 import { createClusterSource } from './map-clustering';
 import { createClusterStyle } from './map-geocache-style';
@@ -62,7 +62,7 @@ export class MapLayerManager {
     private detectedCoordinateLayer: any;
     private nearbyGeocacheVectorSource: VectorSource<Feature<Point>>;
     private nearbyGeocacheLayer: any;
-    private exclusionZoneVectorSource: VectorSource<Feature<Point>>;
+    private exclusionZoneVectorSource: VectorSource<Feature<Geometry>>;
     private exclusionZoneLayer: any;
     private currentTileProviderId: string;
 
@@ -119,7 +119,7 @@ export class MapLayerManager {
             source: this.nearbyGeocacheVectorSource,
             style: (feature, resolution) => {
                 const styleOptions: GeocacheStyleOptions = { opacity: 0.6, scale: 0.7 };
-                return createGeocacheStyleFromSprite(feature, resolution, styleOptions);
+                return createGeocacheStyleFromSprite(feature as Feature<Geometry>, resolution, styleOptions);
             },
             properties: {
                 name: 'nearby-geocaches'
@@ -129,7 +129,7 @@ export class MapLayerManager {
         this.map.addLayer(this.nearbyGeocacheLayer);
 
         // Couche pour les zones d'exclusion (cercles de 161m)
-        this.exclusionZoneVectorSource = new VectorSource<Feature<Point>>();
+        this.exclusionZoneVectorSource = new VectorSource<Feature<Geometry>>();
         this.exclusionZoneLayer = new VectorLayer({
             source: this.exclusionZoneVectorSource,
             style: this.createExclusionZoneStyle.bind(this),
@@ -532,16 +532,10 @@ export class MapLayerManager {
     /**
      * Crée le style pour une zone d'exclusion (cercle de 161m)
      */
-    private createExclusionZoneStyle(feature: Feature): Style | Style[] {
+    private createExclusionZoneStyle(feature: Feature<Geometry>): Style | Style[] {
         const properties = feature.getProperties() as {
             zoneType: 'traditional' | 'corrected' | 'multi' | 'letterbox';
         };
-
-        // Rayon de 161m en coordonnées de la carte (Mercator)
-        // À l'équateur, 1m ≈ 1/111111 degrés de latitude
-        // En projection Mercator, on utilise une approximation
-        const radiusMeters = 161;
-        const radiusDegrees = radiusMeters / 111111; // Approximation simple
 
         let fillColor: string;
         let strokeColor: string;
@@ -590,11 +584,11 @@ export class MapLayerManager {
         // Effacer les zones existantes
         this.clearExclusionZones();
 
-        const features: Feature[] = [];
+        const features: Feature<Geometry>[] = [];
 
         geocaches.forEach(geocache => {
             let shouldShowZone = false;
-            let zoneType: 'traditional' | 'corrected' | 'multi' | 'letterbox';
+            let zoneType: 'traditional' | 'corrected' | 'multi' | 'letterbox' = 'traditional';
 
             // Logique selon les règles spécifiées
             const cacheType = geocache.cache_type?.toLowerCase();

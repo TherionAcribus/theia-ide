@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { injectable, inject } from 'inversify';
+import { injectable, inject, postConstruct } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core';
+import { ChatService, ChatAgentLocation, ChatSession, MutableChatModel, isSessionDeletedEvent } from '@theia/ai-chat';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
@@ -44,6 +45,13 @@ type GeocacheWaypoint = {
     note?: string;
 };
 type GeocacheChecker = { id?: number; name?: string; url?: string };
+
+interface GeocacheChatMetadata {
+    geocacheId: number;
+    geocacheCode?: string;
+    geocacheName?: string;
+    lastUpdatedIso: string;
+}
 
 /**
  * Props pour le composant WaypointsEditor
@@ -903,11 +911,15 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
     protected isSavingWaypoint = false;
 
+    // Map pour stocker les métadonnées GeoApp des sessions de chat
+    protected static geocacheChatSessions = new Map<string, GeocacheChatMetadata>();
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
-        @inject(CommandService) protected readonly commandService: CommandService
+        @inject(CommandService) protected readonly commandService: CommandService,
+        @inject(ChatService) protected readonly chatService: ChatService
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
@@ -916,6 +928,16 @@ export class GeocacheDetailsWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-map-marker';
         this.addClass('theia-geocache-details-widget');
+    }
+
+    @postConstruct()
+    initialize(): void {
+        // Nettoyer les métadonnées des sessions supprimées
+        this.chatService.onSessionEvent(event => {
+            if (isSessionDeletedEvent(event)) {
+                GeocacheDetailsWidget.geocacheChatSessions.delete(event.sessionId);
+            }
+        });
     }
 
     protected onAfterAttach(msg: any): void {
@@ -1417,6 +1439,134 @@ export class GeocacheDetailsWidget extends ReactWidget {
         );
     }
 
+    private openGeocacheAIChat = async (): Promise<void> => {
+        if (!this.geocacheId || !this.data) {
+            this.messages.warn('Aucune géocache sélectionnée pour ouvrir le chat IA.');
+            return;
+        }
+
+        const metadata: GeocacheChatMetadata = {
+            geocacheId: this.geocacheId,
+            geocacheCode: this.data.gc_code,
+            geocacheName: this.data.name,
+            lastUpdatedIso: new Date().toISOString()
+        };
+
+        try {
+            const existingSession = this.findGeocacheChatSession(this.geocacheId);
+            if (existingSession) {
+                this.setSessionGeocacheMetadata(existingSession, metadata);
+                this.chatService.setActiveSession(existingSession.id, { focus: true });
+                this.messages.info('Chat IA rouvert pour cette géocache.');
+                return;
+            }
+
+            const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: true });
+            this.setSessionGeocacheMetadata(session, metadata);
+            session.title = `CHAT IA - ${this.data.gc_code ?? this.data.name}`;
+
+            const prompt = this.buildGeocachePrompt(this.data);
+            await this.chatService.sendRequest(session.id, { text: prompt });
+            this.messages.info('Chat IA lancé pour cette géocache.');
+        } catch (error) {
+            console.error('[GeocacheDetailsWidget] openGeocacheAIChat error', error);
+            this.messages.error('Impossible d\'ouvrir le chat IA pour cette géocache.');
+        }
+    };
+
+    private findGeocacheChatSession(geocacheId: number): ChatSession | undefined {
+        return this.chatService.getSessions()
+            .find(session => GeocacheDetailsWidget.geocacheChatSessions.get(session.id)?.geocacheId === geocacheId);
+    }
+
+    private getSessionGeocacheMetadata(session: ChatSession): GeocacheChatMetadata | undefined {
+        return GeocacheDetailsWidget.geocacheChatSessions.get(session.id);
+    }
+
+    private setSessionGeocacheMetadata(session: ChatSession, metadata: GeocacheChatMetadata): void {
+        GeocacheDetailsWidget.geocacheChatSessions.set(session.id, metadata);
+    }
+
+    private buildGeocachePrompt(data: GeocacheDto): string {
+        const lines: string[] = [
+            `Nom : ${data.name}`,
+            `Code : ${data.gc_code ?? 'Inconnu'} • Type : ${data.type ?? 'Inconnu'} • Taille : ${data.size ?? 'N/A'}`,
+            `Difficulté / Terrain : ${data.difficulty ?? '?'} / ${data.terrain ?? '?'}`,
+            `Propriétaire : ${data.owner ?? 'Inconnu'} • Statut : ${data.status ?? 'Inconnu'}`,
+            `Coordonnées affichées : ${data.coordinates_raw ?? data.original_coordinates_raw ?? 'Non renseignées'}`,
+            data.original_coordinates_raw && data.coordinates_raw && data.original_coordinates_raw !== data.coordinates_raw
+                ? `Coordonnées originales : ${data.original_coordinates_raw}`
+                : undefined,
+            data.placed_at ? `Placée le : ${data.placed_at}` : undefined,
+            `Favoris : ${data.favorites_count ?? 0} • Logs : ${data.logs_count ?? 0}`,
+            data.waypoints?.length ? `Waypoints (${data.waypoints.length}) : ${this.buildWaypointsSummary(data.waypoints)}` : undefined,
+            data.checkers?.length ? `Checkers : ${data.checkers.map(c => c.name || c.url).join(', ')}` : undefined
+        ].filter((value): value is string => Boolean(value));
+
+        const descriptionSnippet = this.sanitizeRichText(data.description_html, 1500);
+        if (descriptionSnippet) {
+            lines.push('', 'Description (extrait) :', descriptionSnippet);
+        }
+
+        if (data.hints) {
+            lines.push('', 'Indices (extrait) :', this.truncate(data.hints.trim(), 600));
+        }
+
+        return [
+            "Tu es un assistant IA spécialisé dans la résolution d'énigmes de géocaching.",
+            'Rappels stricts :',
+            '1. Ne propose jamais de coordonnées inventées.',
+            "2. Limite ta réponse à 3 pistes ou plans d'action structurés maximum.",
+            '3. Cite les outils, calculs ou vérifications nécessaires.',
+            '4. Demande des précisions avant de conclure si les données sont insuffisantes.',
+            '',
+            '--- CONTEXTE GÉOCACHE ---',
+            ...lines,
+            '',
+            '--- OBJECTIF ---',
+            "Analyse l'énigme, propose un plan d'action clair (max 3 pistes) et précise comment vérifier chaque hypothèse avant d'estimer la position finale."
+        ].join('\n');
+    }
+
+    private buildWaypointsSummary(waypoints: GeocacheWaypoint[]): string {
+        const preview = waypoints
+            .slice(0, 3)
+            .map(w => {
+                const label = w.name || w.prefix || 'WP';
+                const coords = w.gc_coords || (w.latitude !== undefined && w.longitude !== undefined
+                    ? `${w.latitude.toFixed(5)}, ${w.longitude.toFixed(5)}`
+                    : undefined);
+                return coords ? `${label} (${coords})` : label;
+            })
+            .join(' • ');
+        const remaining = waypoints.length > 3 ? ` … (+${waypoints.length - 3})` : '';
+        return `${preview}${remaining}`;
+    }
+
+    private sanitizeRichText(value?: string, maxLength = 1500): string {
+        if (!value) {
+            return '';
+        }
+        const text = this.stripHtml(value).replace(/\s+/g, ' ').trim();
+        return this.truncate(text, maxLength);
+    }
+
+    private stripHtml(value: string): string {
+        if (typeof document !== 'undefined') {
+            const temp = document.createElement('div');
+            temp.innerHTML = value;
+            return (temp.textContent || temp.innerText || '').trim();
+        }
+        return value.replace(/<[^>]+>/g, ' ').trim();
+    }
+
+    private truncate(value: string, maxLength: number): string {
+        if (value.length <= maxLength) {
+            return value;
+        }
+        return `${value.substring(0, maxLength).trim()}…`;
+    }
+
     protected renderImages(images?: GeocacheImage[]): React.ReactNode {
         if (!images || images.length === 0) { return undefined; }
         return (
@@ -1471,6 +1621,14 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                         title='Analyser cette géocache avec les plugins'
                                     >
                                         🔌 Analyser avec plugins
+                                    </button>
+                                    <button
+                                        className='theia-button'
+                                        onClick={this.openGeocacheAIChat}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Ouvrir un chat IA dédié à cette géocache'
+                                    >
+                                        🤖 Chat IA
                                     </button>
                                 </div>
                             </div>

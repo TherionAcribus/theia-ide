@@ -682,29 +682,13 @@ export class AlphabetsListWidget extends ReactWidget {
                     e.currentTarget.style.backgroundColor = 'var(--theia-list-activeSelectionBackground)';
                 }}
             >
-                <div style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '4px'
-                }}>
-                    <span style={{ 
+                <div style={{ marginBottom: '4px' }}>
+                    <span style={{
                         fontWeight: 'bold',
                         color: 'var(--theia-foreground)'
                     }}>
                         {alphabet.name}
                     </span>
-                    {alphabet.source && (
-                        <span style={{
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            backgroundColor: alphabet.source === 'official' ? 'var(--theia-statusBar-background)' : 'var(--theia-statusBar-debuggingBackground)',
-                            color: 'var(--theia-statusBar-foreground)',
-                            borderRadius: '2px'
-                        }}>
-                            {alphabet.source}
-                        </span>
-                    )}
                 </div>
                 <div style={{ 
                     fontSize: '11px',

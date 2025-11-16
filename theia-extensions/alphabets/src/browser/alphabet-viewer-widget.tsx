@@ -129,6 +129,10 @@ export class AlphabetViewerWidget extends ReactWidget {
      * Gestionnaire des événements clavier.
      */
     private handleKeyDown = (e: KeyboardEvent): void => {
+        // Vérifier si le focus est dans un textarea (édition normale)
+        const activeElement = document.activeElement;
+        const isTextareaFocused = activeElement && activeElement.tagName === 'TEXTAREA';
+
         // Undo: Ctrl+Z (ou Cmd+Z sur Mac)
         if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
             e.preventDefault();
@@ -139,8 +143,8 @@ export class AlphabetViewerWidget extends ReactWidget {
             e.preventDefault();
             this.redo();
         }
-        // Supprimer le dernier symbole: Backspace
-        else if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey) {
+        // Supprimer le dernier symbole: Backspace (seulement si pas dans textarea)
+        else if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !isTextareaFocused) {
             e.preventDefault();
             this.deleteLastSymbol();
         }
@@ -1118,8 +1122,17 @@ export class AlphabetViewerWidget extends ReactWidget {
                 <textarea
                     value={decodedText}
                     onChange={e => {
+                        // Synchroniser le textarea avec le tableau des caractères
                         this.enteredChars = e.target.value.split('');
+                        this.saveState();
                         this.update();
+                    }}
+                    onKeyDown={(e) => {
+                        // Sauvegarder l'état pour undo/redo lors de modifications
+                        if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+                            // Délayer la sauvegarde pour permettre au onChange de se déclencher d'abord
+                            setTimeout(() => this.saveState(), 0);
+                        }
                     }}
                     placeholder='Le texte décodé apparaîtra ici...'
                     style={{

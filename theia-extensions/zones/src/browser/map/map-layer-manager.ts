@@ -3,6 +3,8 @@ import VectorSource from 'ol/source/Vector';
 import { Feature } from 'ol';
 import { Point } from 'ol/geom';
 import Map from 'ol/Map';
+import { Circle } from 'ol/geom';
+import { Style, Fill, Stroke } from 'ol/style';
 import { createClusterSource } from './map-clustering';
 import { createClusterStyle } from './map-geocache-style';
 import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties, GeocacheStyleOptions } from './map-geocache-style-sprite';
@@ -60,6 +62,8 @@ export class MapLayerManager {
     private detectedCoordinateLayer: any;
     private nearbyGeocacheVectorSource: VectorSource<Feature<Point>>;
     private nearbyGeocacheLayer: any;
+    private exclusionZoneVectorSource: VectorSource<Feature<Point>>;
+    private exclusionZoneLayer: any;
     private currentTileProviderId: string;
 
     constructor(map: Map) {
@@ -123,6 +127,18 @@ export class MapLayerManager {
             zIndex: 5 // En dessous des géocaches normales
         });
         this.map.addLayer(this.nearbyGeocacheLayer);
+
+        // Couche pour les zones d'exclusion (cercles de 161m)
+        this.exclusionZoneVectorSource = new VectorSource<Feature<Point>>();
+        this.exclusionZoneLayer = new VectorLayer({
+            source: this.exclusionZoneVectorSource,
+            style: this.createExclusionZoneStyle.bind(this),
+            properties: {
+                name: 'exclusion-zones'
+            },
+            zIndex: 1 // Tout en bas pour ne pas gêner
+        });
+        this.map.addLayer(this.exclusionZoneLayer);
     }
 
     /**
@@ -514,6 +530,134 @@ export class MapLayerManager {
     }
 
     /**
+     * Crée le style pour une zone d'exclusion (cercle de 161m)
+     */
+    private createExclusionZoneStyle(feature: Feature): Style | Style[] {
+        const properties = feature.getProperties() as {
+            zoneType: 'traditional' | 'corrected' | 'multi' | 'letterbox';
+        };
+
+        // Rayon de 161m en coordonnées de la carte (Mercator)
+        // À l'équateur, 1m ≈ 1/111111 degrés de latitude
+        // En projection Mercator, on utilise une approximation
+        const radiusMeters = 161;
+        const radiusDegrees = radiusMeters / 111111; // Approximation simple
+
+        let fillColor: string;
+        let strokeColor: string;
+
+        // Couleurs selon le type de zone d'exclusion
+        switch (properties.zoneType) {
+            case 'traditional':
+                fillColor = 'rgba(0, 255, 0, 0.1)'; // Vert transparent
+                strokeColor = 'rgba(0, 255, 0, 0.5)';
+                break;
+            case 'corrected':
+                fillColor = 'rgba(255, 255, 0, 0.1)'; // Jaune transparent
+                strokeColor = 'rgba(255, 255, 0, 0.5)';
+                break;
+            case 'multi':
+                fillColor = 'rgba(255, 165, 0, 0.1)'; // Orange transparent
+                strokeColor = 'rgba(255, 165, 0, 0.5)';
+                break;
+            case 'letterbox':
+                fillColor = 'rgba(128, 0, 128, 0.1)'; // Violet transparent
+                strokeColor = 'rgba(128, 0, 128, 0.5)';
+                break;
+            default:
+                fillColor = 'rgba(255, 0, 0, 0.1)'; // Rouge transparent par défaut
+                strokeColor = 'rgba(255, 0, 0, 0.5)';
+        }
+
+        return new Style({
+            fill: new Fill({
+                color: fillColor
+            }),
+            stroke: new Stroke({
+                color: strokeColor,
+                width: 2,
+                lineDash: [5, 5] // Ligne en pointillés
+            })
+        });
+    }
+
+    /**
+     * Affiche les zones d'exclusion autour des géocaches selon les règles
+     */
+    showExclusionZones(geocaches: MapGeocache[]): void {
+        console.log('[MapLayerManager] showExclusionZones pour', geocaches.length, 'géocaches');
+
+        // Effacer les zones existantes
+        this.clearExclusionZones();
+
+        const features: Feature[] = [];
+
+        geocaches.forEach(geocache => {
+            let shouldShowZone = false;
+            let zoneType: 'traditional' | 'corrected' | 'multi' | 'letterbox';
+
+            // Logique selon les règles spécifiées
+            const cacheType = geocache.cache_type?.toLowerCase();
+
+            if (cacheType === 'traditional') {
+                // Toujours afficher pour les Traditional
+                shouldShowZone = true;
+                zoneType = 'traditional';
+            } else if ((cacheType === 'mystery' || cacheType === 'wherigo') && geocache.is_corrected) {
+                // Afficher seulement si corrigé pour Mystery et Wherigo
+                shouldShowZone = true;
+                zoneType = 'corrected';
+            } else if (cacheType === 'multi') {
+                // Toujours afficher pour les Multi (couleur différente)
+                shouldShowZone = true;
+                zoneType = 'multi';
+            } else if (cacheType === 'letterbox') {
+                // Toujours afficher pour les Letterbox (couleur différente)
+                shouldShowZone = true;
+                zoneType = 'letterbox';
+            }
+
+            if (shouldShowZone && geocache.latitude && geocache.longitude) {
+                const centerCoordinate = lonLatToMapCoordinate(geocache.longitude, geocache.latitude);
+
+                // Créer un cercle de 161m
+                // En projection Web Mercator (EPSG:3857), les unités sont des mètres à l'équateur
+                // Pour plus de précision, on ajuste selon la latitude :
+                // Plus on s'éloigne de l'équateur, plus les distances horizontales sont compressées
+                const radiusMeters = 161;
+                const latitude = geocache.latitude;
+
+                // Facteur de correction pour la projection Mercator
+                // cos(latitude) compense la distortion de la projection
+                const mercatorCorrection = Math.cos((latitude * Math.PI) / 180);
+                const radiusInMapUnits = radiusMeters / mercatorCorrection;
+
+                const circleGeometry = new Circle(centerCoordinate, radiusInMapUnits);
+
+                const feature = new Feature(circleGeometry);
+                feature.setProperties({
+                    zoneType: zoneType,
+                    geocacheId: geocache.id,
+                    geocacheCode: geocache.gc_code
+                });
+
+                features.push(feature);
+            }
+        });
+
+        console.log('[MapLayerManager] Création de', features.length, 'zones d\'exclusion');
+        this.exclusionZoneVectorSource.addFeatures(features);
+    }
+
+    /**
+     * Masque toutes les zones d'exclusion
+     */
+    clearExclusionZones(): void {
+        console.log('[MapLayerManager] clearExclusionZones');
+        this.exclusionZoneVectorSource.clear();
+    }
+
+    /**
      * Nettoie toutes les couches
      */
     dispose(): void {
@@ -521,6 +665,7 @@ export class MapLayerManager {
         this.clearWaypoints();
         this.clearDetectedCoordinate();
         this.clearNearbyGeocaches();
+        this.clearExclusionZones();
     }
 }
 

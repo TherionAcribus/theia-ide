@@ -11,6 +11,7 @@ Le système de carte GeoApp permet d'afficher et d'interagir avec les géocaches
 - ✅ Carte interactive OpenLayers dans le Bottom Layer
 - ✅ Affichage des géocaches avec icônes personnalisées par type
 - ✅ **Affichage des géocaches voisines** (dans un rayon de 5km autour d'une géocache sélectionnée)
+- ✅ **Affichage des zones d'exclusion** (cercles de 161m autour des géocaches selon des règles spécifiques)
 - ✅ Clustering automatique pour les performances (>500 géocaches)
 - ✅ Multiple fonds de carte (OSM, Topo, Satellite, etc.)
 - ✅ Contrôles de zoom, plein écran, échelle
@@ -87,6 +88,38 @@ Cette fonctionnalité vous aide à :
 - Évaluer la densité de géocaches dans une zone
 - Identifier les coordonnées suspectes (trop isolées ou trop proches d'autres caches)
 - Planifier vos sorties de géocaching
+
+### Afficher les zones d'exclusion (161m)
+
+Pour analyser les zones impossibles pour les coordonnées corrigées :
+
+1. **Activez l'affichage** en cochant la case "Zones d'exclusion (161m)" dans la barre d'outils
+2. Des cercles de 161m (précision GPS) s'affichent automatiquement autour des géocaches éligibles
+3. **Chaque couleur représente un type différent** de zone d'exclusion
+
+#### Règles d'affichage des cercles :
+
+- **🟢 Cercle vert** : Géocaches Traditional (toujours affichées - coordonnées fiables)
+- **🟡 Cercle jaune** : Géocaches Mystery/Wherigo avec coordonnées corrigées (coordonnées fiables)
+- **🟠 Cercle orange** : Géocaches Multi-Cache (coordonnées potentiellement fiables)
+- **🟣 Cercle violet** : Géocaches Letterbox (coordonnées potentiellement fiables)
+
+#### Logique derrière ces règles :
+
+- **Traditional** : Les coordonnées sont toujours bonnes, donc zone d'exclusion garantie
+- **Mystery/Wherigo** : Les coordonnées ne sont bonnes que si elles ont été corrigées
+- **Multi/Letterbox** : Les coordonnées peuvent être bonnes ou nécessiter correction
+
+#### Utilisation pratique :
+
+Ces cercles indiquent les **zones où il est IMPOSSIBLE** de placer une nouvelle géocache ou des coordonnées corrigées, car :
+- Aucune géocache ne peut être à moins de 161m d'une autre
+- Les coordonnées GPS ont une précision d'environ 161m dans les meilleures conditions
+
+Cela vous aide à :
+- **Valider des coordonnées corrigées** (elles ne doivent pas tomber dans ces cercles)
+- **Comprendre pourquoi** certaines coordonnées semblent impossibles
+- **Planifier l'emplacement** de nouvelles géocaches
 
 ### Clustering
 

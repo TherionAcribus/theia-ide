@@ -36,7 +36,9 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
     const [popupData, setPopupData] = React.useState<GeocacheFeatureProperties | null>(null);
     const [contextMenu, setContextMenu] = React.useState<{ items: ContextMenuItem[]; x: number; y: number } | null>(null);
     const [showNearbyGeocaches, setShowNearbyGeocaches] = React.useState(false);
+    const [showExclusionZones, setShowExclusionZones] = React.useState(false);
     const [selectedGeocacheId, setSelectedGeocacheId] = React.useState<number | null>(null);
+    const [nearbyGeocaches, setNearbyGeocaches] = React.useState<MapGeocache[]>([]);
 
     // Initialisation de la carte
     React.useEffect(() => {
@@ -449,6 +451,8 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             setSelectedGeocacheId(null);
             // Désactiver l'affichage des géocaches voisines
             setShowNearbyGeocaches(false);
+            // Remettre à zéro les géocaches voisines
+            setNearbyGeocaches([]);
         });
 
         return () => disposable.dispose();
@@ -596,6 +600,8 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
             if (layerManagerRef.current) {
                 layerManagerRef.current.clearNearbyGeocaches();
             }
+            // Remettre à zéro l'état des géocaches voisines
+            setNearbyGeocaches([]);
             return;
         }
 
@@ -616,7 +622,7 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                 console.log('[MapView] Géocaches voisines reçues:', data.nearby_geocaches.length);
 
                 // Convertir les données pour MapGeocache
-                const nearbyGeocaches: MapGeocache[] = data.nearby_geocaches.map((gc: any) => ({
+                const nearbyGeocachesData: MapGeocache[] = data.nearby_geocaches.map((gc: any) => ({
                     id: gc.id,
                     gc_code: gc.gc_code,
                     name: gc.name,
@@ -629,9 +635,12 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                     is_corrected: gc.is_corrected
                 }));
 
+                // Mettre à jour l'état des géocaches voisines
+                setNearbyGeocaches(nearbyGeocachesData);
+
                 // Ajouter les géocaches voisines à la carte
                 if (layerManagerRef.current) {
-                    layerManagerRef.current.addNearbyGeocaches(nearbyGeocaches);
+                    layerManagerRef.current.addNearbyGeocaches(nearbyGeocachesData);
                 }
 
             } catch (error) {
@@ -642,6 +651,23 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
         fetchNearbyGeocaches();
 
     }, [selectedGeocacheId, showNearbyGeocaches, isInitialized]);
+
+    // Gestion de l'affichage des zones d'exclusion
+    React.useEffect(() => {
+        if (!layerManagerRef.current) {
+            return;
+        }
+
+        if (showExclusionZones && (geocaches.length > 0 || nearbyGeocaches.length > 0)) {
+            // Combiner les géocaches principales et voisines pour les zones d'exclusion
+            const allGeocaches = [...geocaches, ...nearbyGeocaches];
+            console.log('[MapView] Affichage des zones d\'exclusion pour', allGeocaches.length, 'géocaches (', geocaches.length, 'principales +', nearbyGeocaches.length, 'voisines)');
+            layerManagerRef.current.showExclusionZones(allGeocaches);
+        } else {
+            console.log('[MapView] Masquage des zones d\'exclusion');
+            layerManagerRef.current.clearExclusionZones();
+        }
+    }, [showExclusionZones, geocaches, nearbyGeocaches, isInitialized]);
 
     // Écoute des événements du MapService - Changement de fond de carte
     React.useEffect(() => {
@@ -727,6 +753,26 @@ export const MapView: React.FC<MapViewProps> = ({ mapService, geocaches, onMapRe
                         }}
                     />
                     Géocaches voisines (5km)
+                </label>
+
+                {/* Bouton pour afficher/masquer les zones d'exclusion */}
+                <label style={{
+                    fontSize: '12px',
+                    color: 'var(--theia-foreground)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                }}>
+                    <input
+                        type="checkbox"
+                        checked={showExclusionZones}
+                        onChange={(e) => setShowExclusionZones(e.target.checked)}
+                        style={{
+                            margin: 0,
+                            cursor: 'pointer'
+                        }}
+                    />
+                    Zones d'exclusion (161m)
                 </label>
             </div>
 

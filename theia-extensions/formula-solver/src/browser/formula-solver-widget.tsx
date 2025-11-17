@@ -12,6 +12,7 @@ import { FormulaSolverService } from './formula-solver-service';
 import { FormulaSolverAIService } from './formula-solver-ai-service';
 import { Formula, Question, LetterValue, FormulaSolverState } from '../common/types';
 import { parseValueList } from './utils/value-parser';
+import { ensureFormulaFragments } from './utils/formula-fragments';
 import {
     DetectedFormulasComponent,
     QuestionFieldsComponent,
@@ -42,7 +43,7 @@ export class FormulaSolverWidget extends ReactWidget {
         currentStep: 'detect',
         formulas: [],
         questions: [],
-        values: new Map(),
+        values: new Map<string, LetterValue>(),
         loading: false
     };
 
@@ -155,6 +156,17 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Génère les fragments pour chaque formule
+     */
+    protected annotateFormulas(formulas: Formula[]): Formula[] {
+        return formulas.map(formula => {
+            const cloned: Formula = { ...formula };
+            ensureFormulaFragments(cloned);
+            return cloned;
+        });
+    }
+
+    /**
      * Affiche le résultat sur la carte via événement window
      */
     protected showOnMap(): void {
@@ -169,7 +181,8 @@ export class FormulaSolverWidget extends ReactWidget {
                 ? `${this.state.selectedFormula.north} ${this.state.selectedFormula.east}`
                 : 'Formule inconnue';
             
-            const valuesText = Array.from(this.state.values.entries())
+            const valueEntries: Array<[string, LetterValue]> = Array.from(this.state.values.entries());
+            const valuesText = valueEntries
                 .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue})`)
                 .join(', ');
 
@@ -324,7 +337,8 @@ export class FormulaSolverWidget extends ReactWidget {
                 .join('\n');
             valuesText = entries || 'Aucune valeur';
         } else {
-            valuesText = Array.from(this.state.values.entries())
+            const valueEntries: Array<[string, LetterValue]> = Array.from(this.state.values.entries());
+            valuesText = valueEntries
                 .map(([letter, value]) => `${letter}=${value.value} (${value.rawValue}, type: ${value.type})`)
                 .join('\n');
         }
@@ -387,11 +401,12 @@ export class FormulaSolverWidget extends ReactWidget {
                 this.messageService.info('Aucune formule détectée dans le texte');
                 this.updateState({ loading: false, formulas: [] });
             } else {
+                const enrichedFormulas = this.annotateFormulas(formulas);
                 this.messageService.info(`${formulas.length} formule(s) détectée(s)`);
                 this.updateState({
                     loading: false,
-                    formulas,
-                    selectedFormula: formulas[0],
+                    formulas: enrichedFormulas,
+                    selectedFormula: enrichedFormulas[0],
                     currentStep: 'questions'
                 });
             }
@@ -434,9 +449,11 @@ export class FormulaSolverWidget extends ReactWidget {
 
             // Traiter les résultats
             if (result.formulas && result.formulas.length > 0) {
+                const enrichedFormulas = this.annotateFormulas(result.formulas);
+                result.formulas = enrichedFormulas;
                 this.updateState({
-                    formulas: result.formulas,
-                    selectedFormula: result.formulas[0],
+                    formulas: enrichedFormulas,
+                    selectedFormula: enrichedFormulas[0],
                     currentStep: 'questions'
                 });
             }
@@ -486,7 +503,7 @@ export class FormulaSolverWidget extends ReactWidget {
 
             if (result.values && result.values.size > 0) {
                 const values = new Map<string, LetterValue>();
-                result.values.forEach((value, letter) => {
+                result.values.forEach((value: number, letter: string) => {
                     values.set(letter, {
                         letter,
                         rawValue: value.toString(),
@@ -529,7 +546,7 @@ export class FormulaSolverWidget extends ReactWidget {
      */
     protected handleEditFormula(formula: Formula, updatedNorth: string, updatedEast: string): void {
         // Mise à jour de la formule dans la liste
-        const updatedFormulas = this.state.formulas.map(f => {
+        const updatedFormulasRaw = this.state.formulas.map((f: Formula) => {
             if (f.id === formula.id) {
                 return {
                     ...f,
@@ -541,6 +558,8 @@ export class FormulaSolverWidget extends ReactWidget {
             }
             return f;
         });
+
+        const updatedFormulas = this.annotateFormulas(updatedFormulasRaw);
 
         // Si c'est la formule sélectionnée, la mettre à jour aussi
         const updatedSelectedFormula = this.state.selectedFormula?.id === formula.id
@@ -641,9 +660,9 @@ export class FormulaSolverWidget extends ReactWidget {
         try {
             // Construire l'objet values
             const values: Record<string, number> = {};
-            this.state.values.forEach((letterValue, letter) => {
-                values[letter] = letterValue.value;
-            });
+        this.state.values.forEach((letterValue: LetterValue, letter: string) => {
+            values[letter] = letterValue.value;
+        });
 
             // Appeler l'API
             const result = await this.formulaSolverService.calculateCoordinates({
@@ -972,7 +991,7 @@ export class FormulaSolverWidget extends ReactWidget {
      */
     protected tryAutoCalculateOrBruteForce(): void {
         // Vérifier si tous les champs sont remplis
-        const allFilled = this.state.questions.every(q => {
+        const allFilled = this.state.questions.every((q: Question) => {
             const val = this.state.values.get(q.letter);
             return val && val.rawValue.trim() !== '';
         });
@@ -982,7 +1001,7 @@ export class FormulaSolverWidget extends ReactWidget {
         }
         
         // Vérifier si au moins un champ contient une liste
-        const hasLists = Array.from(this.state.values.values()).some(v => v.isList);
+        const hasLists = Array.from(this.state.values.values()).some((v: LetterValue) => !!v.isList);
         
         if (hasLists) {
             // Brute force automatique

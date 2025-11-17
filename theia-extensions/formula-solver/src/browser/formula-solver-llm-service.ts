@@ -100,9 +100,11 @@ export class FormulaSolverLLMService {
 Texte à analyser:
 ${text}
 
-INSTRUCTIONS:
+INSTRUCTIONS IMPORTANTES:
 - Cherche les patterns de coordonnées GPS comme N49°12.345 E006°12.345
-- Identifie les formules avec variables (A, B, C, etc.)
+- Identifie les formules avec variables (A, B, C, etc.) dans les expressions mathématiques
+- Les lettres N, S, E, W isolées au début des coordonnées sont des POINTS CARDINAUX, pas des variables
+- Seules les lettres utilisées DANS les parenthèses () sont des variables à résoudre
 - Retourne UNIQUEMENT un objet JSON valide avec cette structure:
 {
   "formulas": [
@@ -148,12 +150,16 @@ Si aucune formule n'est trouvée, retourne {"formulas": []}`;
     async extractQuestionsWithAI(text: string, variables: string[]): Promise<{ [key: string]: string }> {
         const prompt = `Analyse ce texte de géocache et trouve les questions correspondant à ces variables: ${variables.join(', ')}
 
+IMPORTANT: Ces variables (${variables.join(', ')}) sont les LETTRES utilisées dans les formules mathématiques.
+NE CONFONDS PAS avec les points cardinaux (N, S, E, W) qui sont au début des coordonnées !
+
 Texte complet:
 ${text}
 
 INSTRUCTIONS:
 - Pour chaque variable (${variables.join(', ')}), trouve la question qui permet de déterminer sa valeur
 - Les questions sont souvent au format "A. [question]" ou "Quel est [question] A ?"
+- IGNORE les points cardinaux N, S, E, W qui ne sont pas des variables à résoudre
 - Retourne UNIQUEMENT un objet JSON avec les questions trouvées:
 {
   "A": "Nombre de fenêtres de l'église",

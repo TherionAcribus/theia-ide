@@ -74,3 +74,70 @@
 .codicon-error {
     color: var(--theia-errorText, #f44336);
 }
+
+/* Fragments */
+.coordinate-fragments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.coordinate-fragment-chip {
+    min-width: 80px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--theia-panel-border);
+    background-color: var(--theia-editorWidget-background, rgba(255,255,255,0.02));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11px;
+}
+
+.coordinate-fragment-label {
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--theia-descriptionForeground);
+}
+
+.coordinate-fragment-value {
+    font-family: var(--theia-code-font-family, monospace);
+    font-size: 12px;
+    color: var(--theia-foreground);
+}
+
+.coordinate-fragment-warning {
+    font-size: 10px;
+    margin-top: 2px;
+}
+
+.fragment-chip-fixed {
+    background-color: rgba(76, 175, 80, 0.1);
+    border-color: rgba(76, 175, 80, 0.4);
+}
+
+.fragment-chip-ok {
+    background-color: rgba(76, 175, 80, 0.05);
+    border-color: rgba(76, 175, 80, 0.2);
+}
+
+.fragment-chip-pending {
+    background-color: rgba(255, 255, 255, 0.02);
+    border-color: var(--theia-panel-border);
+}
+
+.fragment-chip-warning {
+    background-color: rgba(255, 152, 0, 0.1);
+    border-color: rgba(255, 152, 0, 0.4);
+}
+
+.fragment-chip-empty {
+    opacity: 0.6;
+    border-style: dashed;
+}
+
+.fragment-chip-error {
+    background-color: rgba(244, 67, 54, 0.08);
+    border-color: rgba(244, 67, 54, 0.4);
+}

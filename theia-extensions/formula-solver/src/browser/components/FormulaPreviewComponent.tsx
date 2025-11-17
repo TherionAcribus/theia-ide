@@ -4,7 +4,8 @@
  */
 
 import * as React from '@theia/core/shared/react';
-import { Formula, LetterValue } from '../../common/types';
+import { CoordinateFragments, Formula, FormulaFragment, FragmentStatus, LetterValue } from '../../common/types';
+import { ensureFormulaFragments } from '../utils/formula-fragments';
 
 interface FormulaPreviewProps {
     formula: Formula;
@@ -18,18 +19,49 @@ interface ValidationResult {
     substituted: string;
 }
 
+const FRAGMENT_STATUS_CLASS: Record<FragmentStatus, string> = {
+    fixed: 'fragment-chip-fixed',
+    pending: 'fragment-chip-pending',
+    ok: 'fragment-chip-ok',
+    'length-mismatch': 'fragment-chip-warning',
+    empty: 'fragment-chip-empty',
+    invalid: 'fragment-chip-error'
+};
+
+const FRAGMENT_STATUS_LABEL: Record<FragmentStatus, string> = {
+    fixed: 'Fixe',
+    pending: 'En attente',
+    ok: 'OK',
+    'length-mismatch': 'Longueur incorrecte',
+    empty: 'Vide',
+    invalid: 'Invalide'
+};
+
 export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula, values, onPartialCalculate }) => {
-    
-    /**
-     * Extrait les lettres d'une partie de formule (sans les cardinales)
-     */
-    const extractLetters = (text: string): string[] => {
-        const cleaned = text.replace(/^[NSEW]\s*/i, '');
-        const letters = new Set<string>();
-        const matches = cleaned.matchAll(/([A-Z])/g);
-        for (const match of matches) {
-            letters.add(match[1]);
+    const formulaWithFragments = ensureFormulaFragments(formula);
+    const fragments = formulaWithFragments.fragments;
+
+    const collectLettersFromFragments = (axisFragments?: CoordinateFragments, fallback?: string): string[] => {
+        if (!axisFragments) {
+            return extractLettersFallback(fallback || '');
         }
+
+        const letters = new Set<string>();
+        const collect = (fragment: FormulaFragment) =>
+            fragment.variables.forEach((letter: string) => letters.add(letter));
+
+        collect(axisFragments.degrees);
+        collect(axisFragments.minutes);
+        axisFragments.decimals.forEach(collect);
+
+        return Array.from(letters).sort();
+    };
+
+    const extractLettersFallback = (text: string): string[] => {
+        const cleaned = text.replace(/^[NSEWO]\s*/i, '');
+        const letters = new Set<string>();
+        const matches = cleaned.match(/[A-Z]/g) || [];
+        matches.forEach(letter => letters.add(letter));
         return Array.from(letters).sort();
     };
 
@@ -122,8 +154,11 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         };
     };
 
-    const northLetters = extractLetters(formula.north);
-    const eastLetters = extractLetters(formula.east);
+    const northFragments = fragments?.north;
+    const eastFragments = fragments?.east;
+
+    const northLetters = collectLettersFromFragments(northFragments, formula.north);
+    const eastLetters = collectLettersFromFragments(eastFragments, formula.east);
 
     const northValidation = validatePart(formula.north, northLetters);
     const eastValidation = validatePart(formula.east, eastLetters);
@@ -161,6 +196,54 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
             case 'incomplete': return 'codicon codicon-circle-outline';
             case 'invalid': return 'codicon codicon-error';
         }
+    };
+
+    const renderFragmentChip = (fragment: FormulaFragment) => {
+        const key = `${fragment.kind}-${fragment.index ?? 'single'}`;
+        const statusClass = FRAGMENT_STATUS_CLASS[fragment.status] || FRAGMENT_STATUS_CLASS.pending;
+        const tooltipParts: string[] = [];
+
+        tooltipParts.push(`${fragment.label}`);
+        tooltipParts.push(`Statut: ${FRAGMENT_STATUS_LABEL[fragment.status] ?? fragment.status}`);
+
+        if (fragment.expectedLength) {
+            tooltipParts.push(`Longueur attendue: ${fragment.expectedLength}`);
+        }
+        if (fragment.actualLength !== undefined) {
+            tooltipParts.push(`Longueur actuelle: ${fragment.actualLength}`);
+        }
+        if (fragment.notes) {
+            tooltipParts.push(fragment.notes);
+        }
+
+        return (
+            <div
+                key={key}
+                className={`coordinate-fragment-chip ${statusClass}`}
+                title={tooltipParts.filter(Boolean).join('\n')}
+            >
+                <span className="coordinate-fragment-label">{fragment.label}</span>
+                <span className="coordinate-fragment-value">{fragment.raw || '—'}</span>
+                {fragment.status === 'length-mismatch' && (
+                    <span className="coordinate-fragment-warning">⚠️</span>
+                )}
+            </div>
+        );
+    };
+
+    const renderFragmentsForAxis = (axisFragments?: CoordinateFragments) => {
+        if (!axisFragments) {
+            return null;
+        }
+
+        return (
+            <div className="coordinate-fragments">
+                {renderFragmentChip(axisFragments.cardinal)}
+                {renderFragmentChip(axisFragments.degrees)}
+                {renderFragmentChip(axisFragments.minutes)}
+                {axisFragments.decimals.map(renderFragmentChip)}
+            </div>
+        );
     };
 
     return (
@@ -206,6 +289,7 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
                 }}>
                     {northValidation.message}
                 </div>
+                {renderFragmentsForAxis(northFragments)}
             </div>
 
             {/* Longitude / Est */}
@@ -245,6 +329,7 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
                 }}>
                     {eastValidation.message}
                 </div>
+                {renderFragmentsForAxis(eastFragments)}
             </div>
 
             {/* Résumé global */}

@@ -1,10 +1,36 @@
 /**
- * Types TypeScript pour le Formula Solver
+ * Types partagés pour l'extension Formula Solver.
  */
 
-/**
- * Formule de coordonnées GPS détectée
- */
+export type FragmentKind = 'cardinal' | 'degrees' | 'minutes' | 'decimal';
+export type FragmentStatus = 'fixed' | 'pending' | 'ok' | 'length-mismatch' | 'empty' | 'invalid';
+
+export interface FormulaFragment {
+    kind: FragmentKind;
+    label: string;
+    raw: string;
+    cleaned: string;
+    variables: string[];
+    expectedLength?: number;
+    actualLength?: number;
+    status: FragmentStatus;
+    notes?: string;
+    index?: number;
+}
+
+export interface CoordinateFragments {
+    original: string;
+    cardinal: FormulaFragment;
+    degrees: FormulaFragment;
+    minutes: FormulaFragment;
+    decimals: FormulaFragment[];
+}
+
+export interface FormulaFragments {
+    north: CoordinateFragments;
+    east: CoordinateFragments;
+}
+
 export interface Formula {
     id: string;
     north: string;
@@ -12,53 +38,34 @@ export interface Formula {
     source: string;
     text_output: string;
     confidence: number;
+    fragments?: FormulaFragments;
 }
 
-/**
- * Question associée à une variable
- */
 export interface Question {
     letter: string;
     question: string;
     answer?: string | number;
 }
 
-/**
- * Valeur d'une lettre/variable avec différents types de calculs
- */
+export type ValueType = 'value' | 'checksum' | 'reduced' | 'length' | 'custom';
+
 export interface LetterValue {
     letter: string;
-    rawValue: string;          // Valeur brute saisie (peut être "2,3,4" ou "1-5")
-    value: number;              // Valeur numérique calculée (première valeur si liste)
-    type: ValueType;            // Type de calcul appliqué
-    values?: number[];          // Liste de toutes les valeurs (pour brute force inline)
-    isList?: boolean;           // True si le champ contient plusieurs valeurs
+    rawValue: string;
+    value: number;
+    type: ValueType;
+    values?: number[];
+    isList?: boolean;
 }
 
-/**
- * Types de valeurs calculées
- */
-export type ValueType = 
-    | 'value'           // Valeur directe
-    | 'checksum'        // Somme des chiffres
-    | 'reduced'         // Somme réduite (checksum récursif jusqu'à 1 chiffre)
-    | 'length'          // Longueur du texte
-    | 'custom';         // Calcul personnalisé
-
-/**
- * Coordonnées calculées dans différents formats
- */
 export interface CalculatedCoordinates {
     latitude: number;
     longitude: number;
-    ddm: string;              // Degrees Decimal Minutes
-    dms: string;              // Degrees Minutes Seconds
-    decimal: string;          // Lat, Lon en décimal
+    ddm: string;
+    dms: string;
+    decimal: string;
 }
 
-/**
- * Résultat complet du calcul
- */
 export interface CalculationResult {
     status: 'success' | 'error';
     coordinates?: CalculatedCoordinates;
@@ -75,57 +82,26 @@ export interface CalculationResult {
     error?: string;
 }
 
-/**
- * État du Formula Solver
- */
 export interface FormulaSolverState {
-    // Étape actuelle
     currentStep: 'detect' | 'questions' | 'values' | 'calculate';
-    
-    // Données
     geocacheId?: number;
     gcCode?: string;
     text?: string;
-    
-    // Coordonnées d'origine
     originLat?: number;
     originLon?: number;
-    
-    // Formules détectées
     formulas: Formula[];
     selectedFormula?: Formula;
-    
-    // Questions extraites
     questions: Question[];
-    
-    // Valeurs des variables
     values: Map<string, LetterValue>;
-    
-    // Résultat
     result?: CalculationResult;
-    
-    // État UI
     loading: boolean;
     error?: string;
 }
 
-/**
- * Opération sur une valeur (checksum, length, etc.)
- */
 export interface ValueOperation {
     type: ValueType;
     label: string;
     description: string;
     icon: string;
     calculate: (input: string) => number;
-}
-
-/**
- * Configuration du vérificateur externe
- */
-export interface ExternalChecker {
-    name: string;
-    url: string;
-    method: 'GET' | 'POST';
-    enabled: boolean;
 }

@@ -6,6 +6,7 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { MessageService } from '@theia/core';
 import { FormulaSolverLLMService } from './formula-solver-llm-service';
 import { Formula } from '../common/types';
+import { ensureFormulaFragments } from './utils/formula-fragments';
 
 export const FormulaSolverAIService = Symbol('FormulaSolverAIService');
 
@@ -163,15 +164,44 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
     /**
      * Extrait les variables (lettres) d'une formule
      */
-    private extractVariablesFromFormula(formula: any): string[] {
-        const variables = new Set<string>();
-        const formulaText = `${formula.north} ${formula.east}`;
+    private extractVariablesFromFormula(formula: Formula): string[] {
+        ensureFormulaFragments(formula);
 
-        // Chercher tous les caractères alphabétiques majuscules
-        const matches = formulaText.match(/[A-Z]/g);
-        if (matches) {
-            matches.forEach(letter => variables.add(letter));
+        const variables = new Set<string>();
+        const fragments = formula.fragments;
+
+        if (fragments) {
+            const collect = (part: { variables: string[] }) => {
+                part.variables.forEach(letter => variables.add(letter));
+            };
+
+            [fragments.north, fragments.east].forEach(axis => {
+                collect(axis.degrees);
+                collect(axis.minutes);
+                axis.decimals.forEach(collect);
+            });
+
+            return Array.from(variables).sort();
         }
+
+        // Fallback ultra simple si le découpage échoue
+        const formulaText = `${formula.north} ${formula.east}`;
+        const allLetters = formulaText.match(/[A-Z]/g) || [];
+        const cardinalPoints = new Set(['N', 'S', 'E', 'W', 'O']);
+
+        allLetters.forEach(letter => {
+            const upper = letter.toUpperCase();
+            if (cardinalPoints.has(upper)) {
+                const letterIndex = formulaText.indexOf(letter);
+                const beforeLetter = formulaText.substring(0, letterIndex);
+                const afterLetter = formulaText.substring(letterIndex + 1);
+
+                if ((beforeLetter.match(/\s*$/) || beforeLetter.length === 0) && afterLetter.match(/^\d/)) {
+                    return;
+                }
+            }
+            variables.add(letter.toUpperCase());
+        });
 
         return Array.from(variables).sort();
     }

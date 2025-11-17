@@ -110,19 +110,15 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
 
         // Écouter aussi les messages window.postMessage
         const messageHandler = async (messageEvent: MessageEvent) => {
-            console.log('[ZonesFrontendContribution] !!!!! MESSAGE REÇU (tous types) !!!!!', messageEvent.data);
+            // Log seulement pour les messages pertinents (éviter le spam)
             if (messageEvent.data && messageEvent.data.type === 'open-geocache-map' && messageEvent.data.source === 'alphabets-extension') {
-                console.log('[ZonesFrontendContribution] !!!!! MESSAGE POSTMESSAGE OPEN-GEOCACHE-MAP REÇU !!!!!');
-                console.log('[ZonesFrontendContribution] Message postMessage reçu:', messageEvent.data);
+                console.log('[ZonesFrontendContribution] Ouverture carte alphabets pour geocache:', messageEvent.data.geocache?.gc_code);
                 const geocache = messageEvent.data.geocache;
                 if (geocache && geocache.id) {
-                    console.log('[ZonesFrontendContribution] Traitement du geocache:', geocache.gc_code);
                     try {
                         // Utiliser le widgetManager pour récupérer ou créer le widget
                         const gWidget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID) as ZoneGeocachesWidget;
-                        console.log('[ZonesFrontendContribution] Widget ZoneGeocachesWidget récupéré:', gWidget);
                         await gWidget.openGeocacheMap(geocache);
-                        console.log('[ZonesFrontendContribution] openGeocacheMap terminé avec succès');
                     } catch (error) {
                         console.error('[ZonesFrontendContribution] Erreur lors de l\'ouverture de la carte:', error);
                     }

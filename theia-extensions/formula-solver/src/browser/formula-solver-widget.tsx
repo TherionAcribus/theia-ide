@@ -4,10 +4,12 @@
  */
 
 import * as React from '@theia/core/shared/react';
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+import { injectable, inject, postConstruct, optional } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { FormulaSolverService } from './formula-solver-service';
+import { FormulaSolverAIService } from './formula-solver-ai-service';
 import { Formula, Question, LetterValue, FormulaSolverState } from '../common/types';
 import { parseValueList } from './utils/value-parser';
 import {
@@ -29,6 +31,12 @@ export class FormulaSolverWidget extends ReactWidget {
     @inject(MessageService)
     protected readonly messageService!: MessageService;
 
+    @inject(PreferenceService)
+    protected readonly preferenceService!: PreferenceService;
+
+    @inject(FormulaSolverAIService) @optional()
+    protected readonly formulaSolverAIService?: FormulaSolverAIService;
+
     // État du widget
     protected state: FormulaSolverState = {
         currentStep: 'detect',
@@ -37,6 +45,9 @@ export class FormulaSolverWidget extends ReactWidget {
         values: new Map(),
         loading: false
     };
+
+    // Méthode de résolution : 'algorithm' ou 'ai'
+    protected resolutionMethod: 'algorithm' | 'ai' = 'algorithm';
 
     // État brute force
     protected bruteForceMode: boolean = false;
@@ -54,7 +65,8 @@ export class FormulaSolverWidget extends ReactWidget {
         this.title.caption = FormulaSolverWidget.LABEL;
         this.title.closable = true;
         this.title.iconClass = 'codicon codicon-symbol-variable';
-        
+
+        // Les préférences seront chargées de manière asynchrone dans onAfterAttach
         this.update();
     }
 
@@ -67,6 +79,10 @@ export class FormulaSolverWidget extends ReactWidget {
                 this.handleExternalBruteForceRemoval as EventListener
             );
         }
+
+        // Charger les préférences
+        this.loadPreferences();
+        this.update();
     }
 
     protected onBeforeDetach(msg: unknown): void {
@@ -78,6 +94,15 @@ export class FormulaSolverWidget extends ReactWidget {
         }
 
         super.onBeforeDetach(msg as any);
+    }
+
+    /**
+     * Charge les préférences utilisateur
+     */
+    protected loadPreferences(): void {
+        // Pour l'instant, garder la valeur par défaut (algorithm)
+        // Les préférences peuvent être ajoutées plus tard si nécessaire
+        this.resolutionMethod = 'algorithm';
     }
 
     /**
@@ -329,7 +354,7 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
-     * Détecte les formules depuis un texte
+     * Détecte les formules depuis un texte (selon la méthode choisie)
      */
     protected async detectFormulasFromText(text: string): Promise<void> {
         if (!text.trim()) {
@@ -337,6 +362,22 @@ export class FormulaSolverWidget extends ReactWidget {
             return;
         }
 
+        // Router vers la bonne méthode selon le toggle
+        console.log(`[FORMULA-SOLVER] 🎯 Méthode de résolution sélectionnée: ${this.resolutionMethod.toUpperCase()}`);
+
+        if (this.resolutionMethod === 'ai') {
+            console.log('[FORMULA-SOLVER] 🤖 Appel de la résolution IA');
+            await this.solveWithAI(text);
+        } else {
+            console.log('[FORMULA-SOLVER] ⚙️ Appel de la résolution algorithmique');
+            await this.detectFormulasWithAlgorithm(text);
+        }
+    }
+
+    /**
+     * Détecte les formules avec l'algorithme (méthode par défaut)
+     */
+    protected async detectFormulasWithAlgorithm(text: string): Promise<void> {
         this.updateState({ loading: true, error: undefined });
 
         try {
@@ -357,6 +398,89 @@ export class FormulaSolverWidget extends ReactWidget {
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur : ${message}`);
+            this.updateState({ loading: false, error: message });
+        }
+    }
+
+    /**
+     * Résout une formule avec l'IA
+     */
+    protected async solveWithAI(text: string): Promise<void> {
+        if (!this.formulaSolverAIService) {
+            this.messageService.error('Service IA non disponible. Vérifiez la configuration.');
+            this.resolutionMethod = 'algorithm';
+            this.update();
+            return;
+        }
+
+        this.updateState({ loading: true, error: undefined });
+        this.messageService.info('🤖 Résolution par IA en cours...');
+
+        try {
+            // Vérifier que l'IA est disponible
+            const available = await this.formulaSolverAIService.isAIAvailable();
+            if (!available) {
+                throw new Error('L\'agent Formula Solver n\'est pas disponible. Vérifiez la configuration de l\'IA dans les paramètres.');
+            }
+
+            // Appeler l'agent IA
+            const result = await this.formulaSolverAIService.solveWithAI(text, this.state.geocacheId);
+
+            console.log('[FORMULA-SOLVER] Résultat IA:', result);
+
+            if (result.status === 'error') {
+                throw new Error(result.error || 'Erreur inconnue lors de la résolution IA');
+            }
+
+            // Traiter les résultats
+            if (result.formulas && result.formulas.length > 0) {
+                this.updateState({
+                    formulas: result.formulas,
+                    selectedFormula: result.formulas[0],
+                    currentStep: 'questions'
+                });
+            }
+
+            if (result.questions && result.questions.size > 0) {
+                const letters = Array.from(result.questions.keys());
+                const questions: Question[] = letters.map(letter => ({
+                    letter,
+                    question: result.questions!.get(letter) || ''
+                }));
+                this.updateState({ questions });
+            }
+
+            if (result.values && result.values.size > 0) {
+                const values = new Map<string, LetterValue>();
+                result.values.forEach((value, letter) => {
+                    values.set(letter, {
+                        letter,
+                        rawValue: value.toString(),
+                        value,
+                        type: 'value'
+                    });
+                });
+                this.updateState({ values });
+            }
+
+            if (result.coordinates) {
+                this.updateState({
+                    result: {
+                        status: 'success',
+                        coordinates: result.coordinates
+                    }
+                });
+            }
+
+            const stepsMessage = result.steps ? `\n\nÉtapes:\n${result.steps.join('\n')}` : '';
+            this.messageService.info(`✅ Résolution IA terminée !${stepsMessage}`);
+            
+            this.updateState({ loading: false });
+
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            console.error('[FORMULA-SOLVER] Erreur résolution IA:', error);
+            this.messageService.error(`Erreur IA : ${message}`);
             this.updateState({ loading: false, error: message });
         }
     }
@@ -837,7 +961,12 @@ export class FormulaSolverWidget extends ReactWidget {
     protected render(): React.ReactNode {
         return (
             <div className='formula-solver-container' style={{ padding: '20px', height: '100%', overflow: 'auto' }}>
-                <h2 style={{ marginTop: 0 }}>Formula Solver</h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <h2 style={{ marginTop: 0, marginBottom: 0 }}>Formula Solver</h2>
+                    
+                    {/* Toggle Algorithme / IA */}
+                    {this.renderMethodToggle()}
+                </div>
                 
                 {/* Étape 1 : Détection de formule */}
                 {this.renderDetectionStep()}
@@ -862,6 +991,74 @@ export class FormulaSolverWidget extends ReactWidget {
                         ⚠️ {this.state.error}
                     </div>
                 )}
+            </div>
+        );
+    }
+
+    /**
+     * Render du toggle de méthode de résolution
+     */
+    protected renderMethodToggle(): React.ReactNode {
+        const isAI = this.resolutionMethod === 'ai';
+        const hasAIService = !!this.formulaSolverAIService;
+
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '12px', opacity: 0.8 }}>Méthode:</span>
+                <div 
+                    style={{
+                        display: 'flex',
+                        backgroundColor: 'var(--theia-input-background)',
+                        border: '1px solid var(--theia-input-border)',
+                        borderRadius: '4px',
+                        overflow: 'hidden'
+                    }}
+                >
+                    <button
+                        style={{
+                            padding: '6px 12px',
+                            border: 'none',
+                            backgroundColor: !isAI ? 'var(--theia-button-background)' : 'transparent',
+                            color: !isAI ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: !isAI ? 'bold' : 'normal',
+                            transition: 'all 0.2s'
+                        }}
+                        onClick={() => {
+                            this.resolutionMethod = 'algorithm';
+                            this.update();
+                        }}
+                        title="Utilise l'algorithme de détection classique"
+                    >
+                        Algorithme
+                    </button>
+                    <button
+                        style={{
+                            padding: '6px 12px',
+                            border: 'none',
+                            backgroundColor: isAI ? 'var(--theia-button-background)' : 'transparent',
+                            color: isAI ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
+                            cursor: hasAIService ? 'pointer' : 'not-allowed',
+                            fontSize: '12px',
+                            fontWeight: isAI ? 'bold' : 'normal',
+                            opacity: hasAIService ? 1 : 0.5,
+                            transition: 'all 0.2s'
+                        }}
+                        onClick={() => {
+                            if (hasAIService) {
+                                this.resolutionMethod = 'ai';
+                                this.update();
+                            } else {
+                                this.messageService.warn('Service IA non disponible. Vérifiez la configuration.');
+                            }
+                        }}
+                        disabled={!hasAIService}
+                        title={hasAIService ? "Utilise l'agent IA pour résoudre la formule" : "Service IA non disponible"}
+                    >
+                        IA 🤖
+                    </button>
+                </div>
             </div>
         );
     }

@@ -122,29 +122,10 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
                 }
             }
 
-            // Étape 4: Calcul des coordonnées
-            if (result.formulas && result.answers && result.answers.size > 0) {
-                console.log('[FORMULA-SOLVER-AI] 🧮 ÉTAPE 4: Calcul coordonnées');
-                result.steps!.push('🧮 Calcul des coordonnées avec IA...');
-
-                // Convertir les réponses en valeurs numériques (simplifié pour l'instant)
-                const values: { [key: string]: number } = {};
-                result.answers.forEach((answer, variable) => {
-                    // Essayer de parser comme nombre, sinon utiliser la longueur de la chaîne
-                    const numValue = parseFloat(answer) || answer.length;
-                    values[variable] = numValue;
-                });
-
-                const coordinates = await this.llmService.calculateCoordinatesWithAI(formula, values);
-                if (coordinates) {
-                    result.coordinates = coordinates;
-                    console.log('[FORMULA-SOLVER-AI] 🎯 Coordonnées finales:', coordinates);
-                    result.steps!.push(`🎯 Coordonnées: ${coordinates.ddm}`);
-                    result.status = 'success';
-                } else {
-                    result.steps!.push('❌ Échec calcul coordonnées');
-                }
-            }
+            // Résolution IA terminée - les calculs sont faits par l'algorithme
+            console.log('[FORMULA-SOLVER-AI] ✅ RÉSOLUTION IA TERMINÉE - Calculs à faire avec l\'algorithme');
+            result.steps!.push('✅ Résolution IA terminée - Utilisez l\'algorithme pour les calculs');
+            result.status = 'success';
 
             console.log('[FORMULA-SOLVER-AI] ✅ RÉSOLUTION IA TERMINÉE');
             return result;

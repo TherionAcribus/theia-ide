@@ -450,6 +450,40 @@ export class FormulaSolverWidget extends ReactWidget {
                 this.updateState({ questions });
             }
 
+            // Traiter les réponses trouvées par l'IA et les convertir en valeurs automatiquement
+            if (result.answers && result.answers.size > 0) {
+                console.log('[FORMULA-SOLVER] 🤖 Réponses IA détectées, remplissage automatique des champs...');
+
+                const answersValues = new Map<string, LetterValue>();
+                result.answers.forEach((answer, letter) => {
+                    // Convertir la réponse en valeur numérique si possible, sinon utiliser la longueur du texte
+                    let numericValue: number;
+                    if (typeof answer === 'number') {
+                        numericValue = answer;
+                    } else {
+                        // Essayer de parser comme nombre, sinon utiliser la longueur
+                        const parsed = parseFloat(answer.toString());
+                        numericValue = isNaN(parsed) ? answer.toString().length : parsed;
+                    }
+
+                    answersValues.set(letter, {
+                        letter,
+                        rawValue: answer.toString(),
+                        value: numericValue,
+                        type: 'value'
+                    });
+                });
+
+                // Fusionner avec les valeurs existantes (priorité aux réponses IA)
+                const existingValues = new Map(this.state.values);
+                answersValues.forEach((value, letter) => {
+                    existingValues.set(letter, value);
+                });
+
+                this.updateState({ values: existingValues });
+                console.log('[FORMULA-SOLVER] ✅ Réponses IA automatiquement remplies dans les champs');
+            }
+
             if (result.values && result.values.size > 0) {
                 const values = new Map<string, LetterValue>();
                 result.values.forEach((value, letter) => {
@@ -473,7 +507,12 @@ export class FormulaSolverWidget extends ReactWidget {
             }
 
             const stepsMessage = result.steps ? `\n\nÉtapes:\n${result.steps.join('\n')}` : '';
-            this.messageService.info(`✅ Résolution IA terminée !${stepsMessage}`);
+
+            // Message spécial si des réponses ont été automatiquement remplies
+            const answersCount = result.answers ? result.answers.size : 0;
+            const answersMessage = answersCount > 0 ? `\n\n💡 ${answersCount} réponse(s) automatiquement remplie(s) dans les champs !` : '';
+
+            this.messageService.info(`✅ Résolution IA terminée !${answersMessage}${stepsMessage}`);
             
             this.updateState({ loading: false });
 

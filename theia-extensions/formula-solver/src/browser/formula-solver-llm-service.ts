@@ -200,34 +200,4 @@ INSTRUCTIONS:
         return parsed;
     }
 
-    /**
-     * Calcule les coordonnées finales avec IA
-     */
-    async calculateCoordinatesWithAI(formula: any, values: { [key: string]: number }): Promise<any> {
-        const prompt = `Calcule les coordonnées GPS finales pour cette formule géocache.
-
-Formule détectée:
-Nord: ${formula.north}
-Est: ${formula.east}
-
-Valeurs des variables:
-${Object.entries(values).map(([k, v]) => `${k} = ${v}`).join('\n')}
-
-INSTRUCTIONS:
-- Remplace les variables par leurs valeurs dans la formule
-- Effectue tous les calculs mathématiques nécessaires
-- Retourne les coordonnées finales dans tous les formats
-- Réponse JSON uniquement:
-{
-  "latitude": 49.205827,
-  "longitude": 6.205827,
-  "ddm": "N49°12.345 E006°12.345",
-  "dms": "N49°12'20.736\\" E006°12'20.736\\"",
-  "decimal": "49.205827, 6.205827"
-}`;
-
-        const response = await this.callLLM(prompt, 'calcul-coordonnées');
-        const parsed = JSON.parse(response.match(/\{[\s\S]*\}/)?.[0] || '{}');
-        return parsed;
-    }
 }

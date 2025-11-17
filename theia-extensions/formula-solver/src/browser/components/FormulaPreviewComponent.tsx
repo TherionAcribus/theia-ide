@@ -5,7 +5,7 @@
 
 import * as React from '@theia/core/shared/react';
 import { CoordinateFragments, Formula, FormulaFragment, FragmentStatus, LetterValue } from '../../common/types';
-import { ensureFormulaFragments } from '../utils/formula-fragments';
+import { ensureFormulaFragments, updateFragmentsWithCalculations, evaluateExpression } from '../utils/formula-fragments';
 
 interface FormulaPreviewProps {
     formula: Formula;
@@ -41,6 +41,24 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
     const formulaWithFragments = ensureFormulaFragments(formula);
     const fragments = formulaWithFragments.fragments;
 
+    // Calculer les fragments avec les valeurs actuelles
+    const valueMap = React.useMemo(() => {
+        const map = new Map<string, { value: number }>();
+        values.forEach((letterValue, letter) => {
+            map.set(letter, { value: letterValue.value });
+        });
+        return map;
+    }, [values]);
+
+    const calculatedFragments = React.useMemo(() => {
+        if (!fragments) return fragments;
+
+        return {
+            north: updateFragmentsWithCalculations(fragments.north, valueMap),
+            east: updateFragmentsWithCalculations(fragments.east, valueMap)
+        };
+    }, [fragments, valueMap]);
+
     const collectLettersFromFragments = (axisFragments?: CoordinateFragments, fallback?: string): string[] => {
         if (!axisFragments) {
             return extractLettersFallback(fallback || '');
@@ -70,33 +88,62 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
      */
     const substituteFormula = (text: string, values: Map<string, LetterValue>): string => {
         let result = text;
-        
+
         // Remplacer chaque lettre par sa valeur
         for (const [letter, letterValue] of values.entries()) {
             const regex = new RegExp(letter, 'g');
             result = result.replace(regex, letterValue.value.toString());
         }
-        
+
         return result;
+    };
+
+    /**
+     * Construit une coordonnée complète à partir des fragments calculés
+     */
+    const buildCoordinateFromFragments = (axisFragments?: CoordinateFragments): string => {
+        if (!axisFragments) return '';
+
+        const cardinal = axisFragments.cardinal.raw;
+        const degrees = axisFragments.degrees.raw;
+        const minutes = axisFragments.minutes.raw;
+
+        // Calculer les décimales
+        const decimalValues: string[] = [];
+        for (const decimal of axisFragments.decimals) {
+            if (decimal.cleaned) {
+                const result = evaluateExpression(decimal.cleaned, valueMap);
+                if (!isNaN(result)) {
+                    decimalValues.push(result.toString());
+                } else {
+                    decimalValues.push('?');
+                }
+            } else {
+                decimalValues.push('?');
+            }
+        }
+
+        // Construire la coordonnée complète
+        return `${cardinal}${degrees}°${minutes}.${decimalValues.join('')}`;
     };
 
     /**
      * Valide une partie de coordonnée
      */
-    const validatePart = (text: string, requiredLetters: string[]): ValidationResult => {
+    const validatePart = (text: string, requiredLetters: string[], fragments?: CoordinateFragments): ValidationResult => {
         // Vérifier les lettres manquantes
         const missingLetters = requiredLetters.filter(letter => !values.has(letter));
-        
+
         if (missingLetters.length > 0) {
             return {
                 status: 'incomplete',
                 message: `Lettres manquantes : ${missingLetters.join(', ')}`,
-                substituted: substituteFormula(text, values)
+                substituted: fragments ? buildCoordinateFromFragments(fragments) : substituteFormula(text, values)
             };
         }
 
-        // Substituer toutes les lettres
-        const substituted = substituteFormula(text, values);
+        // Utiliser les fragments calculés si disponibles, sinon substitution simple
+        const substituted = fragments ? buildCoordinateFromFragments(fragments) : substituteFormula(text, values);
 
         // Extraire la direction cardinale
         const cardinalMatch = text.match(/^([NSEW])\s*/i);
@@ -154,14 +201,14 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         };
     };
 
-    const northFragments = fragments?.north;
-    const eastFragments = fragments?.east;
+    const northFragments = calculatedFragments?.north;
+    const eastFragments = calculatedFragments?.east;
 
     const northLetters = collectLettersFromFragments(northFragments, formula.north);
     const eastLetters = collectLettersFromFragments(eastFragments, formula.east);
 
-    const northValidation = validatePart(formula.north, northLetters);
-    const eastValidation = validatePart(formula.east, eastLetters);
+    const northValidation = validatePart(formula.north, northLetters, northFragments);
+    const eastValidation = validatePart(formula.east, eastLetters, eastFragments);
 
     // Calculer automatiquement les parties complètes
     React.useEffect(() => {
@@ -204,6 +251,9 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         const tooltipParts: string[] = [];
 
         tooltipParts.push(`${fragment.label}`);
+        if (fragment.kind === 'decimal' && fragment.raw !== fragment.cleaned) {
+            tooltipParts.push(`Expression: ${fragment.raw}`);
+        }
         tooltipParts.push(`Statut: ${FRAGMENT_STATUS_LABEL[fragment.status] ?? fragment.status}`);
 
         if (fragment.expectedLength) {
@@ -216,6 +266,17 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
             tooltipParts.push(fragment.notes);
         }
 
+        // Pour les décimales, afficher le résultat calculé
+        let displayValue = fragment.raw || '—';
+        if (fragment.kind === 'decimal' && fragment.cleaned) {
+            const result = evaluateExpression(fragment.cleaned, valueMap);
+            if (!isNaN(result)) {
+                displayValue = result.toString();
+            } else {
+                displayValue = '?';
+            }
+        }
+
         return (
             <div
                 key={key}
@@ -223,7 +284,7 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
                 title={tooltipParts.filter(Boolean).join('\n')}
             >
                 <span className="coordinate-fragment-label">{fragment.label}</span>
-                <span className="coordinate-fragment-value">{fragment.raw || '—'}</span>
+                <span className="coordinate-fragment-value">{displayValue}</span>
                 {fragment.status === 'length-mismatch' && (
                     <span className="coordinate-fragment-warning">⚠️</span>
                 )}

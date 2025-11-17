@@ -193,3 +193,103 @@ function extractDecimalFragments(value: string, count: number): string[] {
     return fragments.slice(0, count);
 }
 
+/**
+ * Évalue une expression mathématique simple de manière sécurisée
+ * Supporte +, -, *, / et les parenthèses, ainsi que les variables (lettres majuscules)
+ */
+export function evaluateExpression(expression: string, values?: Map<string, { value: number }>): number {
+    if (!expression || !expression.trim()) {
+        return NaN;
+    }
+
+    try {
+        // Nettoyer l'expression
+        let cleaned = expression.replace(/\s+/g, '');
+
+        // Vérifier que l'expression ne contient que des caractères autorisés (chiffres, opérateurs, parenthèses, lettres)
+        if (!/^[0-9+\-*/().A-Z]+$/.test(cleaned)) {
+            console.warn(`[FORMULA-FRAGMENTS] Expression invalide (caractères non autorisés): ${expression}`);
+            return NaN;
+        }
+
+        // Remplacer les variables par leurs valeurs si elles sont disponibles
+        if (values) {
+            for (const [letter, letterValue] of values.entries()) {
+                const regex = new RegExp(letter, 'g');
+                cleaned = cleaned.replace(regex, letterValue.value.toString());
+            }
+        }
+
+        // Vérifier s'il reste des lettres non remplacées (variables sans valeur)
+        if (/[A-Z]/.test(cleaned)) {
+            console.warn(`[FORMULA-FRAGMENTS] Variables non définies dans l'expression: ${cleaned} (original: ${expression})`);
+            return NaN;
+        }
+
+        // Évaluation sécurisée avec Function (plus sûr que eval)
+        // eslint-disable-next-line no-new-func
+        const result = new Function(`"use strict"; return (${cleaned})`)();
+
+        // Vérifier que le résultat est un nombre fini
+        if (typeof result !== 'number' || !isFinite(result)) {
+            console.warn(`[FORMULA-FRAGMENTS] Résultat invalide pour ${expression}: ${result}`);
+            return NaN;
+        }
+
+        return result;
+    } catch (error) {
+        console.warn(`[FORMULA-FRAGMENTS] Erreur évaluation ${expression}:`, error);
+        return NaN;
+    }
+}
+
+/**
+ * Met à jour les statuts des fragments avec les calculs
+ */
+export function updateFragmentsWithCalculations(
+    fragments: CoordinateFragments,
+    values: Map<string, { value: number }>
+): CoordinateFragments {
+    const updated = { ...fragments };
+
+    // Fonction helper pour calculer un fragment
+    const calculateFragment = (fragment: FormulaFragment): FormulaFragment => {
+        if (fragment.kind !== 'decimal' || !fragment.cleaned) {
+            return fragment;
+        }
+
+        const result = evaluateExpression(fragment.cleaned, values);
+        if (isNaN(result)) {
+            return {
+                ...fragment,
+                status: 'invalid' as const,
+                notes: 'Expression invalide ou variables manquantes'
+            };
+        }
+
+        const resultStr = result.toString();
+        const actualLength = resultStr.length;
+        const expectedLength = fragment.expectedLength || 1;
+
+        let status: FragmentStatus = 'ok';
+        let notes: string | undefined;
+
+        if (actualLength !== expectedLength) {
+            status = 'length-mismatch';
+            notes = `Longueur attendue: ${expectedLength}, obtenue: ${actualLength}`;
+        }
+
+        return {
+            ...fragment,
+            status,
+            actualLength,
+            notes
+        };
+    };
+
+    // Mettre à jour les décimales
+    updated.decimals = fragments.decimals.map(calculateFragment);
+
+    return updated;
+}
+

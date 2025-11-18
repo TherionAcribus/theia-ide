@@ -88,8 +88,28 @@ export class FormulaSolverServiceImpl implements FormulaSolverService {
     }
 
     calculateChecksum(value: string | number): number {
-        const str = value.toString().replace(/\D/g, '');
-        return str.split('').reduce((sum, digit) => sum + parseInt(digit, 10), 0);
+        const str = value.toString().toUpperCase();
+
+        // Si la chaîne contient des lettres, convertir chaque lettre en sa position dans l'alphabet
+        // et additionner. Sinon, utiliser seulement les chiffres présents.
+        const hasLetters = /[A-Z]/.test(str);
+
+        if (hasLetters) {
+            // Convertir les lettres en positions (A=1, B=2, ..., Z=26)
+            return str.split('').reduce((sum, char) => {
+                const code = char.charCodeAt(0);
+                if (code >= 65 && code <= 90) { // A-Z
+                    return sum + (code - 64); // A=1, B=2, etc.
+                } else if (code >= 48 && code <= 57) { // 0-9
+                    return sum + parseInt(char, 10);
+                }
+                return sum; // Ignorer les autres caractères
+            }, 0);
+        } else {
+            // Comportement original : seulement les chiffres
+            const digitsOnly = str.replace(/\D/g, '');
+            return digitsOnly.split('').reduce((sum, digit) => sum + parseInt(digit, 10), 0);
+        }
     }
 
     calculateReducedChecksum(value: string | number): number {

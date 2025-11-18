@@ -105,6 +105,8 @@ INSTRUCTIONS IMPORTANTES:
 - Identifie les formules avec variables (A, B, C, etc.) dans les expressions mathématiques
 - Les lettres N, S, E, W isolées au début des coordonnées sont des POINTS CARDINAUX, pas des variables
 - Seules les lettres utilisées DANS les parenthèses () sont des variables à résoudre
+- Les champs "north" et "east" doivent contenir UNIQUEMENT la partie coordonnée, SANS le signe "=" au début
+- Par exemple : "north": "N49°12.(A+B+C)" et NON "north": "N=N49°12.(A+B+C)"
 - Retourne UNIQUEMENT un objet JSON valide avec cette structure:
 {
   "formulas": [

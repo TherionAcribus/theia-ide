@@ -230,9 +230,9 @@ export function evaluateExpression(expression: string, values?: Map<string, { va
         // eslint-disable-next-line no-new-func
         const result = new Function(`"use strict"; return (${cleaned})`)();
 
-        // Vérifier que le résultat est un nombre fini
+        // Vérifier que le résultat est un nombre fini (pas NaN, pas Infinity, pas -Infinity)
         if (typeof result !== 'number' || !isFinite(result)) {
-            console.warn(`[FORMULA-FRAGMENTS] Résultat invalide pour ${expression}: ${result}`);
+            console.warn(`[FORMULA-FRAGMENTS] Résultat invalide pour ${expression}: ${result} (type: ${typeof result})`);
             return NaN;
         }
 

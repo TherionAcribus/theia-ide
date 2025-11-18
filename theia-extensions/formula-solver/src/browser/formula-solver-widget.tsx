@@ -15,7 +15,7 @@ import { parseValueList } from './utils/value-parser';
 import { ensureFormulaFragments } from './utils/formula-fragments';
 import {
     DetectedFormulasComponent,
-    QuestionFieldsComponent,
+    // QuestionFieldsComponent,
     ResultDisplayComponent,
     FormulaPreviewComponent
 } from './components';
@@ -49,6 +49,9 @@ export class FormulaSolverWidget extends ReactWidget {
 
     // Méthode de résolution : 'algorithm' ou 'ai'
     protected resolutionMethod: 'algorithm' | 'ai' = 'algorithm';
+
+    // Type de calcul global pour les valeurs
+    protected globalValueType: 'value' | 'checksum' | 'reduced' | 'length' | 'custom' = 'value';
 
     // État brute force
     protected bruteForceMode: boolean = false;
@@ -471,34 +474,19 @@ export class FormulaSolverWidget extends ReactWidget {
             if (result.answers && result.answers.size > 0) {
                 console.log('[FORMULA-SOLVER] 🤖 Réponses IA détectées, remplissage automatique des champs...');
 
-                const answersValues = new Map<string, LetterValue>();
+                // Pour chaque réponse IA, utiliser le type global actuel
                 result.answers.forEach((answer, letter) => {
-                    // Convertir la réponse en valeur numérique si possible, sinon utiliser la longueur du texte
-                    let numericValue: number;
-                    if (typeof answer === 'number') {
-                        numericValue = answer;
-                    } else {
-                        // Essayer de parser comme nombre, sinon utiliser la longueur
-                        const parsed = parseFloat(answer.toString());
-                        numericValue = isNaN(parsed) ? answer.toString().length : parsed;
-                    }
-
-                    answersValues.set(letter, {
-                        letter,
-                        rawValue: answer.toString(),
-                        value: numericValue,
-                        type: 'value'
-                    });
+                    // Utiliser le type global pour appliquer le bon calcul
+                    this.updateValue(letter, answer.toString(), this.globalValueType);
                 });
 
-                // Fusionner avec les valeurs existantes (priorité aux réponses IA)
-                const existingValues = new Map(this.state.values);
-                answersValues.forEach((value, letter) => {
-                    existingValues.set(letter, value);
-                });
+                console.log('[FORMULA-SOLVER] ✅ Réponses IA automatiquement remplies dans les champs avec calcul selon type');
 
-                this.updateState({ values: existingValues });
-                console.log('[FORMULA-SOLVER] ✅ Réponses IA automatiquement remplies dans les champs');
+                // Après avoir rempli les champs IA, déclencher un recalcul pour s'assurer
+                // que les valeurs suivent bien les types sélectionnés
+                setTimeout(() => {
+                    this.tryAutoCalculateOrBruteForce();
+                }, 100);
             }
 
             if (result.values && result.values.size > 0) {
@@ -934,19 +922,23 @@ export class FormulaSolverWidget extends ReactWidget {
      * Met à jour la valeur d'une variable
      */
     protected updateValue(letter: string, rawValue: string, type: 'value' | 'checksum' | 'reduced' | 'length' | 'custom'): void {
+        console.log(`[FORMULA-SOLVER] updateValue: ${letter} = "${rawValue}" (type: ${type})`);
+
         // Parser la valeur pour détecter les listes (ex: "2,3,4" ou "1-5")
         const parsed = parseValueList(rawValue);
-        
-        // Calculer la valeur pour le premier élément (ou 0 si vide)
+        console.log(`[FORMULA-SOLVER] Parsed values:`, parsed.values);
+
+        // Calculer la valeur pour le premier élément (ou appliquer le calcul sur la chaîne brute)
         let calculatedValue: number = 0;
         let calculatedValues: number[] = [];
-        
+
         if (parsed.values.length > 0) {
-            // Appliquer le type de calcul sur chaque valeur
+            // Il y a des valeurs numériques parsées (nombres ou listes)
+            console.log(`[FORMULA-SOLVER] Using parsed numeric values`);
             for (const val of parsed.values) {
                 let calculated: number;
                 const strVal = val.toString();
-                
+
                 switch (type) {
                     case 'checksum':
                         calculated = this.formulaSolverService.calculateChecksum(strVal);
@@ -963,12 +955,39 @@ export class FormulaSolverWidget extends ReactWidget {
                         calculated = val;
                         break;
                 }
-                
+
                 calculatedValues.push(calculated);
             }
-            
+
             calculatedValue = calculatedValues[0];
+        } else if (rawValue.trim() && (type === 'checksum' || type === 'reduced' || type === 'length')) {
+            // Pas de valeurs numériques parsées, mais on a du texte et un type qui travaille sur du texte
+            console.log(`[FORMULA-SOLVER] Applying ${type} calculation on raw text: "${rawValue}"`);
+
+            switch (type) {
+                case 'checksum':
+                    calculatedValue = this.formulaSolverService.calculateChecksum(rawValue.trim());
+                    break;
+                case 'reduced':
+                    calculatedValue = this.formulaSolverService.calculateReducedChecksum(rawValue.trim());
+                    break;
+                case 'length':
+                    calculatedValue = this.formulaSolverService.calculateLength(rawValue.trim());
+                    break;
+                default:
+                    calculatedValue = 0;
+                    break;
+            }
+
+            calculatedValues = [calculatedValue];
+        } else {
+            // Valeur vide ou type 'value' sans contenu parsable
+            console.log(`[FORMULA-SOLVER] No calculation applied`);
+            calculatedValue = 0;
+            calculatedValues = [];
         }
+
+        console.log(`[FORMULA-SOLVER] Final calculated value: ${calculatedValue}`);
 
         const letterValue: LetterValue = {
             letter,
@@ -1177,13 +1196,101 @@ export class FormulaSolverWidget extends ReactWidget {
             <div className='questions-step' style={{ marginBottom: '20px' }}>
                 <h3>2. Questions pour les variables</h3>
                 
-                <QuestionFieldsComponent
-                    questions={this.state.questions}
-                    values={this.state.values}
-                    onValueChange={(letter, rawValue, type) => this.updateValue(letter, rawValue, type)}
-                    onExtractQuestions={this.state.questions.length === 0 ? () => this.extractQuestions(this.state.selectedFormula!) : undefined}
-                    loading={this.state.loading}
-                />
+                <div style={{
+                    padding: '20px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '4px',
+                    marginBottom: '20px'
+                }}>
+                    <h3 style={{ marginTop: 0 }}>2. Questions pour les variables</h3>
+
+                    {this.state.questions.length === 0 ? (
+                        <div style={{ color: 'var(--theia-descriptionForeground)' }}>
+                            Aucune question trouvée. Lancez la détection pour extraire les questions.
+                        </div>
+                    ) : (
+                        <div>
+                            <div style={{ marginBottom: '10px', fontSize: '14px' }}>
+                                {this.state.questions.length} variable{this.state.questions.length > 1 ? 's' : ''} détectée{this.state.questions.length > 1 ? 's' : ''}
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {this.state.questions.map(question => {
+                                    const value = this.state.values.get(question.letter);
+                                    const hasValue = value && value.rawValue.trim() !== '';
+
+                                    return (
+                                        <div key={question.letter} style={{
+                                            padding: '12px',
+                                            backgroundColor: hasValue ? 'var(--theia-list-hoverBackground)' : 'var(--theia-input-background)',
+                                            border: hasValue ? '1px solid var(--theia-focusBorder)' : '1px solid var(--theia-input-border)',
+                                            borderRadius: '4px'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                                                <div style={{
+                                                    width: '30px',
+                                                    height: '30px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    backgroundColor: hasValue ? 'var(--theia-button-background)' : 'var(--theia-input-background)',
+                                                    color: hasValue ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
+                                                    borderRadius: '4px',
+                                                    fontWeight: 'bold',
+                                                    fontSize: '16px'
+                                                }}>
+                                                    {question.letter}
+                                                </div>
+                                                <div style={{ flex: 1 }}>
+                                                    <strong>{question.question || 'Question inconnue'}</strong>
+                                                </div>
+                                            </div>
+
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Valeur"
+                                                    value={value?.rawValue || ''}
+                                                    onChange={e => this.updateValue(question.letter, e.target.value, value?.type || 'value')}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '6px 10px',
+                                                        border: '1px solid var(--theia-input-border)',
+                                                        borderRadius: '3px',
+                                                        backgroundColor: 'var(--theia-input-background)',
+                                                        color: 'var(--theia-input-foreground)'
+                                                    }}
+                                                />
+
+                                                <select
+                                                    value={value?.type || 'value'}
+                                                    onChange={e => this.updateValue(question.letter, value?.rawValue || '', e.target.value as any)}
+                                                    style={{
+                                                        padding: '6px 8px',
+                                                        border: '1px solid var(--theia-dropdown-border)',
+                                                        borderRadius: '3px',
+                                                        backgroundColor: 'var(--theia-dropdown-background)',
+                                                        color: 'var(--theia-dropdown-foreground)'
+                                                    }}
+                                                >
+                                                    <option value="value">Valeur</option>
+                                                    <option value="checksum">Checksum</option>
+                                                    <option value="reduced">Checksum réduit</option>
+                                                    <option value="length">Longueur</option>
+                                                </select>
+
+                                                <div style={{ minWidth: '60px', textAlign: 'right', fontWeight: 'bold' }}>
+                                                    = {value?.value || '-'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
         );
     }

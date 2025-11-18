@@ -53,7 +53,7 @@ export class ZonesTreeWidget extends ReactWidget {
         this.title.closable = true;
         this.title.label = 'Zones';
         this.title.caption = 'Zones';
-        this.title.iconClass = 'fa fa-map';
+        this.title.iconClass = 'fa fa-map-marker';
         this.addClass('theia-zones-tree-widget');
         console.log('[ZonesTreeWidget] constructed');
     }

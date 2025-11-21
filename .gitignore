@@ -10,10 +10,11 @@
 *.log
 license-check-summary.txt*
 
-# plugins folder : on ignore tous les plugins sauf ceux ajoutés pour l'App
-!plugins/
-!plugins/**/
-!plugins/**/*
-# still ignore plugin deps & bundles
+# plugins folder : ignore downloaded plugins, keep local ones
+plugins/*
+!plugins/hello-flask/
+# still ignore plugin deps & bundles within local plugins
 plugins/**/node_modules/
+plugins/**/dist/
+plugins/**/lib/
 plugins/**/*.vsix

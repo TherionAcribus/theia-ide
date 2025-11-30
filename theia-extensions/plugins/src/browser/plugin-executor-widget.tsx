@@ -44,6 +44,7 @@ export interface GeocacheContext {
     hint?: string;
     difficulty?: number;
     terrain?: number;
+    waypoints?: any[]; // Ajout des waypoints
 }
 
 interface AddWaypointEventDetail {
@@ -252,6 +253,8 @@ export class PluginExecutorWidget extends ReactWidget {
      * Utilisé quand l'utilisateur clique "Analyser" depuis une géocache
      */
     public initializeGeocacheMode(context: GeocacheContext): void {
+        console.log('[Plugin Executor] initializeGeocacheMode called with context:', context);
+        console.log('[Plugin Executor] Context description length:', context.description?.length);
         this.config = {
             mode: 'geocache',
             geocacheContext: context,
@@ -259,7 +262,7 @@ export class PluginExecutorWidget extends ReactWidget {
         };
         this.title.label = `Analyse: ${context.gcCode}`;
         this.title.iconClass = 'fa fa-search';
-        console.log(`[Plugin Executor] Initialized in GEOCACHE mode:`, context.gcCode);
+        console.log(`[Plugin Executor] Initialized in GEOCACHE mode: ${context.gcCode}`);
         this.update();
     }
 
@@ -413,14 +416,15 @@ const PluginExecutorComponent: React.FC<{
             console.log('[Plugin Executor] Inputs initiaux générés:', initialInputs);
             
             setState(prev => {
-                // Conserver uniquement le champ "text" s'il existe déjà
-                const textValue = prev.formInputs.text || '';
+                // Si initialInputs.text est défini (via description ou autre), on l'utilise en priorité.
+                // Sinon, on garde la valeur précédente si elle existe.
+                const newText = initialInputs.text || prev.formInputs.text || '';
                 
                 return {
                     ...prev,
                     pluginDetails: details,
-                    // Réinitialiser complètement les inputs avec les nouveaux, mais garder le texte
-                    formInputs: { ...initialInputs, text: textValue },
+                    // Fusionner les inputs
+                    formInputs: { ...initialInputs, text: newText },
                     result: null,
                     error: null
                 };
@@ -439,27 +443,51 @@ const PluginExecutorComponent: React.FC<{
     const generateInitialInputs = (details: PluginDetails): Record<string, any> => {
         const inputs: Record<string, any> = {};
         
+        console.log('!!! [Plugin Executor] GENERATING INPUTS V2 !!! for', details.name);
+        console.log('[Plugin Executor] Context available:', context);
+        console.log('[Plugin Executor] Context description present?', !!context.description);
+        console.log('[Plugin Executor] Context description length:', context.description?.length);
+        
         if (!details.input_schema?.properties) {
             return inputs;
         }
 
         // Pré-remplir avec les données de la géocache si pertinent
         for (const [key, schema] of Object.entries(details.input_schema.properties)) {
-            const prop = schema as any;
+            // ATTENTION: Le schéma reçu du backend peut avoir les propriétés 'default_value_source' 
+            // directement dans `details.metadata.input_types[key]` plutôt que dans `schema`.
+            // Le `input_schema` est généré automatiquement par le backend et peut perdre ces métadonnées custom.
             
-            // Pré-remplir le champ "text" avec les coordonnées si disponible
-            if (key === 'text' && context.coordinates?.coordinatesRaw) {
+            const prop = schema as any;
+            const metadataInputType = details.metadata?.input_types?.[key];
+            const defaultValueSource = prop.default_value_source || metadataInputType?.default_value_source;
+
+            console.log(`[Plugin Executor] Processing field '${key}'`, { propSchema: prop, metadataInputType, defaultValueSource });
+            
+            // 1. Priorité aux sources explicites définies dans le plugin.json
+            if (defaultValueSource) {
+                console.log(`[Plugin Executor] Champ '${key}' utilise source: ${defaultValueSource}`);
+                if (defaultValueSource === 'geocache_id' && context.gcCode) {
+                    inputs[key] = context.gcCode;
+                } else if (defaultValueSource === 'geocache_description' && context.description) {
+                    console.log(`[Plugin Executor] Injecting description into '${key}'`);
+                    inputs[key] = context.description;
+                } else {
+                     console.log(`[Plugin Executor] Source '${defaultValueSource}' not found in context or empty`);
+                }
+            }
+            // 2. Fallback sur les comportements legacy hardcodés
+            else if (key === 'text' && context.coordinates?.coordinatesRaw) {
                 inputs[key] = context.coordinates.coordinatesRaw;
             }
-            // Pré-remplir le champ "hint" si disponible
             else if (key === 'hint' && context.hint) {
                 inputs[key] = context.hint;
             }
-            // Valeur par défaut du schéma
+            // 3. Valeurs par défaut du schéma
             else if (prop.default !== undefined) {
                 inputs[key] = prop.default;
             }
-            // Valeur vide selon le type
+            // 4. Valeurs vides par défaut selon le type
             else if (prop.type === 'string') {
                 inputs[key] = '';
             } else if (prop.type === 'number' || prop.type === 'integer') {
@@ -566,10 +594,23 @@ const PluginExecutorComponent: React.FC<{
             return;
         }
 
+        // Préparer les inputs pour l'envoi
+        let inputsToSend = { ...state.formInputs };
+        
+        // Si on est en mode geocache, ajouter les waypoints au contexte envoyé
+        if (config.mode === 'geocache' && config.geocacheContext?.waypoints) {
+            console.log('[Plugin Executor] Ajout des waypoints aux inputs:', config.geocacheContext.waypoints.length);
+            inputsToSend = {
+                ...inputsToSend,
+                waypoints: config.geocacheContext.waypoints
+            };
+        }
+
         console.log('=== DEBUG Plugin Executor ===');
         console.log('Plugin sélectionné:', state.selectedPlugin);
         console.log('Plugin details name:', state.pluginDetails.name);
         console.log('Inputs du formulaire:', state.formInputs);
+        console.log('Inputs envoyés au backend:', inputsToSend);
         console.log('Schéma du plugin:', state.pluginDetails.input_schema);
         
         // Vérification de cohérence
@@ -583,8 +624,8 @@ const PluginExecutorComponent: React.FC<{
 
         try {
             if (state.executionMode === 'sync') {
-                console.log('Exécution synchrone avec inputs:', state.formInputs);
-                const result = await pluginsService.executePlugin(state.selectedPlugin, state.formInputs);
+                console.log('Exécution synchrone avec inputs:', inputsToSend);
+                const result = await pluginsService.executePlugin(state.selectedPlugin, inputsToSend);
                 console.log('Résultat reçu:', result);
                 
                 // Détecter les coordonnées si l'option est activée

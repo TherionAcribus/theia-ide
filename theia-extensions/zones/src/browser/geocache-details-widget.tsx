@@ -1129,6 +1129,12 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
 
         // Créer le contexte de la géocache pour le plugin executor
+        console.log('[GeocacheDetailsWidget] 🔍 ANALYZE WITH PLUGINS DEBUG');
+        console.log('[GeocacheDetailsWidget] Raw description_html length:', this.data.description_html?.length);
+        
+        // Comme demandé, on passe le HTML brut pour analyse (commentaires, attributs cachés, etc.)
+        const descriptionHtml = this.data.description_html || '';
+
         const context: GeocacheContext = {
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
@@ -1137,11 +1143,14 @@ export class GeocacheDetailsWidget extends ReactWidget {
                 longitude: this.data.longitude,
                 coordinatesRaw: this.data.coordinates_raw
             } : undefined,
-            description: this.data.description_html,
+            description: descriptionHtml,
             hint: this.data.hints,
             difficulty: this.data.difficulty,
-            terrain: this.data.terrain
+            terrain: this.data.terrain,
+            waypoints: this.data.waypoints // Ajout des waypoints
         };
+        
+        console.log('[GeocacheDetailsWidget] Context sent to executor:', context);
 
         // Ouvrir le Plugin Executor avec ce contexte
         this.pluginExecutorContribution.openWithContext(context);

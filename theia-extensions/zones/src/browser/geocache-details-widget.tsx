@@ -1156,6 +1156,36 @@ export class GeocacheDetailsWidget extends ReactWidget {
         this.pluginExecutorContribution.openWithContext(context);
     };
 
+    /**
+     * Ouvre le Plugin Executor spécifiquement pour l'analyse de page (analysis_web_page)
+     */
+    protected analyzePage = (): void => {
+        if (!this.data) {
+            this.messages.warn('Aucune géocache chargée');
+            return;
+        }
+
+        const descriptionHtml = this.data.description_html || '';
+
+        const context: GeocacheContext = {
+            gcCode: this.data.gc_code || `GC${this.data.id}`,
+            name: this.data.name,
+            coordinates: this.data.latitude && this.data.longitude ? {
+                latitude: this.data.latitude,
+                longitude: this.data.longitude,
+                coordinatesRaw: this.data.coordinates_raw
+            } : undefined,
+            description: descriptionHtml,
+            hint: this.data.hints,
+            difficulty: this.data.difficulty,
+            terrain: this.data.terrain,
+            waypoints: this.data.waypoints
+        };
+
+        // Ouvrir directement avec analysis_web_page et exécution automatique
+        this.pluginExecutorContribution.openWithContext(context, 'analysis_web_page', true);
+    };
+
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
         if (context.name) {
@@ -1618,6 +1648,14 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                         title='Ouvrir le Formula Solver'
                                     >
                                         🧮 Résoudre formule
+                                    </button>
+                                    <button
+                                        className='theia-button secondary'
+                                        onClick={this.analyzePage}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Lancer l analyse complète de la page'
+                                    >
+                                        🔍 Analyse Page
                                     </button>
                                     <button
                                         className='theia-button secondary'

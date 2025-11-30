@@ -181,6 +181,7 @@ export interface PluginExecutorConfig {
     // Mode GEOCACHE
     geocacheContext?: GeocacheContext;  // Contexte géocache
     allowPluginChaining?: boolean;      // Permettre l'enchaînement
+    autoExecute?: boolean;              // Exécution automatique au chargement
 }
 
 /**
@@ -252,17 +253,19 @@ export class PluginExecutorWidget extends ReactWidget {
      * Initialise le widget en MODE GEOCACHE
      * Utilisé quand l'utilisateur clique "Analyser" depuis une géocache
      */
-    public initializeGeocacheMode(context: GeocacheContext): void {
-        console.log('[Plugin Executor] initializeGeocacheMode called with context:', context);
-        console.log('[Plugin Executor] Context description length:', context.description?.length);
+    public initializeGeocacheMode(context: GeocacheContext, pluginName?: string, autoExecute: boolean = false): void {
+        console.log('[PluginExecutor] initializeGeocacheMode called with context:', context, 'pluginName:', pluginName, 'autoExecute:', autoExecute);
+        console.log('[PluginExecutor] Context description length:', context.description?.length);
         this.config = {
             mode: 'geocache',
             geocacheContext: context,
-            allowPluginChaining: true  // Permet d'enchaîner les plugins
+            pluginName: pluginName, // Plugin pré-sélectionné optionnel
+            allowPluginChaining: true,  // Permet d'enchaîner les plugins
+            autoExecute: autoExecute
         };
         this.title.label = `Analyse: ${context.gcCode}`;
         this.title.iconClass = 'fa fa-search';
-        console.log(`[Plugin Executor] Initialized in GEOCACHE mode: ${context.gcCode}`);
+        console.log(`[PluginExecutor] Initialized in GEOCACHE mode: ${context.gcCode}`);
         this.update();
     }
 
@@ -298,11 +301,12 @@ const PluginExecutorComponent: React.FC<{
 }> = ({ config, pluginsService, tasksService, messageService }) => {
     // Initialisation de l'état basée sur le mode
     const [state, setState] = React.useState<ExecutorState>(() => {
-        const initialPlugin = config.mode === 'plugin' ? config.pluginName || null : null;
+        // En mode plugin ou geocache, on peut avoir un plugin pré-sélectionné
+        const initialPlugin = config.pluginName || null;
         const canSelectPlugin = config.mode === 'geocache';
         const canChangeMode = config.mode === 'plugin' && config.allowModeSelection !== false;
         
-        console.log(`[Plugin Executor Component] Initializing in ${config.mode} mode`);
+        console.log(`[Plugin Executor Component] Initializing in ${config.mode} mode. Initial plugin: ${initialPlugin}`);
         
         return {
             plugins: [],
@@ -335,7 +339,7 @@ const PluginExecutorComponent: React.FC<{
     // Réinitialiser l'état quand la config change (changement de plugin ou de mode)
     React.useEffect(() => {
         console.log('[Plugin Executor] Config changed, reinitializing state');
-        const initialPlugin = config.mode === 'plugin' ? config.pluginName || null : null;
+        const initialPlugin = config.pluginName || null;
         const canSelectPlugin = config.mode === 'geocache';
         const canChangeMode = config.mode === 'plugin' && config.allowModeSelection !== false;
         
@@ -373,9 +377,9 @@ const PluginExecutorComponent: React.FC<{
         loadPlugins();
     }, []);
 
-    // Charger le plugin initial en mode PLUGIN
+    // Charger le plugin initial (mode PLUGIN ou GEOCACHE si pluginName fourni)
     React.useEffect(() => {
-        if (config.mode === 'plugin' && config.pluginName) {
+        if (config.pluginName) {
             setIsLoadingInitial(true);
             console.log('[Plugin Executor] Chargement du plugin initial:', config.pluginName);
             loadPluginDetails(config.pluginName).finally(() => {
@@ -403,6 +407,17 @@ const PluginExecutorComponent: React.FC<{
             console.log('First result:', state.result.results?.[0]);
         }
     }, [state.result]);
+
+    // Exécuter automatiquement si configuré
+    React.useEffect(() => {
+        if (config.autoExecute && state.pluginDetails && state.selectedPlugin && !state.isExecuting && !state.result) {
+            console.log('[Plugin Executor] Exécution automatique déclenchée');
+            // Petit délai pour laisser le rendu se faire
+            setTimeout(() => {
+                handleExecute();
+            }, 500);
+        }
+    }, [config.autoExecute, state.pluginDetails, state.selectedPlugin]);
 
     const loadPluginDetails = async (pluginName: string): Promise<void> => {
         try {

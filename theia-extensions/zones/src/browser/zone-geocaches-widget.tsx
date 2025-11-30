@@ -547,6 +547,76 @@ export class ZoneGeocachesWidget extends ReactWidget {
         }
     };
 
+    /**
+     * Gère l'application d'un plugin sur les géocaches sélectionnées
+     */
+    protected async handleApplyPluginSelected(geocacheIds: number[]): Promise<void> {
+        if (!this.zoneId) {
+            this.messages.warn('Zone active manquante');
+            return;
+        }
+
+        try {
+            // Récupérer les détails des géocaches sélectionnées
+            const selectedGeocaches = this.rows.filter(g => geocacheIds.includes(g.id));
+            
+            if (selectedGeocaches.length === 0) {
+                this.messages.warn('Aucune géocache sélectionnée');
+                return;
+            }
+
+            // Ouvrir le widget batch via le WidgetManager
+            const batchWidgetId = 'batch-plugin-executor-widget';
+            
+            try {
+                // Créer ou récupérer le widget
+                const widget = await this.widgetManager.getOrCreateWidget(batchWidgetId);
+                
+                // Préparer les données pour le widget
+                const batchData = {
+                    geocaches: selectedGeocaches.map(g => ({
+                        id: g.id,
+                        gc_code: g.gc_code,
+                        name: g.name,
+                        coordinates: (g.latitude && g.longitude) ? {
+                            latitude: g.latitude,
+                            longitude: g.longitude,
+                            coordinates_raw: g.coordinates_raw || `${g.latitude}, ${g.longitude}`
+                        } : undefined,
+                        description: g.description,
+                        hint: g.hint,
+                        difficulty: g.difficulty,
+                        terrain: g.terrain,
+                        waypoints: g.waypoints || []
+                    })),
+                    zoneId: this.zoneId,
+                    zoneName: this.zoneName
+                };
+
+                // Envoyer les données au widget via un événement personnalisé
+                window.dispatchEvent(new CustomEvent('batch-executor-initialize', {
+                    detail: batchData
+                }));
+
+                // Ajouter et activer le widget
+                if (!widget.isAttached) {
+                    this.shell.addWidget(widget, { area: 'main' });
+                }
+                this.shell.activateWidget(widget.id);
+
+                console.log(`[ZoneGeocachesWidget] Opened batch executor for ${selectedGeocaches.length} geocaches`);
+                
+            } catch (widgetError) {
+                console.error('[ZoneGeocachesWidget] Error opening batch widget:', widgetError);
+                this.messages.error('Impossible d\'ouvrir l\'exécuteur de plugins batch');
+            }
+            
+        } catch (error) {
+            console.error('[ZoneGeocachesWidget] Error in handleApplyPluginSelected:', error);
+            this.messages.error('Erreur lors de l\'application du plugin');
+        }
+    }
+
     protected async performMoveSelected(geocacheIds: number[], targetZoneId: number): Promise<void> {
         let movedCount = 0;
         let alreadyExistsCount = 0;
@@ -890,6 +960,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
                         onCopySelected={(ids) => this.handleCopySelected(ids)}
                         onMoveSelected={(ids) => this.handleMoveSelected(ids)}
+                        onApplyPluginSelected={(ids) => this.handleApplyPluginSelected(ids)}
                         onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}

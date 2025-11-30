@@ -13,8 +13,10 @@ import { PluginsService } from '../common/plugin-protocol';
 import { TasksService } from '../common/task-protocol';
 import { PluginsServiceImpl } from './services/plugins-service';
 import { TasksServiceImpl } from './services/tasks-service';
+import { BatchPluginService } from './services/batch-plugin-service';
 import { PluginsBrowserWidget } from './plugins-browser-widget';
 import { PluginExecutorWidget } from './plugin-executor-widget';
+import { BatchPluginExecutorWidget } from './batch-plugin-executor-widget';
 import { PluginsBrowserContribution, PluginExecutorContribution, PluginsFrontendApplicationContribution } from './plugins-contribution';
 import { PluginToolsManager } from './plugin-tools-manager';
 
@@ -27,7 +29,10 @@ export default new ContainerModule(bind => {
     console.log('[MYSTERAI] Registering services and contributions...');
     // Services de communication avec l'API
     bind(PluginsService).to(PluginsServiceImpl).inSingletonScope();
+    bind(PluginsServiceImpl).toSelf().inSingletonScope();
     bind(TasksService).to(TasksServiceImpl).inSingletonScope();
+    bind(TasksServiceImpl).toSelf().inSingletonScope();
+    bind(BatchPluginService).to(BatchPluginService).inSingletonScope();
     
     // Widget Plugins Browser
     bind(PluginsBrowserWidget).toSelf();
@@ -41,6 +46,13 @@ export default new ContainerModule(bind => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: PluginExecutorWidget.ID,
         createWidget: () => ctx.container.get<PluginExecutorWidget>(PluginExecutorWidget)
+    })).inSingletonScope();
+    
+    // Widget Batch Plugin Executor
+    bind(BatchPluginExecutorWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: BatchPluginExecutorWidget.ID,
+        createWidget: () => ctx.container.get<BatchPluginExecutorWidget>(BatchPluginExecutorWidget)
     })).inSingletonScope();
     
     // Contributions

@@ -43,6 +43,9 @@ export interface Geocache {
     is_corrected?: boolean;
     original_latitude?: number;
     original_longitude?: number;
+    coordinates_raw?: string;
+    description?: string;
+    hint?: string;
     waypoints?: GeocacheWaypoint[];
 }
 
@@ -53,6 +56,7 @@ interface GeocachesTableProps {
     onRefreshSelected?: (ids: number[]) => void;
     onCopySelected?: (ids: number[]) => void;
     onMoveSelected?: (ids: number[]) => void;
+    onApplyPluginSelected?: (ids: number[]) => void;
     onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
     onMove?: (geocache: Geocache, targetZoneId: number) => void;
@@ -68,6 +72,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onRefreshSelected,
     onCopySelected,
     onMoveSelected,
+    onApplyPluginSelected,
     onDelete,
     onRefresh,
     onMove,
@@ -326,6 +331,15 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         <span style={{ fontSize: '0.9em', opacity: 0.8 }}>
                             {selectedIds.length} sélectionnée(s)
                         </span>
+                        {onApplyPluginSelected && (
+                            <button
+                                onClick={() => onApplyPluginSelected(selectedIds)}
+                                className="theia-button primary"
+                                title="Appliquer un plugin aux géocaches sélectionnées"
+                            >
+                                🔧 Appliquer un plugin
+                            </button>
+                        )}
                         {onRefreshSelected && (
                             <button
                                 onClick={() => onRefreshSelected(selectedIds)}

@@ -10,6 +10,7 @@ import { MapWidget } from './map/map-widget';
 import { MapService } from './map/map-service';
 import { MapWidgetFactory } from './map/map-widget-factory';
 import { MapManagerWidget } from './map/map-manager-widget';
+import { BatchMapIntegration } from './batch-map-integration';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -69,6 +70,10 @@ export default new ContainerModule(bind => {
     bind(ZonesCommandContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(ZonesCommandContribution);
     bind(FrontendApplicationContribution).toService(ZonesCommandContribution);
+
+    // Batch Map Integration pour écouter les événements du plugin batch
+    bind(BatchMapIntegration).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(BatchMapIntegration);
 });
 
 

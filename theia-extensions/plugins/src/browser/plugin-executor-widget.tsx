@@ -452,6 +452,15 @@ const PluginExecutorComponent: React.FC<{
         }
     };
 
+    const stripHtml = (html: string): string => {
+        if (typeof document !== 'undefined') {
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+            return (temp.textContent || temp.innerText || '').trim();
+        }
+        return html.replace(/<[^>]+>/g, ' ').trim();
+    };
+
     /**
      * Génère les valeurs initiales du formulaire basées sur le schéma et le contexte
      */
@@ -492,8 +501,15 @@ const PluginExecutorComponent: React.FC<{
                 }
             }
             // 2. Fallback sur les comportements legacy hardcodés
-            else if (key === 'text' && context.coordinates?.coordinatesRaw) {
-                inputs[key] = context.coordinates.coordinatesRaw;
+            // Pour le champ 'text', on préfère la description (sans HTML pour les plugins standards) si elle existe, sinon les coordonnées
+            else if (key === 'text') {
+                if (context.description) {
+                    console.log(`[Plugin Executor] Fallback for 'text': using STRIPPED geocache description`);
+                    inputs[key] = stripHtml(context.description);
+                } else if (context.coordinates?.coordinatesRaw) {
+                    console.log(`[Plugin Executor] Fallback for 'text': using coordinates`);
+                    inputs[key] = context.coordinates.coordinatesRaw;
+                }
             }
             else if (key === 'hint' && context.hint) {
                 inputs[key] = context.hint;
@@ -1133,17 +1149,30 @@ const PluginResultDisplay: React.FC<{
     console.log('result.results:', result.results);
     console.log('result.summary:', result.summary);
 
+    // Vérifications de sécurité
+    if (!result) {
+        console.error('PluginResultDisplay: result is null/undefined');
+        return <div>Erreur: Aucun résultat à afficher</div>;
+    }
+
     // Fonction pour copier du texte dans le presse-papier
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
     };
     
     // Trier les résultats par confiance (décroissante) si disponible
-    const sortedResults = result.results ? [...result.results].sort((a, b) => {
-        const confA = a.confidence ?? 0;
-        const confB = b.confidence ?? 0;
-        return confB - confA;
-    }) : [];
+    let sortedResults: any[] = [];
+    try {
+        sortedResults = result.results ? [...result.results].sort((a, b) => {
+            const confA = a.confidence ?? 0;
+            const confB = b.confidence ?? 0;
+            return confB - confA;
+        }) : [];
+        console.log('sortedResults:', sortedResults);
+    } catch (error) {
+        console.error('Erreur lors du tri des résultats:', error);
+        sortedResults = result.results || [];
+    }
 
     const isBruteForce = sortedResults.length > 5; // Considérer comme brute-force si plus de 5 résultats
     const canRequestWaypoint = configMode === 'geocache' && !!geocacheContext && !!onRequestAddWaypoint;
@@ -1177,18 +1206,31 @@ const PluginResultDisplay: React.FC<{
         return null;
     };
 
+    console.log('PluginResultDisplay final render');
+    console.log('result.status:', result.status);
+    console.log('result.summary:', result.summary);
+    console.log('sortedResults.length:', sortedResults.length);
+
     return (
         <div className='result-display'>
             <div className='result-status'>
-                <strong>Statut:</strong> {result.status === 'ok' ? '✓ OK' : '⚠ ' + result.status}
+                <strong>Statut:</strong> {result.status === 'ok' ? '✓ OK' : '⚠ ' + (result.status || 'Erreur')}
             </div>
 
             {/* Afficher le summary si disponible */}
             {result.summary && (
                 <div style={{ marginBottom: '10px', opacity: 0.8 }}>
-                    {result.summary}
+                    {typeof result.summary === 'string' ? result.summary :
+                     typeof result.summary === 'object' && (result.summary as any).message ?
+                         (result.summary as any).message :
+                         JSON.stringify(result.summary, null, 2)}
                 </div>
             )}
+
+            {/* Debug info */}
+            <div style={{ background: 'yellow', padding: '5px', margin: '10px 0', fontSize: '12px' }}>
+                DEBUG: {sortedResults.length} résultat(s) à afficher
+            </div>
             
             {/* Indicateur de mode brute-force */}
             {isBruteForce && (
@@ -1206,149 +1248,174 @@ const PluginResultDisplay: React.FC<{
             {/* Afficher tous les résultats du tableau */}
             {sortedResults.length > 0 && (
                 <div>
-                    {sortedResults.map((item, index) => (
-                        <div 
-                            key={item.id || index} 
-                            style={{ 
-                                marginBottom: '15px',
-                                padding: '12px',
-                                background: index === 0 && isBruteForce ? 'var(--theia-list-hoverBackground)' : 'transparent',
-                                border: '1px solid var(--theia-panel-border)',
-                                borderRadius: '4px',
-                                position: 'relative'
-                            }}
-                        >
-                            {/* Badge de confiance en haut à droite */}
-                            {item.confidence !== undefined && (
-                                <div style={{ 
-                                    position: 'absolute', 
-                                    top: '8px', 
-                                    right: '8px',
-                                    padding: '4px 8px',
-                                    background: item.confidence > 0.7 ? 'var(--theia-button-background)' : 'var(--theia-editor-background)',
-                                    borderRadius: '3px',
-                                    fontSize: '11px',
-                                    fontWeight: 'bold'
-                                }}>
-                                    🎯 {Math.round(item.confidence * 100)}%
-                                </div>
-                            )}
-                            
-                            {item.text_output && (
-                                <div className='result-text'>
-                                    <strong>
-                                        {isBruteForce ? `#${index + 1}` : 'Résultat'}
-                                        {item.parameters?.shift !== undefined && ` (décalage: ${item.parameters.shift})`}
-                                        {index === 0 && isBruteForce && ' 🏆'}
-                                    </strong>
-                                    <div className='output-content' style={{ position: 'relative', marginTop: '8px' }}>
-                                        <pre style={{ 
-                                            whiteSpace: 'pre-wrap', 
-                                            margin: 0,
-                                            paddingRight: '40px',
-                                            fontFamily: 'monospace',
-                                            fontSize: '13px'
-                                        }}>{item.text_output}</pre>
-                                        <button
-                                            className='theia-button secondary'
-                                            onClick={() => copyToClipboard(item.text_output!)}
-                                            title='Copier'
-                                            style={{ position: 'absolute', top: '5px', right: '5px', padding: '4px 8px' }}
-                                        >
-                                            📋
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
+                    {sortedResults.map((item, index) => {
+                        console.log(`Rendering result ${index}:`, item);
+                        try {
+                            return (
+                                <div 
+                                    key={item.id || index} 
+                                    style={{ 
+                                        marginBottom: '15px',
+                                        padding: '12px',
+                                        background: index === 0 && isBruteForce ? 'var(--theia-list-hoverBackground)' : 'transparent',
+                                        border: '1px solid var(--theia-panel-border)',
+                                        borderRadius: '4px',
+                                        position: 'relative'
+                                    }}
+                                >
+                                    {/* Badge de confiance en haut à droite */}
+                                    {item.confidence !== undefined && (
+                                        <div style={{ 
+                                            position: 'absolute', 
+                                            top: '8px', 
+                                            right: '8px',
+                                            padding: '4px 8px',
+                                            background: item.confidence > 0.7 ? 'var(--theia-button-background)' : 'var(--theia-editor-background)',
+                                            borderRadius: '3px',
+                                            fontSize: '11px',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            🎯 {Math.round(item.confidence * 100)}%
+                                        </div>
+                                    )}
+                                    
+                                    {/* Always show text output if exists */}
+                                    {item.text_output ? (
+                                        <div className='result-text'>
+                                            <strong>
+                                                {isBruteForce ? `#${index + 1}` : 'Résultat'}
+                                                {item.parameters?.shift !== undefined && item.parameters.shift !== null && ` (décalage: ${item.parameters.shift})`}
+                                                {index === 0 && isBruteForce && ' 🏆'}
+                                            </strong>
+                                            <div className='output-content' style={{ position: 'relative', marginTop: '8px' }}>
+                                                <pre style={{
+                                                    whiteSpace: 'pre-wrap',
+                                                    margin: 0,
+                                                    paddingRight: '40px',
+                                                    fontFamily: 'monospace',
+                                                    fontSize: '13px'
+                                                }}>{item.text_output}</pre>
+                                                <button
+                                                    className='theia-button secondary'
+                                                    onClick={() => copyToClipboard(item.text_output!)}
+                                                    title='Copier'
+                                                    style={{ position: 'absolute', top: '5px', right: '5px', padding: '4px 8px' }}
+                                                >
+                                                    📋
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div style={{ color: 'orange' }}>No text_output for result {index}</div>
+                                    )}
 
-                            {item.coordinates && (
-                                <div className='result-coordinates' style={{ 
-                                    marginTop: '8px',
-                                    padding: '10px',
-                                    background: 'var(--theia-editor-background)',
-                                    border: '1px solid var(--theia-focusBorder)',
+                                    {item.coordinates && (
+                                        <div className='result-coordinates' style={{ 
+                                            marginTop: '8px',
+                                            padding: '10px',
+                                            background: 'var(--theia-editor-background)',
+                                            border: '1px solid var(--theia-focusBorder)',
+                                            borderRadius: '4px'
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                                <strong>📍 Coordonnées détectées :</strong>
+                                                <button
+                                                    className='theia-button secondary'
+                                                    onClick={() => copyToClipboard(item.coordinates?.formatted ||
+                                                        (item.coordinates?.latitude && item.coordinates?.longitude
+                                                         ? `${item.coordinates.latitude} ${item.coordinates.longitude}`
+                                                         : 'Coordonnées invalides'))}
+                                                    title='Copier les coordonnées'
+                                                    style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                >
+                                                    📋 Copier
+                                                </button>
+                                                {canRequestWaypoint && buildGcCoords(item.coordinates) && (
+                                                    <>
+                                                        {['manual', 'auto'].map(mode => (
+                                                            <button
+                                                                key={mode}
+                                                                className='theia-button'
+                                                                onClick={() => {
+                                                                    const gcCoords = buildGcCoords(item.coordinates);
+                                                                    if (!gcCoords) {
+                                                                        return;
+                                                                    }
+                                                                    const decimalCoords = extractDecimalCoordinates(item.coordinates, gcCoords);
+                                                                    if (!decimalCoords) {
+                                                                        console.warn('[Plugin Executor] Impossible de convertir les coordonnées pour la carte', {
+                                                                            coordinates: item.coordinates,
+                                                                            fallback: gcCoords
+                                                                        });
+                                                                    }
+                                                                    onRequestAddWaypoint?.({
+                                                                        gcCoords,
+                                                                        pluginName: pluginName || result.plugin_info?.name,
+                                                                        geocache: geocacheContext ? {
+                                                                            gcCode: geocacheContext.gcCode,
+                                                                            name: geocacheContext.name
+                                                                        } : undefined,
+                                                                        sourceResultText: item.text_output,
+                                                                        waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
+                                                                        waypointNote: item.text_output,
+                                                                        autoSave: mode === 'auto',
+                                                                        decimalLatitude: decimalCoords?.latitude,
+                                                                        decimalLongitude: decimalCoords?.longitude
+                                                                    });
+                                                                }}
+                                                                title={mode === 'auto'
+                                                                    ? 'Créer immédiatement un waypoint validé'
+                                                                    : 'Ajouter ces coordonnées comme nouveau waypoint'}
+                                                                style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                            >
+                                                                {mode === 'auto' ? '✅ Ajouter et valider' : '➕ Ajouter comme waypoint'}
+                                                            </button>
+                                                        ))}
+                                                    </>
+                                                )}
+                                            </div>
+                                            <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
+                                                {item.coordinates.formatted ||
+                                                 (item.coordinates.latitude && item.coordinates.longitude
+                                                  ? `${item.coordinates.latitude} ${item.coordinates.longitude}`
+                                                  : 'Coordonnées invalides')}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {item.metadata && Object.keys(item.metadata).length > 0 && (
+                                        <div className='result-metadata'>
+                                            <strong>Métadonnées:</strong>
+                                            <ul>
+                                                {Object.entries(item.metadata).map(([k, v]) => (
+                                                    <li key={k}><strong>{k}:</strong> {String(v)}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {item.parameters && Object.keys(item.parameters).length > 0 && (
+                                        <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '8px' }}>
+                                            <strong>Paramètres utilisés:</strong> {JSON.stringify(item.parameters, null, 2)}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        } catch (error) {
+                            console.error(`Erreur lors du rendu du résultat ${index}:`, error, item);
+                            return (
+                                <div key={`error-${index}`} style={{
+                                    marginBottom: '15px',
+                                    padding: '12px',
+                                    background: 'var(--theia-error-foreground)',
+                                    color: 'white',
                                     borderRadius: '4px'
                                 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                                        <strong>📍 Coordonnées détectées :</strong>
-                                        <button
-                                            className='theia-button secondary'
-                                            onClick={() => copyToClipboard(item.coordinates?.formatted || 
-                                                `${item.coordinates?.latitude} ${item.coordinates?.longitude}`)}
-                                            title='Copier les coordonnées'
-                                            style={{ padding: '4px 8px', fontSize: '11px' }}
-                                        >
-                                            📋 Copier
-                                        </button>
-                                        {canRequestWaypoint && buildGcCoords(item.coordinates) && (
-                                            <>
-                                                {['manual', 'auto'].map(mode => (
-                                                    <button
-                                                        key={mode}
-                                                        className='theia-button'
-                                                        onClick={() => {
-                                                            const gcCoords = buildGcCoords(item.coordinates);
-                                                            if (!gcCoords) {
-                                                                return;
-                                                            }
-                                                            const decimalCoords = extractDecimalCoordinates(item.coordinates, gcCoords);
-                                                            if (!decimalCoords) {
-                                                                console.warn('[Plugin Executor] Impossible de convertir les coordonnées pour la carte', {
-                                                                    coordinates: item.coordinates,
-                                                                    fallback: gcCoords
-                                                                });
-                                                            }
-                                                            onRequestAddWaypoint?.({
-                                                                gcCoords,
-                                                                pluginName: pluginName || result.plugin_info?.name,
-                                                                geocache: geocacheContext ? {
-                                                                    gcCode: geocacheContext.gcCode,
-                                                                    name: geocacheContext.name
-                                                                } : undefined,
-                                                                sourceResultText: item.text_output,
-                                                                waypointTitle: `${result.plugin_info?.name || pluginName || 'Coordonnées détectées'}`,
-                                                                waypointNote: item.text_output,
-                                                                autoSave: mode === 'auto',
-                                                                decimalLatitude: decimalCoords?.latitude,
-                                                                decimalLongitude: decimalCoords?.longitude
-                                                            });
-                                                        }}
-                                                        title={mode === 'auto'
-                                                            ? 'Créer immédiatement un waypoint validé'
-                                                            : 'Ajouter ces coordonnées comme nouveau waypoint'}
-                                                        style={{ padding: '4px 8px', fontSize: '11px' }}
-                                                    >
-                                                        {mode === 'auto' ? '✅ Ajouter et valider' : '➕ Ajouter comme waypoint'}
-                                                    </button>
-                                                ))}
-                                            </>
-                                        )}
-                                    </div>
-                                    <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
-                                        {item.coordinates.formatted || `${item.coordinates.latitude} ${item.coordinates.longitude}`}
-                                    </div>
-                                    {/* TODO: Ajouter boutons d'action (Ajouter waypoint, Ouvrir sur carte, etc.) */}
+                                    Erreur lors de l'affichage du résultat #{index + 1}
                                 </div>
-                            )}
-
-                            {item.metadata && Object.keys(item.metadata).length > 0 && (
-                                <div className='result-metadata'>
-                                    <strong>Métadonnées:</strong>
-                                    <ul>
-                                        {Object.entries(item.metadata).map(([k, v]) => (
-                                            <li key={k}><strong>{k}:</strong> {String(v)}</li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
-
-                            {item.parameters && Object.keys(item.parameters).length > 0 && (
-                                <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '8px' }}>
-                                    <strong>Paramètres utilisés:</strong> {JSON.stringify(item.parameters)}
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                            );
+                        }
+                    })}
                 </div>
             )}
 

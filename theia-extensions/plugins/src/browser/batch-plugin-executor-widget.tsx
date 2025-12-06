@@ -619,13 +619,34 @@ const BatchPluginExecutorComponent: React.FC<{
         }
     };
 
+    const applyDetectedCoordinatesAsCorrected = async (geocacheId: number, coordinatesRaw: string) => {
+        try {
+            const sanitized = coordinatesRaw.replace(/'/g, '');
+            const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${geocacheId}/coordinates`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ coordinates_raw: sanitized })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            messageService.info('Coordonnées corrigées mises à jour pour cette géocache');
+        } catch (error) {
+            console.error('[BatchPluginExecutor] Erreur lors de la mise à jour des coordonnées corrigées:', error);
+            messageService.error('Erreur lors de la mise à jour des coordonnées de la géocache');
+        }
+    };
+
     return (
         <div className='batch-plugin-executor-container' style={{ padding: '16px', height: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
             {/* En-tête */}
             <div className='batch-executor-header' style={{ borderBottom: '1px solid var(--theia-panel-border)', paddingBottom: '12px' }}>
                 <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>🔧</span> Exécution Groupée de Plugins !??
+                    <span>🔧</span> Exécution Groupée de Plugins !!!
                 </h3>
                 <div style={{ fontSize: '14px', opacity: 0.8, marginTop: '4px' }}>
                     {config.zoneName && `Zone: ${config.zoneName} • `}
@@ -873,8 +894,18 @@ const BatchPluginExecutorComponent: React.FC<{
                                         )}
 
                                         {result.coordinates && (
-                                            <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(46, 204, 113, 0.1)', borderRadius: '3px', border: '1px solid rgba(46, 204, 113, 0.3)' }}>
-                                                📍 <strong>Coordonnées trouvées:</strong> {result.coordinates.formatted}
+                                            <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(46, 204, 113, 0.1)', borderRadius: '3px', border: '1px solid rgba(46, 204, 113, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                                <span>
+                                                    📍 <strong>Coordonnées trouvées:</strong> {result.coordinates.formatted}
+                                                </span>
+                                                <button
+                                                    className='theia-button secondary'
+                                                    onClick={() => applyDetectedCoordinatesAsCorrected(result.geocacheId, result.coordinates!.formatted)}
+                                                    style={{ padding: '2px 6px', fontSize: '0.8em' }}
+                                                    title="Utiliser ces coordonnées comme coordonnées corrigées de la géocache"
+                                                >
+                                                    ✅ Utiliser
+                                                </button>
                                             </div>
                                         )}
 

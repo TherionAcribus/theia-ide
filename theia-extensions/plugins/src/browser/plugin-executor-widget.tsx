@@ -600,7 +600,8 @@ const PluginExecutorComponent: React.FC<{
                                     },
                                     autoSaved: false,
                                     replaceExisting: false,
-                                    waypointTitle: pluginLabel,
+                                    // Utiliser le nom de la cache si disponible pour l'affichage dans la popup
+                                    waypointTitle: context.name,
                                     waypointNote: item.text_output,
                                     sourceResultText: item.text_output
                                 }

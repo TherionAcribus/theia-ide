@@ -110,7 +110,8 @@ function dispatchCoordinateToMap(
             },
             autoSaved: false,
             replaceExisting: false,
-            waypointTitle: `${pluginName} - ${gcCode}`,
+            // Utiliser le nom de la géocache pour l'affichage dans la popup de carte
+            waypointTitle: geocacheName,
             waypointNote: sourceResultText || `Coordonnées détectées par ${pluginName}`,
             sourceResultText: sourceResultText
         }

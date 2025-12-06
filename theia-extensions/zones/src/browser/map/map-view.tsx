@@ -146,11 +146,18 @@ export const MapView: React.FC<MapViewProps> = ({
 
             if (props.isDetectedCoordinate) {
                 // Afficher un popup spécifique pour la coordonnée détectée
+                const gcCode = props.gcCode || props.gc_code || 'Point détecté';
+
+                // Essayer de retrouver la géocache correspondante pour récupérer le nom / type
+                const matchingGeocache = geocaches.find(gc => gc.gc_code === gcCode);
+
                 const popupContent = {
                     id: -1,
-                    gc_code: props.gcCode || 'Point détecté',
-                    name: props.waypointTitle || props.pluginName || 'Coordonnée détectée',
-                    cache_type: props.formatted || 'Coordonnées temporaires',
+                    gc_code: gcCode,
+                    // Pour un point détecté, on affiche en priorité le nom réel de la cache si on le connaît.
+                    // Sinon, on se replie sur waypointTitle (envoyé par le frontend comme nom de cache).
+                    name: matchingGeocache?.name || props.waypointTitle,
+                    cache_type: matchingGeocache?.cache_type || props.formatted || 'Coordonnées temporaires',
                     difficulty: undefined,
                     terrain: undefined,
                     pluginName: props.pluginName,
@@ -873,28 +880,29 @@ export const MapView: React.FC<MapViewProps> = ({
                         border: '2px solid var(--theia-focusBorder)',
                         borderRadius: '4px',
                         padding: '12px',
-                        minWidth: '200px',
+                        minWidth: '220px',
                         boxShadow: '0 3px 14px rgba(0,0,0,0.4)',
                         pointerEvents: 'none'
                     }}
                 >
                     {popupData && (
                         <div style={{ color: 'var(--theia-foreground)' }}>
+                            {/* Titre : GC + nom */}
                             <div style={{ 
                                 fontWeight: 'bold', 
                                 fontSize: '14px',
-                                marginBottom: '8px',
+                                marginBottom: '6px',
                                 color: 'var(--theia-textLink-foreground)'
                             }}>
                                 {popupData.gc_code}
+                                {popupData.name ? ` - ${popupData.name}` : ''}
                             </div>
-                            <div style={{ marginBottom: '4px', fontSize: '13px' }}>
-                                {popupData.name}
-                            </div>
+
+                            {/* D/T */}
                             <div style={{ 
                                 fontSize: '12px',
                                 color: 'var(--theia-descriptionForeground)',
-                                marginTop: '8px',
+                                marginTop: '4px',
                                 display: 'flex',
                                 gap: '12px'
                             }}>
@@ -905,6 +913,8 @@ export const MapView: React.FC<MapViewProps> = ({
                                     <span>T: {popupData.terrain.toFixed(1)}</span>
                                 )}
                             </div>
+
+                            {/* Type / info complémentaire */}
                             <div style={{ 
                                 fontSize: '11px',
                                 color: 'var(--theia-descriptionForeground)',

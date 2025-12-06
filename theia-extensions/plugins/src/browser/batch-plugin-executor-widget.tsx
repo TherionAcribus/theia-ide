@@ -16,7 +16,7 @@ import * as React from '@theia/core/shared/react';
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
-import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
+import { ApplicationShell, WidgetManager, ConfirmDialog } from '@theia/core/lib/browser';
 import { Plugin, PluginDetails, PluginResult } from '../common/plugin-protocol';
 import { PluginsServiceImpl } from './services/plugins-service';
 
@@ -619,7 +619,7 @@ const BatchPluginExecutorComponent: React.FC<{
         }
     };
 
-    const applyDetectedCoordinatesAsCorrected = async (geocacheId: number, coordinatesRaw: string) => {
+    const applyDetectedCoordinatesAsCorrected = async (geocacheId: number, coordinatesRaw: string): Promise<boolean> => {
         try {
             const sanitized = coordinatesRaw.replace(/'/g, '');
             const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${geocacheId}/coordinates`, {
@@ -634,9 +634,51 @@ const BatchPluginExecutorComponent: React.FC<{
             }
 
             messageService.info('Coordonnées corrigées mises à jour pour cette géocache');
+            return true;
         } catch (error) {
             console.error('[BatchPluginExecutor] Erreur lors de la mise à jour des coordonnées corrigées:', error);
             messageService.error('Erreur lors de la mise à jour des coordonnées de la géocache');
+            return false;
+        }
+    };
+
+    const handleApplyAllDetectedCoordinates = async () => {
+        const targets = state.results.filter(r => r.coordinates);
+
+        if (targets.length === 0) {
+            messageService.info('Aucune coordonnée trouvée à appliquer');
+            return;
+        }
+
+        const dialog = new ConfirmDialog({
+            title: 'Appliquer les coordonnées trouvées',
+            msg: `Voulez-vous appliquer les coordonnées trouvées à ${targets.length} géocache(s) ?`,
+            ok: 'Confirmer',
+            cancel: 'Annuler'
+        });
+
+        const confirmed = await dialog.open();
+        if (!confirmed) {
+            return;
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const result of targets) {
+            const ok = await applyDetectedCoordinatesAsCorrected(result.geocacheId, result.coordinates!.formatted);
+            if (ok) {
+                successCount++;
+            } else {
+                errorCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            messageService.info(`Coordonnées appliquées pour ${successCount} géocache(s)`);
+        }
+        if (errorCount > 0) {
+            messageService.warn(`Échec de l'application des coordonnées pour ${errorCount} géocache(s)`);
         }
     };
 
@@ -847,8 +889,17 @@ const BatchPluginExecutorComponent: React.FC<{
                 display: 'flex',
                 flexDirection: 'column'
             }}>
-                <div style={{ padding: '12px', borderBottom: '1px solid var(--theia-panel-border)', background: 'var(--theia-editor-background)' }}>
+                <div style={{ padding: '12px', borderBottom: '1px solid var(--theia-panel-border)', background: 'var(--theia-editor-background)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                     <h4 style={{ margin: 0 }}>📋 Géocaches ({config.geocaches.length})</h4>
+                    {state.results.some(r => r.coordinates) && (
+                        <button
+                            className='theia-button secondary'
+                            onClick={handleApplyAllDetectedCoordinates}
+                            style={{ fontSize: '0.85em', padding: '4px 8px' }}
+                        >
+                            ✅ Utiliser toutes les coordonnées trouvées
+                        </button>
+                    )}
                 </div>
                 <div style={{ flex: 1, overflow: 'auto' }}>
                     {state.results.map((result, index) => {

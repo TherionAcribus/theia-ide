@@ -609,6 +609,96 @@ const BatchPluginExecutorComponent: React.FC<{
         return { completed, errors, pending, executing };
     }, [state.results]);
 
+    const formatGeocachingCoordinates = (lat: number, lon: number): string => {
+        const latDir = lat >= 0 ? 'N' : 'S';
+        const lonDir = lon >= 0 ? 'E' : 'W';
+
+        const absLat = Math.abs(lat);
+        const absLon = Math.abs(lon);
+
+        const latDeg = Math.floor(absLat);
+        const lonDeg = Math.floor(absLon);
+
+        const latMin = (absLat - latDeg) * 60;
+        const lonMin = (absLon - lonDeg) * 60;
+
+        return `${latDir} ${latDeg}° ${latMin.toFixed(3)} ${lonDir} ${String(lonDeg).padStart(3, '0')}° ${lonMin.toFixed(3)}`;
+    };
+
+    const ensureGeocacheDetailsWidget = async (geocacheId: number, name?: string): Promise<void> => {
+        try {
+            const widget: any = await widgetManager.getOrCreateWidget('geocache.details.widget');
+
+            if (widget && typeof widget.setGeocache === 'function') {
+                widget.setGeocache({ geocacheId, name });
+            }
+
+            if (!widget.isAttached) {
+                await shell.addWidget(widget, { area: 'main' });
+            }
+
+            await shell.activateWidget(widget.id);
+        } catch (error) {
+            console.error('[BatchPluginExecutor] Impossible d\'ouvrir les détails de la géocache pour le waypoint:', error);
+            messageService.error('Impossible d\'ouvrir la géocache pour créer le waypoint');
+        }
+    };
+
+    const createWaypointFromBatchResult = async (result: BatchGeocacheResult, autoSave: boolean): Promise<void> => {
+        if (!result.coordinates) {
+            messageService.error('Ce résultat ne contient pas de coordonnées valides');
+            return;
+        }
+
+        try {
+            // S'assurer que le widget de détails de la géocache est ouvert et chargé
+            await ensureGeocacheDetailsWidget(result.geocacheId, result.name);
+
+            const coords = result.coordinates;
+            const gcCoords = formatGeocachingCoordinates(coords.latitude, coords.longitude);
+
+            const sourceText = result.result?.results?.[0]?.text_output || coords.formatted;
+            const note = `Coordonnées détectées par ${state.plugin || 'Batch Plugin'}\n\n${sourceText || ''}`;
+            const title = result.name || `Résultat pour ${result.gcCode}`;
+
+            const dispatchEvent = () => {
+                window.dispatchEvent(new CustomEvent('geoapp-plugin-add-waypoint', {
+                    detail: {
+                        gcCoords,
+                        pluginName: state.plugin || 'Batch Plugin',
+                        geocache: result.gcCode ? { gcCode: result.gcCode, name: result.name } : undefined,
+                        waypointTitle: title,
+                        waypointNote: note,
+                        sourceResultText: sourceText,
+                        decimalLatitude: coords.latitude,
+                        decimalLongitude: coords.longitude,
+                        autoSave
+                    }
+                }));
+            };
+
+            if (autoSave) {
+                // Pour l'autoSave, la géocacheId est suffisante, on peut déclencher immédiatement
+                dispatchEvent();
+            } else {
+                // Pour le formulaire éditable, laisser un court délai pour que le formulaire se monte
+                setTimeout(() => {
+                    dispatchEvent();
+                }, 300);
+            }
+
+            if (autoSave) {
+                messageService.info(`${title} validé automatiquement en waypoint`);
+            } else {
+                messageService.info(`${title}: formulaire de waypoint ouvert`);
+            }
+
+        } catch (error) {
+            console.error('[BatchPluginExecutor] Erreur lors de la création du waypoint depuis le batch:', error);
+            messageService.error('Erreur lors de la création du waypoint');
+        }
+    };
+
     const openGeocachePage = (geocacheId: number) => {
         try {
             window.dispatchEvent(new CustomEvent('geoapp-open-geocache-details', {
@@ -949,14 +1039,32 @@ const BatchPluginExecutorComponent: React.FC<{
                                                 <span>
                                                     📍 <strong>Coordonnées trouvées:</strong> {result.coordinates.formatted}
                                                 </span>
-                                                <button
-                                                    className='theia-button secondary'
-                                                    onClick={() => applyDetectedCoordinatesAsCorrected(result.geocacheId, result.coordinates!.formatted)}
-                                                    style={{ padding: '2px 6px', fontSize: '0.8em' }}
-                                                    title="Utiliser ces coordonnées comme coordonnées corrigées de la géocache"
-                                                >
-                                                    ✅ Utiliser
-                                                </button>
+                                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                                    <button
+                                                        className='theia-button secondary'
+                                                        onClick={() => createWaypointFromBatchResult(result, false)}
+                                                        style={{ padding: '2px 6px', fontSize: '0.8em' }}
+                                                        title="Ouvrir le formulaire de waypoint prérempli pour ces coordonnées"
+                                                    >
+                                                        ➕ Waypoint
+                                                    </button>
+                                                    <button
+                                                        className='theia-button secondary'
+                                                        onClick={() => createWaypointFromBatchResult(result, true)}
+                                                        style={{ padding: '2px 6px', fontSize: '0.8em' }}
+                                                        title="Créer et valider immédiatement un waypoint avec ces coordonnées"
+                                                    >
+                                                        ✅ Ajouter & valider
+                                                    </button>
+                                                    <button
+                                                        className='theia-button secondary'
+                                                        onClick={() => applyDetectedCoordinatesAsCorrected(result.geocacheId, result.coordinates!.formatted)}
+                                                        style={{ padding: '2px 6px', fontSize: '0.8em' }}
+                                                        title="Utiliser ces coordonnées comme coordonnées corrigées de la géocache"
+                                                    >
+                                                        💾 Corriger
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
 

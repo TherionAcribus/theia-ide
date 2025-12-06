@@ -28,6 +28,7 @@ export interface DetectedCoordinateHighlight {
     longitude: number;
     formatted?: string;
     gcCode?: string;
+    geocacheId?: number; // ID de la géocache associée
     pluginName?: string;
     autoSaved?: boolean;
     replaceExisting?: boolean;
@@ -41,6 +42,7 @@ export interface DetectedCoordinateHighlight {
 
 interface DetectedCoordinateHighlightEventDetail {
     gcCode?: string;
+    geocacheId?: number; // ID de la géocache associée
     pluginName?: string;
     coordinates?: {
         latitude?: number;
@@ -140,6 +142,7 @@ export class MapService {
             longitude,
             formatted,
             gcCode: detail.gcCode,
+            geocacheId: detail.geocacheId,
             pluginName: detail.pluginName,
             autoSaved: detail.autoSaved,
             replaceExisting: detail.replaceExisting,

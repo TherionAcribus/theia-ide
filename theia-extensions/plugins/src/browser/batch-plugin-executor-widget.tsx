@@ -92,6 +92,7 @@ async function loadBatchMap(
  */
 function dispatchCoordinateToMap(
     gcCode: string,
+    geocacheId: number,
     geocacheName: string,
     coordinates: { latitude: number; longitude: number; formatted: string },
     pluginName: string,
@@ -102,6 +103,7 @@ function dispatchCoordinateToMap(
     window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
         detail: {
             gcCode: gcCode,
+            geocacheId: geocacheId,
             pluginName: pluginName,
             coordinates: {
                 latitude: coordinates.latitude,
@@ -338,6 +340,7 @@ const BatchPluginExecutorComponent: React.FC<{
                     
                     dispatchCoordinateToMap(
                         result.gcCode,
+                        result.geocacheId,
                         result.name,
                         result.coordinates,
                         state.plugin || 'Batch Plugin',

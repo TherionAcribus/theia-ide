@@ -137,11 +137,16 @@ export class MapWidget extends ReactWidget {
     }
 
     protected render(): React.ReactNode {
-        // Déterminer si on doit afficher les options de waypoint
+        // Déterminer si on doit afficher les options de waypoint (carte de géocache uniquement)
         const isGeocacheMap = this.context.type === 'geocache' && this.context.id;
         const onAddWaypoint = isGeocacheMap ? this.handleAddWaypoint : undefined;
         const onDeleteWaypoint = isGeocacheMap ? this.handleDeleteWaypoint : undefined;
         const onSetWaypointAsCorrectedCoords = isGeocacheMap ? this.handleSetWaypointAsCorrectedCoords : undefined;
+        
+        // Options pour les coordonnées détectées (carte batch/générale uniquement, pas zone ni géocache)
+        const isBatchOrGeneralMap = this.context.type === 'general';
+        const onSetDetectedAsCorrectedCoords = isBatchOrGeneralMap ? this.handleSetDetectedAsCorrectedCoords : undefined;
+        const onAddWaypointFromDetected = isBatchOrGeneralMap ? this.handleAddWaypointFromDetected : undefined;
 
         return (
             <MapView
@@ -149,8 +154,10 @@ export class MapWidget extends ReactWidget {
                 geocaches={this.geocaches}
                 onMapReady={this.handleMapReady}
                 onAddWaypoint={onAddWaypoint}
+                onAddWaypointFromDetected={onAddWaypointFromDetected}
                 onDeleteWaypoint={onDeleteWaypoint}
                 onSetWaypointAsCorrectedCoords={onSetWaypointAsCorrectedCoords}
+                onSetDetectedAsCorrectedCoords={onSetDetectedAsCorrectedCoords}
                 onOpenGeocacheDetails={this.handleOpenGeocacheDetails}
                 preferences={this.mapPreferences}
                 onPreferenceChange={this.handlePreferenceUpdate}
@@ -219,6 +226,87 @@ export class MapWidget extends ReactWidget {
             await (detailsWidget as any).setWaypointAsCorrectedCoords(waypointId);
         } else {
             this.messageService.warn('Veuillez ouvrir les détails de la géocache pour définir les coordonnées corrigées');
+        }
+    };
+
+    /**
+     * Gère l'ajout d'un waypoint à une géocache depuis une coordonnée détectée sur la carte batch
+     */
+    private handleAddWaypointFromDetected = async (
+        geocacheId: number,
+        options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }
+    ): Promise<void> => {
+        try {
+            // Sanitize les coordonnées (retirer les apostrophes)
+            const sanitizedCoords = options.gcCoords.replace(/'/g, '');
+
+            // Le backend attend 'gc_coords' pour parser les coordonnées
+            const waypointData = {
+                name: options.title || 'Waypoint détecté',
+                gc_coords: sanitizedCoords,
+                note: options.note || '',
+                type: 'User Waypoint'
+            };
+
+            const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${geocacheId}/waypoints`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(waypointData)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            if (options.autoSave) {
+                this.messageService.info('Waypoint créé avec succès');
+            } else {
+                this.messageService.info('Waypoint ajouté - ouvrez la géocache pour le modifier');
+            }
+
+            // Rafraîchir le widget de détails si ouvert pour cette géocache
+            const detailsWidgetId = 'geocache.details.widget';
+            const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+            if (detailsWidget && 'load' in detailsWidget) {
+                await (detailsWidget as any).load();
+            }
+        } catch (error) {
+            console.error('[MapWidget] Erreur lors de l\'ajout du waypoint:', error);
+            this.messageService.error('Erreur lors de l\'ajout du waypoint');
+        }
+    };
+
+    /**
+     * Gère la correction des coordonnées d'une géocache depuis une coordonnée détectée sur la carte
+     */
+    private handleSetDetectedAsCorrectedCoords = async (geocacheId: number, gcCoords: string): Promise<void> => {
+        try {
+            // Sanitize les coordonnées (retirer les apostrophes)
+            const sanitizedCoords = gcCoords.replace(/'/g, '');
+
+            const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${geocacheId}/coordinates`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ coordinates_raw: sanitizedCoords })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            this.messageService.info('Coordonnées corrigées mises à jour');
+
+            // Rafraîchir le widget de détails si ouvert
+            const detailsWidgetId = 'geocache.details.widget';
+            const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+            if (detailsWidget && 'load' in detailsWidget) {
+                await (detailsWidget as any).load();
+            }
+        } catch (error) {
+            console.error('[MapWidget] Erreur lors de la correction des coordonnées:', error);
+            this.messageService.error('Erreur lors de la mise à jour des coordonnées');
         }
     };
 

@@ -24,9 +24,11 @@ export interface MapViewProps {
     mapService: MapService;
     geocaches: MapGeocache[];  // ✅ Données propres à cette carte
     onMapReady?: (map: Map) => void;
-    onAddWaypoint?: (options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }) => void;  // ✅ Callback pour ajouter un waypoint
+    onAddWaypoint?: (options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }) => void;  // ✅ Callback pour ajouter un waypoint (carte géocache)
+    onAddWaypointFromDetected?: (geocacheId: number, options: { gcCoords: string; title?: string; note?: string; autoSave?: boolean }) => void;  // ✅ Callback pour ajouter un waypoint depuis une coordonnée détectée (carte batch)
     onDeleteWaypoint?: (waypointId: number) => void;  // ✅ Callback pour supprimer un waypoint
     onSetWaypointAsCorrectedCoords?: (waypointId: number) => void;  // ✅ Callback pour définir comme coordonnées corrigées
+    onSetDetectedAsCorrectedCoords?: (geocacheId: number, gcCoords: string) => void;  // ✅ Callback pour corriger les coordonnées d'une géocache depuis une coordonnée détectée
     onOpenGeocacheDetails?: (geocacheId: number, geocacheName: string) => void;  // ✅ Callback pour ouvrir les détails d'une géocache
     preferences?: MapViewPreferences;
     onPreferenceChange?: (key: string, value: unknown) => void;
@@ -40,8 +42,10 @@ export const MapView: React.FC<MapViewProps> = ({
     geocaches,
     onMapReady,
     onAddWaypoint,
+    onAddWaypointFromDetected,
     onDeleteWaypoint,
     onSetWaypointAsCorrectedCoords,
+    onSetDetectedAsCorrectedCoords,
     onOpenGeocacheDetails,
     preferences,
     onPreferenceChange
@@ -204,6 +208,7 @@ export const MapView: React.FC<MapViewProps> = ({
                     formatted?: string;
                     pluginName?: string;
                     gcCode?: string;
+                    geocacheId?: number;
                     latDecimal?: number;
                     lonDecimal?: number;
                     waypointTitle?: string;
@@ -311,6 +316,7 @@ export const MapView: React.FC<MapViewProps> = ({
                         });
                     }
 
+                    // Options waypoint pour carte géocache (onAddWaypoint)
                     if (onAddWaypoint) {
                         items.push({ separator: true });
                         items.push({
@@ -334,6 +340,50 @@ export const MapView: React.FC<MapViewProps> = ({
                                     note: waypointNote,
                                     autoSave: true
                                 });
+                            }
+                        });
+                    }
+
+                    // Utiliser geocacheId directement depuis les props, ou chercher via gcCode
+                    const detectedGcCode = props.gcCode || props.gc_code;
+                    const geocacheIdToUse = props.geocacheId || (detectedGcCode ? geocaches.find(gc => gc.gc_code === detectedGcCode)?.id : undefined);
+
+                    // Options waypoint pour carte batch (onAddWaypointFromDetected)
+                    if (onAddWaypointFromDetected && geocacheIdToUse) {
+                        items.push({ separator: true });
+                        items.push({
+                            label: 'Ajouter un waypoint à valider',
+                            icon: '➕',
+                            action: () => {
+                                onAddWaypointFromDetected(geocacheIdToUse, {
+                                    gcCoords,
+                                    title: waypointTitle,
+                                    note: waypointNote
+                                });
+                            }
+                        });
+                        items.push({
+                            label: 'Ajouter un waypoint validé',
+                            icon: '✅',
+                            action: () => {
+                                onAddWaypointFromDetected(geocacheIdToUse, {
+                                    gcCoords,
+                                    title: waypointTitle,
+                                    note: waypointNote,
+                                    autoSave: true
+                                });
+                            }
+                        });
+                    }
+
+                    // Option pour corriger les coordonnées de la géocache
+                    if (onSetDetectedAsCorrectedCoords && geocacheIdToUse) {
+                        items.push({ separator: true });
+                        items.push({
+                            label: 'Corriger les coordonnées de la cache',
+                            icon: '📍',
+                            action: () => {
+                                onSetDetectedAsCorrectedCoords(geocacheIdToUse, gcCoords);
                             }
                         });
                     }

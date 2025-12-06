@@ -43,6 +43,7 @@ export interface Geocache {
     is_corrected?: boolean;
     original_latitude?: number;
     original_longitude?: number;
+    original_coordinates_raw?: string;
     coordinates_raw?: string;
     description?: string;
     hint?: string;

@@ -581,6 +581,9 @@ export class ZoneGeocachesWidget extends ReactWidget {
                         id: g.id,
                         gc_code: g.gc_code,
                         name: g.name,
+                        original_latitude: g.original_latitude,
+                        original_longitude: g.original_longitude,
+                        original_coordinates_raw: g.original_coordinates_raw,
                         coordinates: (g.latitude && g.longitude) ? {
                             latitude: g.latitude,
                             longitude: g.longitude,

@@ -127,6 +127,9 @@ export interface BatchGeocacheContext {
     id: number;
     gc_code: string;
     name: string;
+    original_latitude?: number;
+    original_longitude?: number;
+    original_coordinates_raw?: string;
     coordinates?: {
         latitude: number;
         longitude: number;
@@ -297,6 +300,14 @@ const BatchPluginExecutorComponent: React.FC<{
         executionMode: 'sequential',
         maxConcurrency: 3
     }));
+
+    const originalGeocacheById = React.useMemo(() => {
+        const map = new Map<number, BatchGeocacheContext>();
+        config.geocaches.forEach(g => {
+            map.set(g.id, g);
+        });
+        return map;
+    }, [config.geocaches]);
 
     // Charger les géocaches sur la carte via WidgetManager
     React.useEffect(() => {
@@ -598,6 +609,16 @@ const BatchPluginExecutorComponent: React.FC<{
         return { completed, errors, pending, executing };
     }, [state.results]);
 
+    const openGeocachePage = (geocacheId: number) => {
+        try {
+            window.dispatchEvent(new CustomEvent('geoapp-open-geocache-details', {
+                detail: { geocacheId }
+            }));
+        } catch (error) {
+            console.error('[BatchPluginExecutor] Failed to dispatch geoapp-open-geocache-details event', error);
+        }
+    };
+
     return (
         <div className='batch-plugin-executor-container' style={{ padding: '16px', height: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
@@ -809,61 +830,81 @@ const BatchPluginExecutorComponent: React.FC<{
                     <h4 style={{ margin: 0 }}>📋 Géocaches ({config.geocaches.length})</h4>
                 </div>
                 <div style={{ flex: 1, overflow: 'auto' }}>
-                    {state.results.map((result, index) => (
-                        <div 
-                            key={result.geocacheId}
-                            style={{ 
-                                padding: '8px 12px', 
-                                borderBottom: '1px solid var(--theia-panel-border)',
-                                background: result.status === 'executing' ? 'var(--theia-list-activeSelectionBackground)' : 
-                                          result.status === 'completed' ? 'rgba(46, 204, 113, 0.1)' :
-                                          result.status === 'error' ? 'rgba(231, 76, 60, 0.1)' : 'transparent'
-                            }}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                        <strong>{result.gcCode}</strong> - {result.name}
-                                        <div style={{ fontSize: '16px' }}>
-                                            {result.status === 'pending' && '⏳'}
-                                            {result.status === 'executing' && '🔄'}
-                                            {result.status === 'completed' && '✅'}
-                                            {result.status === 'error' && '❌'}
+                    {state.results.map((result, index) => {
+                        const originalGeocache = originalGeocacheById.get(result.geocacheId);
+                        const originalCoordsRaw = originalGeocache?.original_coordinates_raw
+                            || originalGeocache?.coordinates?.coordinates_raw;
+
+                        return (
+                            <div 
+                                key={result.geocacheId}
+                                style={{ 
+                                    padding: '8px 12px', 
+                                    borderBottom: '1px solid var(--theia-panel-border)',
+                                    background: result.status === 'executing' ? 'var(--theia-list-activeSelectionBackground)' : 
+                                              result.status === 'completed' ? 'rgba(46, 204, 113, 0.1)' :
+                                              result.status === 'error' ? 'rgba(231, 76, 60, 0.1)' : 'transparent'
+                                }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                            <button
+                                                onClick={() => openGeocachePage(result.geocacheId)}
+                                                className='theia-button secondary'
+                                                title={`Ouvrir la géocache ${result.gcCode} dans l'application`}
+                                                style={{ padding: '2px 6px', fontSize: '0.85em' }}
+                                            >
+                                                📖
+                                            </button>
+                                            <strong>{result.gcCode}</strong> - {result.name}
+                                            <div style={{ fontSize: '16px' }}>
+                                                {result.status === 'pending' && '⏳'}
+                                                {result.status === 'executing' && '🔄'}
+                                                {result.status === 'completed' && '✅'}
+                                                {result.status === 'error' && '❌'}
+                                            </div>
                                         </div>
+
+                                        {originalCoordsRaw && (
+                                            <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(52, 152, 219, 0.06)', borderRadius: '3px', border: '1px solid rgba(52, 152, 219, 0.3)' }}>
+                                                📌 <strong>Coordonnées d'origine:</strong> {originalCoordsRaw}
+                                            </div>
+                                        )}
+
+                                        {result.coordinates && (
+                                            <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(46, 204, 113, 0.1)', borderRadius: '3px', border: '1px solid rgba(46, 204, 113, 0.3)' }}>
+                                                📍 <strong>Coordonnées trouvées:</strong> {result.coordinates.formatted}
+                                            </div>
+                                        )}
+
+                                        {result.result && result.result.results && result.result.results.length > 0 && (
+                                            <div style={{ marginTop: '8px' }}>
+                                                <div style={{ fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>📋 Résultats:</div>
+                                                {result.result.results.map((item: any, idx: number) => (
+                                                    <div key={idx} style={{ fontSize: '11px', opacity: 0.7, marginBottom: '2px', paddingLeft: '8px' }}>
+                                                        • {item.text_output ? item.text_output.substring(0, 100) + (item.text_output.length > 100 ? '...' : '') : 'Pas de texte'}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {result.error && (
+                                            <div style={{ fontSize: '12px', color: 'var(--theia-errorForeground)', marginTop: '4px', padding: '4px 8px', background: 'rgba(231, 76, 60, 0.1)', borderRadius: '3px' }}>
+                                                ❌ <strong>Erreur:</strong> {result.error}
+                                            </div>
+                                        )}
+
+                                        {result.executionTime && (
+                                            <div style={{ fontSize: '11px', opacity: 0.6, marginTop: '4px' }}>
+                                                ⏱️ Temps d'exécution: {result.executionTime.toFixed(0)}ms
+                                            </div>
+                                        )}
                                     </div>
-                                    
-                                    {result.coordinates && (
-                                        <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(46, 204, 113, 0.1)', borderRadius: '3px', border: '1px solid rgba(46, 204, 113, 0.3)' }}>
-                                            📍 <strong>Coordonnées trouvées:</strong> {result.coordinates.formatted}
-                                        </div>
-                                    )}
-                                    
-                                    {result.result && result.result.results && result.result.results.length > 0 && (
-                                        <div style={{ marginTop: '8px' }}>
-                                            <div style={{ fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>📋 Résultats:</div>
-                                            {result.result.results.map((item: any, idx: number) => (
-                                                <div key={idx} style={{ fontSize: '11px', opacity: 0.7, marginBottom: '2px', paddingLeft: '8px' }}>
-                                                    • {item.text_output ? item.text_output.substring(0, 100) + (item.text_output.length > 100 ? '...' : '') : 'Pas de texte'}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    
-                                    {result.error && (
-                                        <div style={{ fontSize: '12px', color: 'var(--theia-errorForeground)', marginTop: '4px', padding: '4px 8px', background: 'rgba(231, 76, 60, 0.1)', borderRadius: '3px' }}>
-                                            ❌ <strong>Erreur:</strong> {result.error}
-                                        </div>
-                                    )}
-                                    
-                                    {result.executionTime && (
-                                        <div style={{ fontSize: '11px', opacity: 0.6, marginTop: '4px' }}>
-                                            ⏱️ Temps d'exécution: {result.executionTime.toFixed(0)}ms
-                                        </div>
-                                    )}
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 

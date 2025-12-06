@@ -603,7 +603,7 @@ const BatchPluginExecutorComponent: React.FC<{
             {/* En-tête */}
             <div className='batch-executor-header' style={{ borderBottom: '1px solid var(--theia-panel-border)', paddingBottom: '12px' }}>
                 <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>🔧</span> Exécution Groupée de Plugins ?
+                    <span>🔧</span> Exécution Groupée de Plugins !??
                 </h3>
                 <div style={{ fontSize: '14px', opacity: 0.8, marginTop: '4px' }}>
                     {config.zoneName && `Zone: ${config.zoneName} • `}

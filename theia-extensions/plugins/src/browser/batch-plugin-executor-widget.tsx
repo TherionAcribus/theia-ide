@@ -772,6 +772,73 @@ const BatchPluginExecutorComponent: React.FC<{
         }
     };
 
+    const handleCreateAllWaypointsFromDetectedCoordinates = async () => {
+        const targets = state.results.filter(r => r.coordinates);
+
+        if (targets.length === 0) {
+            messageService.info('Aucune coordonnée trouvée pour créer des waypoints');
+            return;
+        }
+
+        const dialog = new ConfirmDialog({
+            title: 'Créer les waypoints détectés',
+            msg: `Créer automatiquement un waypoint pour ${targets.length} géocache(s) avec les coordonnées trouvées ?`,
+            ok: 'Créer',
+            cancel: 'Annuler'
+        });
+
+        const confirmed = await dialog.open();
+        if (!confirmed) {
+            return;
+        }
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const result of targets) {
+            if (!result.coordinates) {
+                continue;
+            }
+
+            try {
+                const coords = result.coordinates;
+                const gcCoords = formatGeocachingCoordinates(coords.latitude, coords.longitude);
+                const sourceText = result.result?.results?.[0]?.text_output || coords.formatted;
+
+                const payload = {
+                    name: result.name || `Waypoint détecté - ${result.gcCode}`,
+                    gc_coords: gcCoords,
+                    note: `Coordonnées détectées par ${state.plugin || 'Batch Plugin'}\n\n${coords.formatted}${sourceText ? `\n\n${sourceText}` : ''}`
+                };
+
+                const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${result.geocacheId}/waypoints`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                successCount++;
+            } catch (error) {
+                console.error('[BatchPluginExecutor] Erreur lors de la création automatique du waypoint:', error);
+                errorCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            messageService.info(`Waypoints créés automatiquement pour ${successCount} géocache(s)`);
+        }
+        if (errorCount > 0) {
+            messageService.warn(`Échec de la création des waypoints pour ${errorCount} géocache(s)`);
+        }
+    };
+
     return (
         <div className='batch-plugin-executor-container' style={{ padding: '16px', height: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
@@ -982,13 +1049,22 @@ const BatchPluginExecutorComponent: React.FC<{
                 <div style={{ padding: '12px', borderBottom: '1px solid var(--theia-panel-border)', background: 'var(--theia-editor-background)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                     <h4 style={{ margin: 0 }}>📋 Géocaches ({config.geocaches.length})</h4>
                     {state.results.some(r => r.coordinates) && (
-                        <button
-                            className='theia-button secondary'
-                            onClick={handleApplyAllDetectedCoordinates}
-                            style={{ fontSize: '0.85em', padding: '4px 8px' }}
-                        >
-                            ✅ Utiliser toutes les coordonnées trouvées
-                        </button>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button
+                                className='theia-button secondary'
+                                onClick={handleApplyAllDetectedCoordinates}
+                                style={{ fontSize: '0.85em', padding: '4px 8px' }}
+                            >
+                                ✅ Utiliser toutes les coordonnées trouvées
+                            </button>
+                            <button
+                                className='theia-button secondary'
+                                onClick={handleCreateAllWaypointsFromDetectedCoordinates}
+                                style={{ fontSize: '0.85em', padding: '4px 8px' }}
+                            >
+                                🧭 Créer tous les waypoints
+                            </button>
+                        </div>
                     )}
                 </div>
                 <div style={{ flex: 1, overflow: 'auto' }}>

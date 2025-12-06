@@ -86,40 +86,37 @@ async function loadBatchMap(
     }
 }
 
-async function updateBatchMapWithCoordinates(
+/**
+ * Dispatche un événement pour afficher une coordonnée détectée sur la carte.
+ * Utilise le même système d'événements que le plugin-executor-widget.
+ */
+function dispatchCoordinateToMap(
     gcCode: string,
-    coordinates: any,
+    geocacheName: string,
+    coordinates: { latitude: number; longitude: number; formatted: string },
     pluginName: string,
-    shell: ApplicationShell,
-    widgetManager: WidgetManager
-): Promise<void> {
-    try {
-        console.log('[Batch Map] Updating coordinates for', gcCode);
-        
-        // Chercher la carte batch existante
-        const mapId = 'geoapp-map-batch';
-        const existingMap = shell.getWidgets('bottom').find(w => w.id === mapId);
-        
-        if (existingMap && 'highlightDetectedCoordinate' in existingMap) {
-            const highlight = {
+    sourceResultText?: string
+): void {
+    console.log('[Batch Map] Dispatching coordinate to map for', gcCode, coordinates);
+    
+    window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+        detail: {
+            gcCode: gcCode,
+            pluginName: pluginName,
+            coordinates: {
                 latitude: coordinates.latitude,
                 longitude: coordinates.longitude,
-                formatted: coordinates.formatted,
-                gcCode: gcCode,
-                pluginName: pluginName,
-                autoSaved: false,
-                replaceExisting: false
-            };
-            
-            (existingMap as any).highlightDetectedCoordinate(highlight);
-            console.log('[Batch Map] Updated coordinates on map');
-        } else {
-            console.warn('[Batch Map] Cannot update coordinates - map not found or not supported');
+                formatted: coordinates.formatted
+            },
+            autoSaved: false,
+            replaceExisting: false,
+            waypointTitle: `${pluginName} - ${gcCode}`,
+            waypointNote: sourceResultText || `Coordonnées détectées par ${pluginName}`,
+            sourceResultText: sourceResultText
         }
-        
-    } catch (error) {
-        console.error('[Batch Map] Error updating coordinates:', error);
-    }
+    }));
+    
+    console.log('[Batch Map] Coordinate event dispatched for', gcCode);
 }
 
 /**
@@ -307,14 +304,39 @@ const BatchPluginExecutorComponent: React.FC<{
         }
     }, [config.geocaches, shell, widgetManager, messageService]);
 
-    // Mettre à jour les coordonnées détectées
+    // Référence pour suivre les coordonnées déjà dispatchées (évite les doublons)
+    const dispatchedCoordinatesRef = React.useRef<Set<string>>(new Set());
+
+    // Mettre à jour les coordonnées détectées sur la carte au fur et à mesure
     React.useEffect(() => {
+        console.log('[Batch useEffect] Vérification des résultats pour dispatch carte:', 
+            state.results.map(r => ({ gcCode: r.gcCode, status: r.status, hasCoords: !!r.coordinates })));
+        
         state.results.forEach(result => {
             if (result.coordinates && result.status === 'completed') {
-                updateBatchMapWithCoordinates(result.gcCode, result.coordinates, state.plugin || 'unknown', shell, widgetManager);
+                // Créer une clé unique pour cette coordonnée
+                const coordKey = `${result.gcCode}-${result.coordinates.latitude}-${result.coordinates.longitude}`;
+                
+                // Ne dispatcher que si pas déjà fait
+                if (!dispatchedCoordinatesRef.current.has(coordKey)) {
+                    dispatchedCoordinatesRef.current.add(coordKey);
+                    
+                    // Récupérer le texte source si disponible
+                    const sourceText = result.result?.results?.[0]?.text_output;
+                    
+                    dispatchCoordinateToMap(
+                        result.gcCode,
+                        result.name,
+                        result.coordinates,
+                        state.plugin || 'Batch Plugin',
+                        sourceText
+                    );
+                    
+                    console.log('[Batch] Coordonnées dispatchées pour', result.gcCode, result.coordinates.formatted);
+                }
             }
         });
-    }, [state.results, state.plugin, shell, widgetManager]);
+    }, [state.results, state.plugin]);
 
     const [plugins, setPlugins] = React.useState<Plugin[]>([]);
     const [isLoadingPlugins, setIsLoadingPlugins] = React.useState(false);
@@ -406,6 +428,9 @@ const BatchPluginExecutorComponent: React.FC<{
             return;
         }
 
+        // Réinitialiser le tracking des coordonnées pour cette nouvelle exécution
+        dispatchedCoordinatesRef.current.clear();
+        
         setState(prev => ({ ...prev, isExecuting: true, startTime: new Date() }));
 
         try {
@@ -466,6 +491,15 @@ const BatchPluginExecutorComponent: React.FC<{
                 }
 
                 const status = await response.json();
+                
+                // DEBUG: Logger les résultats du backend
+                console.log('[Batch Polling] Status reçu:', status.status, 'Progress:', status.progress);
+                console.log('[Batch Polling] Résultats backend:', status.results?.map((r: any) => ({
+                    gc_code: r.gc_code,
+                    status: r.status,
+                    hasCoordinates: !!r.coordinates,
+                    coordinates: r.coordinates
+                })));
 
                 // Mettre à jour l'état avec les résultats du batch
                 setState(prev => {
@@ -533,6 +567,9 @@ const BatchPluginExecutorComponent: React.FC<{
 
     // Réinitialiser
     const handleReset = () => {
+        // Réinitialiser le tracking des coordonnées dispatchées
+        dispatchedCoordinatesRef.current.clear();
+        
         setState(prev => ({
             ...prev,
             results: config.geocaches.map(g => ({
@@ -566,7 +603,7 @@ const BatchPluginExecutorComponent: React.FC<{
             {/* En-tête */}
             <div className='batch-executor-header' style={{ borderBottom: '1px solid var(--theia-panel-border)', paddingBottom: '12px' }}>
                 <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span>🔧</span> Exécution Groupée de Plugins
+                    <span>🔧</span> Exécution Groupée de Plugins ?
                 </h3>
                 <div style={{ fontSize: '14px', opacity: 0.8, marginTop: '4px' }}>
                     {config.zoneName && `Zone: ${config.zoneName} • `}

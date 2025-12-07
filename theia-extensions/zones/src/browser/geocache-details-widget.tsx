@@ -908,6 +908,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected geocacheId?: number;
     protected data?: GeocacheDto;
     protected isLoading = false;
+    protected notesCount: number | undefined;
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
     protected isSavingWaypoint = false;
 
@@ -1188,6 +1189,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
 
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
+        this.notesCount = undefined;
         if (context.name) {
             this.title.label = `Géocache - ${context.name}`;
         } else if (this.data?.name) {
@@ -1233,6 +1235,24 @@ export class GeocacheDetailsWidget extends ReactWidget {
                 console.log('[GeocacheDetailsWidget] Fermeture de la carte géocache associée:', this.geocacheId);
                 existingMap.close();
             }
+        }
+    }
+
+    protected async loadNotesCount(): Promise<void> {
+        if (!this.geocacheId) {
+            this.notesCount = undefined;
+            return;
+        }
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/notes`, { credentials: 'include' });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            this.notesCount = Array.isArray(data.notes) ? data.notes.length : 0;
+        } catch (e) {
+            console.error('[GeocacheDetailsWidget] Failed to load notes count', e);
+            this.notesCount = undefined;
         }
     }
 
@@ -1312,6 +1332,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
             
             // Rafraîchir la carte associée avec les données à jour
             await this.refreshAssociatedMap();
+            await this.loadNotesCount();
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error('GeocacheDetailsWidget: load error', e);
@@ -1727,7 +1748,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                             style={{ fontSize: 12, padding: '4px 12px' }}
                                             title='Voir les notes de cette géocache'
                                         >
-                                            📝 Notes
+                                            📝 Notes{this.notesCount && this.notesCount > 0 ? ` (${this.notesCount})` : ''}
                                         </button>
                                     </div>
                                 </div>

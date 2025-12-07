@@ -172,6 +172,7 @@ export class GeoPreferencesWidget extends ReactWidget {
             search: 'Recherche',
             plugins: 'Plugins',
             backend: 'Backend',
+            notes: 'Notes',
             generic: 'Général'
         };
         return map[category] ?? category;

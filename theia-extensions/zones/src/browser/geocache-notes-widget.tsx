@@ -2,6 +2,7 @@ import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ConfirmSaveDialog, Dialog } from '@theia/core/lib/browser/dialogs';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { MessageService } from '@theia/core';
 
 interface NoteDto {
@@ -58,7 +59,8 @@ export class GeocacheNotesWidget extends ReactWidget {
     protected editingType: 'user' | 'system' = 'user';
 
     constructor(
-        @inject(MessageService) protected readonly messages: MessageService
+        @inject(MessageService) protected readonly messages: MessageService,
+        @inject(PreferenceService) protected readonly preferenceService: PreferenceService
     ) {
         super();
         this.id = GeocacheNotesWidget.ID;
@@ -86,6 +88,18 @@ export class GeocacheNotesWidget extends ReactWidget {
         this.title.label = params.gcCode ? `Notes - ${params.gcCode}` : 'Notes';
 
         this.loadNotes();
+        const mode = this.getGcPersonalNoteAutoSyncMode();
+        if (mode === 'onNotesOpen') {
+            void this.syncFromGeocaching(true);
+        }
+    }
+
+    protected getGcPersonalNoteAutoSyncMode(): 'manual' | 'onNotesOpen' | 'onDetailsOpen' {
+        const raw = this.preferenceService.get('geoApp.notes.gcPersonalNote.autoSyncMode', 'manual') as string;
+        if (raw === 'onNotesOpen' || raw === 'onDetailsOpen' || raw === 'manual') {
+            return raw;
+        }
+        return 'manual';
     }
 
     protected async loadNotes(): Promise<void> {
@@ -237,7 +251,7 @@ export class GeocacheNotesWidget extends ReactWidget {
         }
     }
 
-    protected async syncFromGeocaching(): Promise<void> {
+    protected async syncFromGeocaching(silent: boolean = false): Promise<void> {
         if (!this.geocacheId || this.isSyncingFromGc) {
             return;
         }
@@ -251,15 +265,21 @@ export class GeocacheNotesWidget extends ReactWidget {
             });
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `HTTP ${response.status}`);
+                throw new Error((errorData as any).error || `HTTP ${response.status}`);
             }
+
             const data: SyncFromGcResponse = await response.json();
             this.gcPersonalNote = data.gc_personal_note;
             this.gcPersonalNoteSyncedAt = data.gc_personal_note_synced_at;
-            this.messages.info('Note Geocaching.com synchronisée');
+
+            if (!silent) {
+                this.messages.info('Note Geocaching.com synchronisée');
+            }
         } catch (error) {
             console.error('[GeocacheNotesWidget] Failed to sync from Geocaching.com:', error);
-            this.messages.error('Impossible de synchroniser la note Geocaching.com');
+            if (!silent) {
+                this.messages.error('Impossible de synchroniser la note Geocaching.com');
+            }
         } finally {
             this.isSyncingFromGc = false;
             this.update();

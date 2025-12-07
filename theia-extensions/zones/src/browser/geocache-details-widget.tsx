@@ -9,6 +9,7 @@ import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
 import { FormulaSolverSolveFromGeocacheCommand } from '@mysterai/theia-formula-solver/lib/browser/formula-solver-contribution';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -920,7 +921,8 @@ export class GeocacheDetailsWidget extends ReactWidget {
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
         @inject(CommandService) protected readonly commandService: CommandService,
-        @inject(ChatService) protected readonly chatService: ChatService
+        @inject(ChatService) protected readonly chatService: ChatService,
+        @inject(PreferenceService) protected readonly preferenceService: PreferenceService
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
@@ -1238,6 +1240,37 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
     }
 
+    protected getGcPersonalNoteAutoSyncMode(): 'manual' | 'onNotesOpen' | 'onDetailsOpen' {
+        const raw = this.preferenceService.get('geoApp.notes.gcPersonalNote.autoSyncMode', 'manual') as string;
+        if (raw === 'onNotesOpen' || raw === 'onDetailsOpen' || raw === 'manual') {
+            return raw;
+        }
+        return 'manual';
+    }
+
+    protected async autoSyncGcPersonalNoteFromDetailsIfEnabled(): Promise<void> {
+        if (!this.geocacheId) {
+            return;
+        }
+        const mode = this.getGcPersonalNoteAutoSyncMode();
+        if (mode !== 'onDetailsOpen') {
+            return;
+        }
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/notes/sync-from-geocaching`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                // Ne pas notifier l'utilisateur en auto, seulement loguer
+                console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com  e9chou e9e:', errorData);
+            }
+        } catch (error) {
+            console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com  e9chou e9e:', error);
+        }
+    }
+
     protected async loadNotesCount(): Promise<void> {
         if (!this.geocacheId) {
             this.notesCount = undefined;
@@ -1333,6 +1366,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
             // Rafraîchir la carte associée avec les données à jour
             await this.refreshAssociatedMap();
             await this.loadNotesCount();
+            void this.autoSyncGcPersonalNoteFromDetailsIfEnabled();
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error('GeocacheDetailsWidget: load error', e);

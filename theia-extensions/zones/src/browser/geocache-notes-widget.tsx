@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { ConfirmSaveDialog, Dialog } from '@theia/core/lib/browser/dialogs';
 import { MessageService } from '@theia/core';
 
 interface NoteDto {
@@ -269,13 +270,76 @@ export class GeocacheNotesWidget extends ReactWidget {
         if (!this.geocacheId || note.source !== 'user') {
             return;
         }
+
+        const newText = (note.content || '').trim();
+        let finalContent = newText;
+
+        // S'assurer de l'état réel de la note personnelle sur Geocaching.com
+        let existingGcNote = (this.gcPersonalNote || '').trim();
+        if (!existingGcNote) {
+            try {
+                const url = `${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/notes/sync-from-geocaching`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    console.error('[GeocacheNotesWidget] Failed to pre-sync note from Geocaching.com before push:', errorData);
+                    this.messages.error('Impossible de vérifier la note existante sur Geocaching.com');
+                    return;
+                }
+                const data: SyncFromGcResponse = await response.json();
+                this.gcPersonalNote = data.gc_personal_note;
+                this.gcPersonalNoteSyncedAt = data.gc_personal_note_synced_at;
+                existingGcNote = (this.gcPersonalNote || '').trim();
+            } catch (error) {
+                console.error('[GeocacheNotesWidget] Failed to pre-sync note from Geocaching.com before push:', error);
+                this.messages.error('Impossible de vérifier la note existante sur Geocaching.com');
+                return;
+            }
+        }
+
+        if (existingGcNote.length > 0) {
+            const dialog = new ConfirmSaveDialog({
+                title: 'Note Geocaching.com existante',
+                msg: 'Une note personnelle existe déjà sur Geocaching.com pour cette géocache. Que souhaitez-vous faire avec la note sélectionnée ?',
+                cancel: Dialog.CANCEL,
+                dontSave: 'Ajouter à la note existante',
+                save: 'Remplacer la note existante'
+            });
+            const decision = await dialog.open();
+
+            // Annuler
+            if (decision === undefined) {
+                return;
+            }
+
+            if (decision === false) {
+                // Ajouter à la note existante
+                if (existingGcNote && newText) {
+                    finalContent = `${existingGcNote}\n\n${newText}`;
+                } else if (existingGcNote) {
+                    finalContent = existingGcNote;
+                } else {
+                    finalContent = newText;
+                }
+            } else {
+                // Remplacer : on garde finalContent = newText
+                finalContent = newText;
+            }
+        }
+
         this.syncingNoteId = note.id;
         this.update();
         try {
             const url = `${this.backendBaseUrl}/api/notes/${note.id}/sync-to-geocaching?geocacheId=${this.geocacheId}`;
+            const body = { content: finalContent };
             const response = await fetch(url, {
                 method: 'POST',
-                credentials: 'include'
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
             });
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));

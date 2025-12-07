@@ -2,13 +2,13 @@ import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
-import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { MessageService } from '@theia/core';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
 import { MapService } from './map/map-service';
 import { MapWidgetFactory } from './map/map-widget-factory';
+import { GeocacheTabsManager } from './geocache-tabs-manager';
 
 @injectable()
 export class ZoneGeocachesWidget extends ReactWidget {
@@ -31,6 +31,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
         @inject(MapService) protected readonly mapService: MapService,
         @inject(MapWidgetFactory) protected readonly mapWidgetFactory: MapWidgetFactory,
+        @inject(GeocacheTabsManager) protected readonly geocacheTabsManager: GeocacheTabsManager,
     ) {
         super();
         this.id = ZoneGeocachesWidget.ID;
@@ -867,12 +868,10 @@ export class ZoneGeocachesWidget extends ReactWidget {
             }
 
             // Ouvrir les détails de la géocache
-            const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
-            widget.setGeocache({ geocacheId: geocache.id, name: geocache.name });
-            if (!widget.isAttached) {
-                this.shell.addWidget(widget, { area: 'main' });
-            }
-            this.shell.activateWidget(widget.id);
+            await this.geocacheTabsManager.openGeocacheDetails({
+                geocacheId: geocache.id,
+                name: geocache.name
+            });
         } catch (error) {
             console.error('Failed to open GeocacheDetailsWidget:', error);
             this.messages.error('Impossible d\'ouvrir les détails de la géocache');

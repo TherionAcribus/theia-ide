@@ -4,10 +4,10 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
-import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { ContextMenu, ContextMenuItem } from './context-menu';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
 import { GeocacheIcon } from './geocache-icon';
+import { GeocacheTabsManager } from './geocache-tabs-manager';
 
 import '../../src/browser/style/zones-tree.css';
 
@@ -46,6 +46,7 @@ export class ZonesTreeWidget extends ReactWidget {
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(GeocacheTabsManager) protected readonly geocacheTabsManager: GeocacheTabsManager,
         @inject(MessageService) protected readonly messages: MessageService,
     ) {
         super();
@@ -139,12 +140,10 @@ export class ZonesTreeWidget extends ReactWidget {
 
     protected async openGeocacheDetails(geocache: GeocacheDto): Promise<void> {
         try {
-            const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
-            widget.setGeocache({ geocacheId: geocache.id, name: geocache.name });
-            if (!widget.isAttached) {
-                this.shell.addWidget(widget, { area: 'main' });
-            }
-            this.shell.activateWidget(widget.id);
+            await this.geocacheTabsManager.openGeocacheDetails({
+                geocacheId: geocache.id,
+                name: geocache.name
+            });
         } catch (error) {
             console.error('Failed to open GeocacheDetailsWidget:', error);
             this.messages.error('Impossible d\'ouvrir les détails de la géocache');

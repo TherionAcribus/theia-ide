@@ -2,13 +2,12 @@ import { injectable, inject, postConstruct } from '@theia/core/shared/inversify'
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { ApplicationShell } from '@theia/core/lib/browser';
-import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
-import { GeocacheDetailsWidget } from '../geocache-details-widget';
 import * as React from 'react';
 import { MapView, MapViewPreferences } from './map-view';
 import { MapService } from './map-service';
 import { MapGeocache } from './map-layer-manager';
 import { PreferenceService, PreferenceChange } from '@theia/core/lib/common/preferences/preference-service';
+import { GeocacheTabsManager } from '../geocache-tabs-manager';
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 
 export interface MapContext {
@@ -41,7 +40,7 @@ export class MapWidget extends ReactWidget {
         @inject(MapService) protected readonly mapService: MapService,
         @inject(MessageService) protected readonly messageService: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
-        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(GeocacheTabsManager) protected readonly geocacheTabsManager: GeocacheTabsManager,
         @inject(PreferenceService) private readonly preferenceService: PreferenceService,
     ) {
         super();
@@ -173,9 +172,8 @@ export class MapWidget extends ReactWidget {
             return;
         }
 
-        // Trouver le widget de détails de la géocache correspondant
-        const detailsWidgetId = 'geocache.details.widget';
-        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+        // Trouver le widget de détails correspondant à cette géocache
+        const detailsWidget = this.geocacheTabsManager.getWidgetForGeocache(this.context.id);
 
         if (detailsWidget && 'addWaypointWithCoordinates' in detailsWidget) {
             // Appeler la méthode publique du widget de détails
@@ -198,8 +196,7 @@ export class MapWidget extends ReactWidget {
         }
 
         // Trouver le widget de détails de la géocache correspondant
-        const detailsWidgetId = 'geocache.details.widget';
-        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+        const detailsWidget = this.geocacheTabsManager.getWidgetForGeocache(this.context.id);
 
         if (detailsWidget && 'deleteWaypointById' in detailsWidget) {
             // Appeler la méthode publique du widget de détails
@@ -218,8 +215,7 @@ export class MapWidget extends ReactWidget {
         }
 
         // Trouver le widget de détails de la géocache correspondant
-        const detailsWidgetId = 'geocache.details.widget';
-        const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+        const detailsWidget = this.geocacheTabsManager.getWidgetForGeocache(this.context.id);
 
         if (detailsWidget && 'setWaypointAsCorrectedCoords' in detailsWidget) {
             // Appeler la méthode publique du widget de détails
@@ -266,8 +262,7 @@ export class MapWidget extends ReactWidget {
             }
 
             // Rafraîchir le widget de détails si ouvert pour cette géocache
-            const detailsWidgetId = 'geocache.details.widget';
-            const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+            const detailsWidget = this.geocacheTabsManager.getWidgetForGeocache(geocacheId);
             if (detailsWidget && 'load' in detailsWidget) {
                 await (detailsWidget as any).load();
             }
@@ -299,8 +294,7 @@ export class MapWidget extends ReactWidget {
             this.messageService.info('Coordonnées corrigées mises à jour');
 
             // Rafraîchir le widget de détails si ouvert
-            const detailsWidgetId = 'geocache.details.widget';
-            const detailsWidget = this.shell.getWidgets('main').find(w => w.id === detailsWidgetId);
+            const detailsWidget = this.geocacheTabsManager.getWidgetForGeocache(geocacheId);
             if (detailsWidget && 'load' in detailsWidget) {
                 await (detailsWidget as any).load();
             }
@@ -343,15 +337,11 @@ export class MapWidget extends ReactWidget {
                 detail: { geocacheId, geocacheName }
             }));
 
-            // Ouvrir le widget de détails de la géocache
-            const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID) as GeocacheDetailsWidget;
-            widget.setGeocache({ geocacheId, name: geocacheName });
-
-            if (!widget.isAttached) {
-                this.shell.addWidget(widget, { area: 'main' });
-            }
-
-            this.shell.activateWidget(widget.id);
+            // Ouvrir le widget de détails de la géocache via le gestionnaire d'onglets
+            await this.geocacheTabsManager.openGeocacheDetails({
+                geocacheId,
+                name: geocacheName
+            });
         } catch (error) {
             console.error('[MapWidget] Erreur lors de l\'ouverture des détails de la géocache:', error);
             this.messageService.error('Impossible d\'ouvrir les détails de la géocache');

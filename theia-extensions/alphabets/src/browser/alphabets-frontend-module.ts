@@ -9,6 +9,7 @@ import { WidgetFactory, bindViewContribution, FrontendApplicationContribution } 
 import { AlphabetsListWidget } from './alphabets-list-widget';
 import { AlphabetViewerWidget } from './alphabet-viewer-widget';
 import { CommandContribution, MenuContribution } from '@theia/core';
+import { AlphabetTabsManager } from './alphabet-tabs-manager';
 
 export default new ContainerModule(bind => {
     // Bind le service
@@ -39,6 +40,16 @@ export default new ContainerModule(bind => {
         }
     })).inSingletonScope();
     
+    // Gestionnaire centralisé des onglets d'alphabets
+    bind(AlphabetTabsManager).toSelf().inSingletonScope().onActivation((context, manager) => {
+        manager.setWidgetCreator((alphabetId: string) => {
+            const child = context.container.createChild();
+            child.bind('alphabetId').toConstantValue(alphabetId);
+            return child.get(AlphabetViewerWidget);
+        });
+        return manager;
+    });
+
     // Bind la contribution (commandes, menus, vue)
     bindViewContribution(bind, AlphabetsListContribution);
     bind(FrontendApplicationContribution).toService(AlphabetsListContribution);

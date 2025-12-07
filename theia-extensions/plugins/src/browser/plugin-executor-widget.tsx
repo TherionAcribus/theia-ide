@@ -23,6 +23,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { PluginsService, Plugin, PluginDetails, PluginResult } from '../common/plugin-protocol';
 import { TasksService, Task } from '../common/task-protocol';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 
 /**
  * Mode d'exécution du Plugin Executor
@@ -221,7 +222,19 @@ export class PluginExecutorWidget extends ReactWidget {
     @inject(MessageService)
     protected readonly messageService!: MessageService;
 
+    @inject(PreferenceService)
+    protected readonly preferenceService!: PreferenceService;
+
     private config: PluginExecutorConfig | null = null;
+    private interactionTimerId: number | undefined;
+
+    private readonly handleContentClick = (): void => {
+        this.emitInteraction('click');
+    };
+
+    private readonly handleContentScroll = (): void => {
+        this.emitInteraction('scroll');
+    };
 
     @postConstruct()
     protected init(): void {
@@ -231,6 +244,77 @@ export class PluginExecutorWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-play-circle';
         this.update();
+    }
+
+    protected onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        this.addInteractionListeners();
+    }
+
+    protected onBeforeDetach(msg: any): void {
+        this.removeInteractionListeners();
+        super.onBeforeDetach(msg);
+    }
+
+    private addInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.addEventListener('click', this.handleContentClick, true);
+        this.node.addEventListener('scroll', this.handleContentScroll, true);
+    }
+
+    private removeInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.removeEventListener('click', this.handleContentClick, true);
+        this.node.removeEventListener('scroll', this.handleContentScroll, true);
+        this.clearMinOpenTimeTimer();
+    }
+
+    private emitInteraction(type: 'click' | 'scroll' | 'min-open-time'): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('geoapp-plugin-tab-interaction', {
+            detail: {
+                widgetId: this.id,
+                type
+            }
+        }));
+    }
+
+    private setupMinOpenTimeTimer(): void {
+        this.clearMinOpenTimeTimer();
+
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const enabled = this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.minOpenTimeEnabled', true) as boolean;
+        if (!enabled) {
+            return;
+        }
+
+        const timeoutSeconds = this.preferenceService.get('geoApp.ui.tabs.smartReplaceTimeout', 30) as number;
+        if (!timeoutSeconds || timeoutSeconds <= 0) {
+            return;
+        }
+
+        this.interactionTimerId = window.setTimeout(() => {
+            this.emitInteraction('min-open-time');
+        }, timeoutSeconds * 1000);
+    }
+
+    private clearMinOpenTimeTimer(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (this.interactionTimerId !== undefined) {
+            window.clearTimeout(this.interactionTimerId);
+            this.interactionTimerId = undefined;
+        }
     }
 
     /**
@@ -246,6 +330,7 @@ export class PluginExecutorWidget extends ReactWidget {
         this.title.label = `Plugin: ${pluginName}`;
         this.title.iconClass = 'fa fa-puzzle-piece';
         console.log(`[Plugin Executor] Initialized in PLUGIN mode:`, pluginName);
+        this.setupMinOpenTimeTimer();
         this.update();
     }
 
@@ -266,6 +351,7 @@ export class PluginExecutorWidget extends ReactWidget {
         this.title.label = `Analyse: ${context.gcCode}`;
         this.title.iconClass = 'fa fa-search';
         console.log(`[PluginExecutor] Initialized in GEOCACHE mode: ${context.gcCode}`);
+        this.setupMinOpenTimeTimer();
         this.update();
     }
 
@@ -289,7 +375,6 @@ export class PluginExecutorWidget extends ReactWidget {
         />;
     }
 }
-
 /**
  * Composant React pour l'interface d'exécution
  */

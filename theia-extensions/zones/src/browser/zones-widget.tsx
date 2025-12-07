@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
-import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
-import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { ZoneTabsManager } from './zone-tabs-manager';
 
 type ZoneDto = { id: number; name: string; description?: string; created_at?: string; geocaches_count: number };
 
@@ -16,8 +15,7 @@ export class ZonesWidget extends ReactWidget {
     protected readonly versionStamp = 'zones-widget@' + new Date().toISOString();
 
     constructor(
-        @inject(ApplicationShell) protected readonly shell: ApplicationShell,
-        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
+        @inject(ZoneTabsManager) protected readonly zoneTabsManager: ZoneTabsManager,
     ) {
         super();
         this.id = ZonesWidget.ID;
@@ -133,18 +131,13 @@ export class ZonesWidget extends ReactWidget {
                                     });
                                     this.activeZoneId = z.id;
                                     this.update();
-                                    // Ouvrir directement l'onglet central via WidgetManager
+                                    // Ouvrir l'onglet central via le gestionnaire d'onglets de zones
                                     try {
                                         // eslint-disable-next-line no-console
-                                        console.log('[ZonesWidget] opening ZoneGeocachesWidget via WidgetManager');
-                                        const widget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID) as ZoneGeocachesWidget;
-                                        widget.setZone({ zoneId: z.id, zoneName: z.name });
-                                        if (!widget.isAttached) {
-                                            this.shell.addWidget(widget, { area: 'main' });
-                                        }
-                                        this.shell.activateWidget(widget.id);
+                                        console.log('[ZonesWidget] opening ZoneGeocachesWidget via ZoneTabsManager');
+                                        await this.zoneTabsManager.openZone({ zoneId: z.id, zoneName: z.name });
                                     } catch (error) {
-                                        console.error('Failed to open ZoneGeocachesWidget:', error);
+                                        console.error('Failed to open ZoneGeocachesWidget via ZoneTabsManager:', error);
                                         // Fallback: événement personnalisé
                                         try {
                                             // eslint-disable-next-line no-console

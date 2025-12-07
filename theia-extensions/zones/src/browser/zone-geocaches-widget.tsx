@@ -3,6 +3,7 @@ import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
@@ -25,6 +26,8 @@ export class ZoneGeocachesWidget extends ReactWidget {
     protected copySelectedDialog: { geocacheIds: number[] } | null = null;
     protected moveSelectedDialog: { geocacheIds: number[] } | null = null;
 
+    protected interactionTimerId: number | undefined;
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -32,6 +35,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
         @inject(MapService) protected readonly mapService: MapService,
         @inject(MapWidgetFactory) protected readonly mapWidgetFactory: MapWidgetFactory,
         @inject(GeocacheTabsManager) protected readonly geocacheTabsManager: GeocacheTabsManager,
+        @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
     ) {
         super();
         this.id = ZoneGeocachesWidget.ID;
@@ -46,6 +50,86 @@ export class ZoneGeocachesWidget extends ReactWidget {
 
         // eslint-disable-next-line no-console
         console.log('[ZoneGeocachesWidget] constructed');
+    }
+
+    protected onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        this.addInteractionListeners();
+        this.setupMinOpenTimeTimer();
+    }
+
+    protected onBeforeDetach(msg: any): void {
+        this.removeInteractionListeners();
+        super.onBeforeDetach(msg);
+    }
+
+    protected addInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.addEventListener('click', this.handleContentClick, true);
+        this.node.addEventListener('scroll', this.handleContentScroll, true);
+    }
+
+    protected removeInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.removeEventListener('click', this.handleContentClick, true);
+        this.node.removeEventListener('scroll', this.handleContentScroll, true);
+        this.clearMinOpenTimeTimer();
+    }
+
+    protected readonly handleContentClick = (): void => {
+        this.emitInteraction('click');
+    };
+
+    protected readonly handleContentScroll = (): void => {
+        this.emitInteraction('scroll');
+    };
+
+    protected emitInteraction(type: 'click' | 'scroll' | 'min-open-time'): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('geoapp-zone-tab-interaction', {
+            detail: {
+                widgetId: this.id,
+                type
+            }
+        }));
+    }
+
+    protected setupMinOpenTimeTimer(): void {
+        this.clearMinOpenTimeTimer();
+
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const enabled = this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.minOpenTimeEnabled', true) as boolean;
+        if (!enabled) {
+            return;
+        }
+
+        const timeoutSeconds = this.preferenceService.get('geoApp.ui.tabs.smartReplaceTimeout', 30) as number;
+        if (!timeoutSeconds || timeoutSeconds <= 0) {
+            return;
+        }
+
+        this.interactionTimerId = window.setTimeout(() => {
+            this.emitInteraction('min-open-time');
+        }, timeoutSeconds * 1000);
+    }
+
+    protected clearMinOpenTimeTimer(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (this.interactionTimerId !== undefined) {
+            window.clearTimeout(this.interactionTimerId);
+            this.interactionTimerId = undefined;
+        }
     }
 
     private setupEventListeners(): void {
@@ -98,6 +182,7 @@ export class ZoneGeocachesWidget extends ReactWidget {
         this.title.label = `Géocaches - ${this.zoneName ?? this.zoneId}`;
         this.update();
         this.load();
+        this.setupMinOpenTimeTimer();
     }
 
     /**

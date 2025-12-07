@@ -14,6 +14,7 @@ import { MapWidgetFactory } from './map/map-widget-factory';
 import { MapManagerWidget } from './map/map-manager-widget';
 import { BatchMapIntegration } from './batch-map-integration';
 import { GeocacheTabsManager } from './geocache-tabs-manager';
+import { ZoneTabsManager } from './zone-tabs-manager';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -83,6 +84,9 @@ export default new ContainerModule(bind => {
 
     // Gestionnaire centralisé des onglets de détails de géocaches
     bind(GeocacheTabsManager).toSelf().inSingletonScope();
+
+    // Gestionnaire centralisé des onglets de tableaux de géocaches par zone
+    bind(ZoneTabsManager).toSelf().inSingletonScope();
 
     bind(ZonesFrontendContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(ZonesFrontendContribution);

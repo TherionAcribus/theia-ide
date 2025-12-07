@@ -8,6 +8,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell } from '@theia/core/lib/browser';
 import { WidgetManager } from '@theia/core/lib/browser';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { AlphabetsService } from './services/alphabets-service';
 import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo, DetectedCoordinates } from '../common/alphabet-protocol';
 import { CoordinatesDetector } from './components/coordinates-detector';
@@ -32,6 +33,9 @@ export class AlphabetViewerWidget extends ReactWidget {
 
     @inject(WidgetManager)
     protected readonly widgetManager!: WidgetManager;
+
+    @inject(PreferenceService)
+    protected readonly preferenceService!: PreferenceService;
 
     private alphabet: Alphabet | null = null;
     private alphabetId: string;
@@ -84,6 +88,16 @@ export class AlphabetViewerWidget extends ReactWidget {
     private historyIndex: number = -1;
     private maxHistorySize: number = 50;
 
+    private interactionTimerId: number | undefined;
+
+    private readonly handleContentClick = (): void => {
+        this.emitInteraction('click');
+    };
+
+    private readonly handleContentScroll = (): void => {
+        this.emitInteraction('scroll');
+    };
+
     constructor(@inject('alphabetId') alphabetId: string) {
         super();
         console.log('AlphabetViewerWidget: constructor called with alphabetId:', alphabetId);
@@ -121,8 +135,15 @@ export class AlphabetViewerWidget extends ReactWidget {
     /**
      * Nettoyage lors de la destruction du widget.
      */
-    protected onBeforeDetach(): void {
+    protected onBeforeDetach(msg: any): void {
         this.node.removeEventListener('keydown', this.handleKeyDown);
+        this.removeInteractionListeners();
+        super.onBeforeDetach(msg);
+    }
+
+    protected onAfterAttach(msg: any): void {
+        super.onAfterAttach(msg);
+        this.addInteractionListeners();
     }
 
     /**
@@ -164,6 +185,67 @@ export class AlphabetViewerWidget extends ReactWidget {
             this.importState();
         }
     };
+
+    private addInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.addEventListener('click', this.handleContentClick, true);
+        this.node.addEventListener('scroll', this.handleContentScroll, true);
+    }
+
+    private removeInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.removeEventListener('click', this.handleContentClick, true);
+        this.node.removeEventListener('scroll', this.handleContentScroll, true);
+        this.clearMinOpenTimeTimer();
+    }
+
+    private emitInteraction(type: 'click' | 'scroll' | 'min-open-time'): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('geoapp-alphabet-tab-interaction', {
+            detail: {
+                widgetId: this.id,
+                type
+            }
+        }));
+    }
+
+    private setupMinOpenTimeTimer(): void {
+        this.clearMinOpenTimeTimer();
+
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const enabled = this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.minOpenTimeEnabled', true) as boolean;
+        if (!enabled) {
+            return;
+        }
+
+        const timeoutSeconds = this.preferenceService.get('geoApp.ui.tabs.smartReplaceTimeout', 30) as number;
+        if (!timeoutSeconds || timeoutSeconds <= 0) {
+            return;
+        }
+
+        this.interactionTimerId = window.setTimeout(() => {
+            this.emitInteraction('min-open-time');
+        }, timeoutSeconds * 1000);
+    }
+
+    private clearMinOpenTimeTimer(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (this.interactionTimerId !== undefined) {
+            window.clearTimeout(this.interactionTimerId);
+            this.interactionTimerId = undefined;
+        }
+    }
 
     private formatGeocachingCoordinates(lat: number, lon: number): string {
         const latDir = lat >= 0 ? 'N' : 'S';
@@ -218,12 +300,29 @@ export class AlphabetViewerWidget extends ReactWidget {
             this.loading = false;
             this.update();
             console.log('AlphabetViewerWidget: Loading complete, updated widget');
+            this.setupMinOpenTimeTimer();
         } catch (error) {
             console.error('AlphabetViewerWidget: Error loading alphabet:', error);
             this.messageService.error(`Erreur lors du chargement de l'alphabet ${this.alphabetId}`);
             this.loading = false;
             this.update();
         }
+    }
+
+    public setAlphabet(alphabetId: string): void {
+        console.log('AlphabetViewerWidget: setAlphabet called with:', alphabetId);
+        this.alphabetId = alphabetId;
+        this.alphabet = null;
+        this.enteredChars = [];
+        this.history = [];
+        this.historyIndex = -1;
+        this.detectedCoordinates = null;
+        this.associatedGeocache = undefined;
+        this.distance = undefined;
+        this.hasActiveCoordinateHighlight = false;
+        this.lastOpenedGeocacheCode = undefined;
+        this.loadZoomState();
+        void this.loadAlphabet();
     }
 
     /**

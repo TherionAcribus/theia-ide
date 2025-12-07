@@ -13,6 +13,7 @@ import { PluginsBrowserWidget } from './plugins-browser-widget';
 import { PluginExecutorWidget, GeocacheContext } from './plugin-executor-widget';
 import { CommonMenus } from '@theia/core/lib/browser';
 import { PluginToolsManager } from './plugin-tools-manager';
+import { PluginTabsManager } from './plugin-tabs-manager';
 
 /**
  * Commandes disponibles pour l'extension Plugins.
@@ -133,7 +134,9 @@ export class PluginsBrowserContribution extends AbstractViewContribution<Plugins
 @injectable()
 export class PluginExecutorContribution extends AbstractViewContribution<PluginExecutorWidget> {
     
-    constructor() {
+    constructor(
+        @inject(PluginTabsManager) protected readonly pluginTabsManager: PluginTabsManager
+    ) {
         super({
             widgetId: PluginExecutorWidget.ID,
             widgetName: PluginExecutorWidget.LABEL,
@@ -150,9 +153,11 @@ export class PluginExecutorContribution extends AbstractViewContribution<PluginE
      */
     async openWithContext(context: GeocacheContext, pluginName?: string, autoExecute: boolean = false): Promise<void> {
         console.log('[PluginExecutorContribution] openWithContext called', context, 'pluginName:', pluginName, 'autoExecute:', autoExecute);
-        const widget = await this.openView({ activate: true });
-        console.log('[PluginExecutorContribution] widget view opened, calling initializeGeocacheMode');
-        widget.initializeGeocacheMode(context, pluginName, autoExecute);
+        await this.pluginTabsManager.openForGeocache({
+            context,
+            pluginName,
+            autoExecute
+        });
     }
     
     /**
@@ -160,8 +165,7 @@ export class PluginExecutorContribution extends AbstractViewContribution<PluginE
      * Utilisé quand l'utilisateur clique sur un plugin dans le PluginsBrowserWidget.
      */
     async openWithPlugin(pluginName: string): Promise<void> {
-        const widget = await this.openView({ activate: true });
-        widget.initializePluginMode(pluginName);
+        await this.pluginTabsManager.openPlugin({ pluginName });
     }
 }
 

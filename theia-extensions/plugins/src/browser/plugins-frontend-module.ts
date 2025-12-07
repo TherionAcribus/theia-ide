@@ -19,6 +19,7 @@ import { PluginExecutorWidget } from './plugin-executor-widget';
 import { BatchPluginExecutorWidget } from './batch-plugin-executor-widget';
 import { PluginsBrowserContribution, PluginExecutorContribution, PluginsFrontendApplicationContribution } from './plugins-contribution';
 import { PluginToolsManager } from './plugin-tools-manager';
+import { PluginTabsManager } from './plugin-tabs-manager';
 
 import './style/plugins-browser.css';
 import './style/plugin-executor.css';
@@ -55,6 +56,15 @@ export default new ContainerModule(bind => {
         createWidget: () => ctx.container.get<BatchPluginExecutorWidget>(BatchPluginExecutorWidget)
     })).inSingletonScope();
     
+    // Gestionnaire centralisé des onglets de Plugin Executor
+    bind(PluginTabsManager).toSelf().inSingletonScope().onActivation((context, manager) => {
+        manager.setWidgetCreator(() => {
+            const child = context.container.createChild();
+            return child.get(PluginExecutorWidget);
+        });
+        return manager;
+    });
+
     // Contributions
     bindViewContribution(bind, PluginsBrowserContribution);
     bind(CommandContribution).toService(PluginsBrowserContribution);

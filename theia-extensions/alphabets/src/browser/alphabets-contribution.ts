@@ -7,14 +7,13 @@ import { CommandContribution, CommandRegistry, MenuContribution, MenuModelRegist
 import {
     AbstractViewContribution,
     FrontendApplicationContribution,
-    FrontendApplication,
-    WidgetManager,
-    ApplicationShell
+    FrontendApplication
 } from '@theia/core/lib/browser';
 import { AlphabetsListWidget } from './alphabets-list-widget';
 import { AlphabetViewerWidget } from './alphabet-viewer-widget';
 import { CommonMenus } from '@theia/core/lib/browser';
 import { AlphabetsCommands } from '../common/alphabet-protocol';
+import { AlphabetTabsManager } from './alphabet-tabs-manager';
 
 /**
  * Contribution pour le widget de liste des alphabets.
@@ -24,13 +23,9 @@ export class AlphabetsListContribution
     extends AbstractViewContribution<AlphabetsListWidget>
     implements FrontendApplicationContribution {
 
-    @inject(WidgetManager)
-    protected readonly widgetManager!: WidgetManager;
-
-    @inject(ApplicationShell)
-    protected readonly shell!: ApplicationShell;
-    
-    constructor() {
+    constructor(
+        @inject(AlphabetTabsManager) protected readonly alphabetTabsManager: AlphabetTabsManager
+    ) {
         super({
             widgetId: AlphabetsListWidget.ID,
             widgetName: AlphabetsListWidget.LABEL,
@@ -47,48 +42,7 @@ export class AlphabetsListContribution
      */
     async openAlphabetViewer(alphabetId: string): Promise<AlphabetViewerWidget> {
         console.log('AlphabetsListContribution: openAlphabetViewer called with:', alphabetId);
-        const widgetId = `${AlphabetViewerWidget.ID_PREFIX}-${alphabetId}`;
-        console.log('AlphabetsListContribution: widgetId:', widgetId);
-
-        // Vérifier si le widget est déjà dans le shell
-        const widgets = this.shell.widgets;
-        const existingInShell = Array.from(widgets).find(w => w.id === widgetId);
-
-        if (existingInShell) {
-            console.log('AlphabetsListContribution: Widget already in shell, activating');
-            this.shell.activateWidget(widgetId);
-            return existingInShell as AlphabetViewerWidget;
-        }
-
-        console.log('AlphabetsListContribution: Creating new widget');
-        try {
-            // Créer le widget avec un ID unique
-            const widget = await this.widgetManager.getOrCreateWidget<AlphabetViewerWidget>(
-                AlphabetViewerWidget.ID_PREFIX,
-                { alphabetId }
-            );
-
-            console.log('AlphabetsListContribution: Widget created:', widget);
-            console.log('AlphabetsListContribution: Widget ID:', widget.id);
-
-            // S'assurer que l'ID est défini correctement
-            if (!widget.id || widget.id !== widgetId) {
-                console.log('AlphabetsListContribution: Setting widget ID to:', widgetId);
-                widget.id = widgetId;
-            }
-
-            console.log('AlphabetsListContribution: Adding widget to main area');
-            await this.shell.addWidget(widget, { area: 'main' });
-
-            console.log('AlphabetsListContribution: Activating widget');
-            this.shell.activateWidget(widgetId);
-            console.log('AlphabetsListContribution: Widget activated');
-
-            return widget;
-        } catch (error) {
-            console.error('AlphabetsListContribution: Error creating/opening widget:', error);
-            throw error;
-        }
+        return this.alphabetTabsManager.openAlphabet({ alphabetId });
     }
     
     /**

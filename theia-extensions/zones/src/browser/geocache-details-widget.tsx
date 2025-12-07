@@ -912,6 +912,15 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected notesCount: number | undefined;
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
     protected isSavingWaypoint = false;
+    protected interactionTimerId: number | undefined;
+
+    private readonly handleContentClick = (): void => {
+        this.emitInteraction('click');
+    };
+
+    private readonly handleContentScroll = (): void => {
+        this.emitInteraction('scroll');
+    };
 
     // Map pour stocker les métadonnées GeoApp des sessions de chat
     protected static geocacheChatSessions = new Map<string, GeocacheChatMetadata>();
@@ -946,9 +955,11 @@ export class GeocacheDetailsWidget extends ReactWidget {
     protected onAfterAttach(msg: any): void {
         super.onAfterAttach(msg);
         this.addEventListeners();
+        this.addInteractionListeners();
     }
 
     protected onBeforeDetach(msg: any): void {
+        this.removeInteractionListeners();
         this.removeEventListeners();
         super.onBeforeDetach(msg);
     }
@@ -999,6 +1010,23 @@ export class GeocacheDetailsWidget extends ReactWidget {
         window.removeEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
     }
 
+    private addInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.addEventListener('click', this.handleContentClick, true);
+        this.node.addEventListener('scroll', this.handleContentScroll, true);
+    }
+
+    private removeInteractionListeners(): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        this.node.removeEventListener('click', this.handleContentClick, true);
+        this.node.removeEventListener('scroll', this.handleContentScroll, true);
+        this.clearMinOpenTimeTimer();
+    }
+
     /**
      * Ouvre le formulaire d'ajout de waypoint avec des coordonnées pré-remplies
      * Méthode publique appelable depuis d'autres widgets (ex: carte)
@@ -1020,6 +1048,48 @@ export class GeocacheDetailsWidget extends ReactWidget {
             });
         } else {
             this.messages.warn('Le formulaire de waypoint n\'est pas encore chargé');
+        }
+    }
+
+    private emitInteraction(type: 'click' | 'scroll' | 'min-open-time'): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('geoapp-geocache-tab-interaction', {
+            detail: {
+                widgetId: this.id,
+                geocacheId: this.geocacheId,
+                type
+            }
+        }));
+    }
+
+    private setupMinOpenTimeTimer(): void {
+        this.clearMinOpenTimeTimer();
+
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const enabled = this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.minOpenTimeEnabled', true) as boolean;
+        if (!enabled) {
+            return;
+        }
+
+        const timeoutSeconds = this.preferenceService.get('geoApp.ui.tabs.smartReplaceTimeout', 30) as number;
+        if (!timeoutSeconds || timeoutSeconds <= 0) {
+            return;
+        }
+
+        this.interactionTimerId = window.setTimeout(() => {
+            this.emitInteraction('min-open-time');
+        }, timeoutSeconds * 1000);
+    }
+
+    private clearMinOpenTimeTimer(): void {
+        if (this.interactionTimerId !== undefined) {
+            window.clearTimeout(this.interactionTimerId);
+            this.interactionTimerId = undefined;
         }
     }
 
@@ -1199,6 +1269,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
         } else {
             this.title.label = `Géocache - ${this.geocacheId}`;
         }
+        this.setupMinOpenTimeTimer();
         this.update();
         this.load();
     }
@@ -1223,6 +1294,7 @@ export class GeocacheDetailsWidget extends ReactWidget {
         // Appeler la méthode parente pour la fermeture normale
         super.onCloseRequest(msg);
         this.removeEventListeners();
+        this.removeInteractionListeners();
     }
 
     /**

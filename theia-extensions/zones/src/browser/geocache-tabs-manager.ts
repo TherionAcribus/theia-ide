@@ -35,7 +35,11 @@ export class GeocacheTabsManager {
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
         @inject(CommandService) protected readonly commandService: CommandService,
         @inject(ChatService) protected readonly chatService: ChatService,
-    ) { }
+    ) {
+        if (typeof window !== 'undefined') {
+            window.addEventListener('geoapp-geocache-tab-interaction', this.handleInteractionEvent as EventListener);
+        }
+    }
 
     /**
      * Ouvre ou réutilise un onglet de détails pour une géocache donnée, en appliquant la stratégie de préférences.
@@ -112,6 +116,36 @@ export class GeocacheTabsManager {
             return raw;
         }
         return 'smart-replace';
+    }
+
+    private handleInteractionEvent = (event: Event): void => {
+        const custom = event as CustomEvent<{ widgetId?: string; geocacheId?: number; type?: string }>;
+        const detail = custom.detail;
+        if (!detail || !detail.widgetId || !detail.type) {
+            return;
+        }
+
+        if (!this.shouldPinForInteraction(detail.type)) {
+            return;
+        }
+
+        const entry = this.tabs.find(e => e.widget.id === detail.widgetId && !e.widget.isDisposed);
+        if (entry) {
+            entry.isPinned = true;
+        }
+    };
+
+    private shouldPinForInteraction(type: string): boolean {
+        if (type === 'click') {
+            return this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.clickInContent', true) as boolean;
+        }
+        if (type === 'scroll') {
+            return this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.scroll', true) as boolean;
+        }
+        if (type === 'min-open-time') {
+            return this.preferenceService.get('geoApp.ui.tabs.smartReplace.interaction.minOpenTimeEnabled', true) as boolean;
+        }
+        return false;
     }
 
     protected createWidget(): GeocacheDetailsWidget {

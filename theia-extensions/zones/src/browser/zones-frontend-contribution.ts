@@ -2,6 +2,7 @@ import { injectable, inject } from 'inversify';
 import { FrontendApplication, FrontendApplicationContribution, WidgetManager, Widget } from '@theia/core/lib/browser';
 import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
+import { GeocacheLogsWidget } from './geocache-logs-widget';
 import { MapManagerWidget } from './map/map-manager-widget';
 import { MapWidgetFactory } from './map/map-widget-factory';
 
@@ -137,6 +138,39 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
         };
         window.addEventListener('message', messageHandler);
         console.log('[ZonesFrontendContribution] ========== Écouteur postMessage enregistré sur window ==========');
+
+        // Écouteur pour ouvrir le widget des logs
+        console.log('[ZonesFrontendContribution] ========== Enregistrement des écouteurs open-geocache-logs ==========');
+        const openLogsHandler = async (event: any) => {
+            try {
+                const detail = event?.detail || {};
+                const geocacheId = detail.geocacheId;
+                const gcCode = detail.gcCode;
+                const name = detail.name;
+                
+                if (!geocacheId) {
+                    console.warn('[ZonesFrontendContribution] open-geocache-logs: geocacheId manquant');
+                    return;
+                }
+                
+                console.log('[ZonesFrontendContribution] Ouverture des logs pour geocache:', gcCode || geocacheId);
+                
+                const logsWidget = await this.widgetManager.getOrCreateWidget(GeocacheLogsWidget.ID) as GeocacheLogsWidget;
+                logsWidget.setGeocache({ geocacheId, gcCode, name });
+                
+                if (!logsWidget.isAttached) {
+                    // Afficher dans le panneau droit par défaut
+                    app.shell.addWidget(logsWidget, { area: 'right' });
+                }
+                app.shell.activateWidget(logsWidget.id);
+                
+            } catch (error) {
+                console.error('[ZonesFrontendContribution] Erreur lors de l\'ouverture des logs:', error);
+            }
+        };
+        window.addEventListener('open-geocache-logs', openLogsHandler);
+        document.addEventListener('open-geocache-logs', openLogsHandler);
+
         console.log('[ZonesFrontendContribution] ========== Tous les écouteurs sont maintenant actifs ==========');
     }
 

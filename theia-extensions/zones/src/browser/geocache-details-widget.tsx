@@ -1513,6 +1513,26 @@ export class GeocacheDetailsWidget extends ReactWidget {
         }
     };
 
+    /**
+     * Ouvre le widget des logs pour cette géocache dans le panneau droit
+     */
+    private openLogs = (): void => {
+        if (!this.geocacheId || !this.data) {
+            this.messages.warn('Aucune géocache sélectionnée pour voir les logs.');
+            return;
+        }
+
+        // Émettre un événement pour ouvrir le widget des logs
+        const event = new CustomEvent('open-geocache-logs', {
+            detail: {
+                geocacheId: this.geocacheId,
+                gcCode: this.data.gc_code,
+                name: this.data.name
+            }
+        });
+        window.dispatchEvent(event);
+    };
+
     private findGeocacheChatSession(geocacheId: number): ChatSession | undefined {
         return this.chatService.getSessions()
             .find(session => GeocacheDetailsWidget.geocacheChatSessions.get(session.id)?.geocacheId === geocacheId);
@@ -1672,6 +1692,14 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                         title='Ouvrir un chat IA dédié à cette géocache'
                                     >
                                         🤖 Chat IA
+                                    </button>
+                                    <button
+                                        className='theia-button secondary'
+                                        onClick={this.openLogs}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Voir les logs de cette géocache'
+                                    >
+                                        💬 Logs
                                     </button>
                                 </div>
                             </div>

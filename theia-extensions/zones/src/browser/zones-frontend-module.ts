@@ -7,6 +7,7 @@ import { ZonesCommandContribution } from './zones-command-contribution';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { GeocacheLogsWidget } from './geocache-logs-widget';
+import { GeocacheNotesWidget } from './geocache-notes-widget';
 import { MapWidget } from './map/map-widget';
 import { MapService } from './map/map-service';
 import { MapWidgetFactory } from './map/map-widget-factory';
@@ -37,6 +38,13 @@ export default new ContainerModule(bind => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheLogsWidget.ID,
         createWidget: () => ctx.container.get(GeocacheLogsWidget)
+    })).inSingletonScope();
+
+    // Widget des notes de géocache (affichable dans right, bottom ou main)
+    bind(GeocacheNotesWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: GeocacheNotesWidget.ID,
+        createWidget: () => ctx.container.get(GeocacheNotesWidget)
     })).inSingletonScope();
 
     bind(MapService).toSelf().inSingletonScope();

@@ -1533,6 +1533,25 @@ export class GeocacheDetailsWidget extends ReactWidget {
         window.dispatchEvent(event);
     };
 
+    /**
+     * Ouvre le widget des notes pour cette géocache dans le panneau droit
+     */
+    private openNotes = (): void => {
+        if (!this.geocacheId || !this.data) {
+            this.messages.warn('Aucune géocache sélectionnée pour voir les notes.');
+            return;
+        }
+
+        const event = new CustomEvent('open-geocache-notes', {
+            detail: {
+                geocacheId: this.geocacheId,
+                gcCode: this.data.gc_code,
+                name: this.data.name
+            }
+        });
+        window.dispatchEvent(event);
+    };
+
     private findGeocacheChatSession(geocacheId: number): ChatSession | undefined {
         return this.chatService.getSessions()
             .find(session => GeocacheDetailsWidget.geocacheChatSessions.get(session.id)?.geocacheId === geocacheId);
@@ -1693,14 +1712,24 @@ export class GeocacheDetailsWidget extends ReactWidget {
                                     >
                                         🤖 Chat IA
                                     </button>
-                                    <button
-                                        className='theia-button secondary'
-                                        onClick={this.openLogs}
-                                        style={{ fontSize: 12, padding: '4px 12px' }}
-                                        title='Voir les logs de cette géocache'
-                                    >
-                                        💬 Logs
-                                    </button>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={this.openLogs}
+                                            style={{ fontSize: 12, padding: '4px 12px' }}
+                                            title='Voir les logs de cette géocache'
+                                        >
+                                            💬 Logs
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={this.openNotes}
+                                            style={{ fontSize: 12, padding: '4px 12px' }}
+                                            title='Voir les notes de cette géocache'
+                                        >
+                                            📝 Notes
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: 16, opacity: 0.7, fontSize: 14 }}>

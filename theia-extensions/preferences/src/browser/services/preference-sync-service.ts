@@ -43,6 +43,9 @@ export class PreferenceSyncService implements FrontendApplicationContribution {
                 if (!key.startsWith('geoApp.')) {
                     continue;
                 }
+                if (!this.backendDefinitions.has(key)) {
+                    continue;
+                }
                 await this.preferenceService.set(key, value, PreferenceScope.User);
             }
         } catch (error) {

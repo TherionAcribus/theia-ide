@@ -1,5 +1,6 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ApplicationShell, Widget } from '@theia/core/lib/browser';
+import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { MessageService } from '@theia/core';
 import { AlphabetViewerWidget } from './alphabet-viewer-widget';
@@ -29,6 +30,7 @@ export class AlphabetTabsManager {
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
         @inject(MessageService) protected readonly messages: MessageService,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
     ) {
         if (typeof window !== 'undefined') {
             window.addEventListener('geoapp-alphabet-tab-interaction', this.handleInteractionEvent as EventListener);
@@ -69,7 +71,7 @@ export class AlphabetTabsManager {
         }
 
         if (!targetEntry) {
-            const widget = this.createWidget(alphabetId);
+            const widget = await this.createWidget(alphabetId);
             targetEntry = { widget, alphabetId, isPinned: false };
             this.tabs.push(targetEntry);
         } else {
@@ -123,18 +125,18 @@ export class AlphabetTabsManager {
         return false;
     }
 
-    protected createWidget(alphabetId: string): AlphabetViewerWidget {
-        if (!this.widgetCreator) {
-            throw new Error('AlphabetTabsManager widgetCreator not initialized');
-        }
-        const widget = this.widgetCreator(alphabetId);
-        widget.id = this.generateWidgetId(alphabetId);
-        return widget;
+    protected async createWidget(alphabetId: string): Promise<AlphabetViewerWidget> {
+        const instanceId = this.nextId++;
+        const widget = await this.widgetManager.getOrCreateWidget(AlphabetViewerWidget.ID_PREFIX, { alphabetId, instanceId });
+
+        widget.id = this.generateWidgetId(alphabetId, instanceId);
+
+        return widget as AlphabetViewerWidget;
     }
 
-    protected generateWidgetId(alphabetId: string): string {
+    protected generateWidgetId(alphabetId: string, instanceId: number): string {
         const base = AlphabetViewerWidget.ID_PREFIX;
-        const id = `${base}-${alphabetId}#${this.nextId++}`;
+        const id = `${base}-${alphabetId}#${instanceId}`;
         return id;
     }
 

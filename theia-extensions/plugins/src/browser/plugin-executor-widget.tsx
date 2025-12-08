@@ -20,6 +20,7 @@
 import * as React from '@theia/core/shared/react';
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
+import { StatefulWidget } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { PluginsService, Plugin, PluginDetails, PluginResult } from '../common/plugin-protocol';
 import { TasksService, Task } from '../common/task-protocol';
@@ -46,6 +47,13 @@ export interface GeocacheContext {
     difficulty?: number;
     terrain?: number;
     waypoints?: any[]; // Ajout des waypoints
+}
+
+interface SerializedPluginExecutorState {
+    mode: PluginExecutorMode;
+    pluginName?: string;
+    gcCode?: string;
+    autoExecute?: boolean;
 }
 
 interface AddWaypointEventDetail {
@@ -209,7 +217,7 @@ interface ExecutorState {
 }
 
 @injectable()
-export class PluginExecutorWidget extends ReactWidget {
+export class PluginExecutorWidget extends ReactWidget implements StatefulWidget {
     static readonly ID = 'plugin-executor-widget';
     static readonly LABEL = 'Plugin Executor';
 
@@ -314,6 +322,54 @@ export class PluginExecutorWidget extends ReactWidget {
         if (this.interactionTimerId !== undefined) {
             window.clearTimeout(this.interactionTimerId);
             this.interactionTimerId = undefined;
+        }
+    }
+
+    storeState(): object | undefined {
+        if (!this.config) {
+            return undefined;
+        }
+
+        if (this.config.mode === 'plugin') {
+            const state: SerializedPluginExecutorState = {
+                mode: 'plugin',
+                pluginName: this.config.pluginName
+            };
+            return state;
+        }
+
+        if (this.config.mode === 'geocache' && this.config.geocacheContext) {
+            const state: SerializedPluginExecutorState = {
+                mode: 'geocache',
+                gcCode: this.config.geocacheContext.gcCode,
+                pluginName: this.config.pluginName,
+                autoExecute: this.config.autoExecute === true
+            };
+            return state;
+        }
+
+        return undefined;
+    }
+
+    restoreState(oldState: object): void {
+        const state = oldState as Partial<SerializedPluginExecutorState> | undefined;
+        if (!state || typeof state !== 'object' || !state.mode) {
+            return;
+        }
+
+        if (state.mode === 'plugin' && typeof state.pluginName === 'string') {
+            this.initializePluginMode(state.pluginName);
+            return;
+        }
+
+        if (state.mode === 'geocache' && typeof state.gcCode === 'string') {
+            const context: GeocacheContext = {
+                gcCode: state.gcCode,
+                name: state.gcCode
+            };
+
+            const pluginName = typeof state.pluginName === 'string' ? state.pluginName : undefined;
+            this.initializeGeocacheMode(context, pluginName, false);
         }
     }
 

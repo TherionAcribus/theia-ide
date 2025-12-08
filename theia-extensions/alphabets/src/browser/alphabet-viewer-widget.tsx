@@ -6,8 +6,7 @@ import * as React from '@theia/core/shared/react';
 import { injectable, postConstruct, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
-import { ApplicationShell } from '@theia/core/lib/browser';
-import { WidgetManager } from '@theia/core/lib/browser';
+import { ApplicationShell, StatefulWidget, WidgetManager } from '@theia/core/lib/browser';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { AlphabetsService } from './services/alphabets-service';
 import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo, DetectedCoordinates } from '../common/alphabet-protocol';
@@ -17,8 +16,12 @@ import { SymbolItem } from './components/symbol-item';
 import { SymbolContextMenu } from './components/symbol-context-menu';
 import './font-api';
 
+interface SerializedAlphabetViewerState {
+    alphabetId?: string;
+}
+
 @injectable()
-export class AlphabetViewerWidget extends ReactWidget {
+export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget {
 
     static readonly ID_PREFIX = 'alphabet-viewer';
 
@@ -245,6 +248,24 @@ export class AlphabetViewerWidget extends ReactWidget {
             window.clearTimeout(this.interactionTimerId);
             this.interactionTimerId = undefined;
         }
+    }
+
+    storeState(): object | undefined {
+        if (!this.alphabetId) {
+            return undefined;
+        }
+        const state: SerializedAlphabetViewerState = {
+            alphabetId: this.alphabetId
+        };
+        return state;
+    }
+
+    restoreState(oldState: object): void {
+        const state = oldState as Partial<SerializedAlphabetViewerState> | undefined;
+        if (!state || typeof state.alphabetId !== 'string') {
+            return;
+        }
+        this.setAlphabet(state.alphabetId);
     }
 
     private formatGeocachingCoordinates(lat: number, lon: number): string {

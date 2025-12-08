@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { injectable, inject } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
-import { ApplicationShell, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
+import { ApplicationShell, StatefulWidget, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { GeocachesTable, Geocache } from './geocaches-table';
@@ -11,8 +11,13 @@ import { MapService } from './map/map-service';
 import { MapWidgetFactory } from './map/map-widget-factory';
 import { GeocacheTabsManager } from './geocache-tabs-manager';
 
+interface SerializedZoneGeocachesState {
+    zoneId: number;
+    zoneName?: string;
+}
+
 @injectable()
-export class ZoneGeocachesWidget extends ReactWidget {
+export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
     static readonly ID = 'zone.geocaches.widget';
 
     protected backendBaseUrl = 'http://127.0.0.1:8000';
@@ -130,6 +135,25 @@ export class ZoneGeocachesWidget extends ReactWidget {
             window.clearTimeout(this.interactionTimerId);
             this.interactionTimerId = undefined;
         }
+    }
+
+    storeState(): object | undefined {
+        if (!this.zoneId) {
+            return undefined;
+        }
+        const state: SerializedZoneGeocachesState = {
+            zoneId: this.zoneId,
+            zoneName: this.zoneName
+        };
+        return state;
+    }
+
+    restoreState(oldState: object): void {
+        const state = oldState as Partial<SerializedZoneGeocachesState> | undefined;
+        if (!state || typeof state.zoneId !== 'number') {
+            return;
+        }
+        this.setZone({ zoneId: state.zoneId, zoneName: state.zoneName });
     }
 
     private setupEventListeners(): void {

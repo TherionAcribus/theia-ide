@@ -2,7 +2,7 @@ import * as React from 'react';
 import { injectable, inject, postConstruct } from 'inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
-import { ApplicationShell, ConfirmDialog } from '@theia/core/lib/browser';
+import { ApplicationShell, ConfirmDialog, StatefulWidget } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core';
 import { ChatService, ChatAgentLocation, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
@@ -52,6 +52,10 @@ interface GeocacheChatMetadata {
     geocacheCode?: string;
     geocacheName?: string;
     lastUpdatedIso: string;
+}
+
+interface SerializedGeocacheDetailsState {
+    geocacheId?: number;
 }
 
 /**
@@ -902,7 +906,7 @@ type GeocacheDto = {
 };
 
 @injectable()
-export class GeocacheDetailsWidget extends ReactWidget {
+export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget {
     static readonly ID = 'geocache.details.widget';
 
     protected backendBaseUrl = 'http://127.0.0.1:8000';
@@ -1334,12 +1338,11 @@ export class GeocacheDetailsWidget extends ReactWidget {
                 credentials: 'include'
             });
             if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
                 // Ne pas notifier l'utilisateur en auto, seulement loguer
-                console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com  e9chou e9e:', errorData);
+                console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com échouée');
             }
-        } catch (error) {
-            console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com  e9chou e9e:', error);
+        } catch (err) {
+            console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com échouée:', err);
         }
     }
 
@@ -1375,6 +1378,24 @@ export class GeocacheDetailsWidget extends ReactWidget {
                 this.shell.activateWidget(mapId);
             }
         }
+    }
+
+    storeState(): object | undefined {
+        if (!this.geocacheId) {
+            return undefined;
+        }
+        const state: SerializedGeocacheDetailsState = {
+            geocacheId: this.geocacheId
+        };
+        return state;
+    }
+
+    restoreState(oldState: object): void {
+        const state = oldState as Partial<SerializedGeocacheDetailsState> | undefined;
+        if (!state || typeof state.geocacheId !== 'number') {
+            return;
+        }
+        this.setGeocache({ geocacheId: state.geocacheId });
     }
 
     /**

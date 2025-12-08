@@ -2,6 +2,7 @@
 
 import { injectable, inject } from 'inversify';
 import { ApplicationShell, Widget } from '@theia/core/lib/browser';
+import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { MessageService, CommandService } from '@theia/core';
 import { ChatService } from '@theia/ai-chat';
@@ -35,6 +36,7 @@ export class GeocacheTabsManager {
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
         @inject(CommandService) protected readonly commandService: CommandService,
         @inject(ChatService) protected readonly chatService: ChatService,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
     ) {
         if (typeof window !== 'undefined') {
             window.addEventListener('geoapp-geocache-tab-interaction', this.handleInteractionEvent as EventListener);
@@ -77,7 +79,7 @@ export class GeocacheTabsManager {
         }
 
         if (!targetEntry) {
-            const widget = this.createWidget();
+            const widget = await this.createWidget();
             targetEntry = { widget, geocacheId: undefined, isPinned: false };
             this.tabs.push(targetEntry);
         }
@@ -148,31 +150,14 @@ export class GeocacheTabsManager {
         return false;
     }
 
-    protected createWidget(): GeocacheDetailsWidget {
-        const widget = new GeocacheDetailsWidget(
-            this.messages,
-            this.shell,
-            this.pluginExecutorContribution,
-            this.commandService,
-            this.chatService,
-            this.preferenceService
-        );
+    protected async createWidget(): Promise<GeocacheDetailsWidget> {
+        const instanceId = this.nextId++;
+        const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID, { instanceId });
 
         // Affecter un ID unique pour permettre plusieurs onglets simultanés
-        widget.id = this.generateWidgetId();
+        widget.id = `${GeocacheDetailsWidget.ID}#${instanceId}`;
 
-        // Appeler explicitement l'initialisation post-construction
-        if (typeof (widget as any).initialize === 'function') {
-            (widget as any).initialize();
-        }
-
-        return widget;
-    }
-
-    protected generateWidgetId(): string {
-        const base = GeocacheDetailsWidget.ID;
-        const id = `${base}#${this.nextId++}`;
-        return id;
+        return widget as GeocacheDetailsWidget;
     }
 
     protected attachAndActivate(widget: GeocacheDetailsWidget): void {

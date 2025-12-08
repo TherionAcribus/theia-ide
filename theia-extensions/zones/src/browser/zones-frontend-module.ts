@@ -23,13 +23,15 @@ export default new ContainerModule(bind => {
         createWidget: () => ctx.container.get(ZonesTreeWidget)
     })).inSingletonScope();
 
-    bind(ZoneGeocachesWidget).toSelf().inSingletonScope();
+    // ZoneGeocachesWidget: instances gérées par ZoneTabsManager et le WidgetManager (plusieurs onglets possibles)
+    bind(ZoneGeocachesWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ZoneGeocachesWidget.ID,
         createWidget: () => ctx.container.get(ZoneGeocachesWidget)
     })).inSingletonScope();
 
-    bind(GeocacheDetailsWidget).toSelf().inSingletonScope();
+    // GeocacheDetailsWidget: instances gérées par GeocacheTabsManager et le WidgetManager (plusieurs onglets possibles)
+    bind(GeocacheDetailsWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheDetailsWidget.ID,
         createWidget: () => ctx.container.get(GeocacheDetailsWidget)

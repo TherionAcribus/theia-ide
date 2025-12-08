@@ -134,26 +134,18 @@ export class ZoneTabsManager {
     }
 
     protected async createWidget(): Promise<ZoneGeocachesWidget> {
-        // Créer une nouvelle instance avec toutes les dépendances nécessaires
-        const widget = new ZoneGeocachesWidget(
-            this.messages,
-            this.shell,
-            this.widgetManager,
-            this.mapService,
-            this.mapWidgetFactory,
-            this.geocacheTabsManager,
-            this.preferenceService
-        );
+        const instanceId = this.nextId++;
+        const widget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID, { instanceId });
 
         // Affecter un ID unique pour permettre plusieurs onglets simultanés
-        widget.id = this.generateWidgetId();
+        widget.id = this.generateWidgetId(instanceId);
 
-        return widget;
+        return widget as ZoneGeocachesWidget;
     }
 
-    protected generateWidgetId(): string {
+    protected generateWidgetId(instanceId: number): string {
         const base = ZoneGeocachesWidget.ID;
-        const id = `${base}#${this.nextId++}`;
+        const id = `${base}#${instanceId}`;
         return id;
     }
 

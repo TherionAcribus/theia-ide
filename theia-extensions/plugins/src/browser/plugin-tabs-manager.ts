@@ -1,5 +1,6 @@
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ApplicationShell, Widget } from '@theia/core/lib/browser';
+import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { MessageService } from '@theia/core';
 import { PluginExecutorWidget, GeocacheContext } from './plugin-executor-widget';
@@ -36,6 +37,7 @@ export class PluginTabsManager {
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
         @inject(MessageService) protected readonly messages: MessageService,
+        @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
     ) {
         if (typeof window !== 'undefined') {
             window.addEventListener('geoapp-plugin-tab-interaction', this.handleInteractionEvent as EventListener);
@@ -77,7 +79,7 @@ export class PluginTabsManager {
         }
 
         if (!targetEntry) {
-            const widget = this.createWidget();
+            const widget = await this.createWidget();
             targetEntry = { widget, contextKey: undefined, isPinned: false };
             this.tabs.push(targetEntry);
         }
@@ -122,7 +124,7 @@ export class PluginTabsManager {
         }
 
         if (!targetEntry) {
-            const widget = this.createWidget();
+            const widget = await this.createWidget();
             targetEntry = { widget, contextKey: undefined, isPinned: false };
             this.tabs.push(targetEntry);
         }
@@ -174,18 +176,18 @@ export class PluginTabsManager {
         return false;
     }
 
-    protected createWidget(): PluginExecutorWidget {
-        if (!this.widgetCreator) {
-            throw new Error('PluginTabsManager widgetCreator not initialized');
-        }
-        const widget = this.widgetCreator();
-        widget.id = this.generateWidgetId();
-        return widget;
+    protected async createWidget(): Promise<PluginExecutorWidget> {
+        const instanceId = this.nextId++;
+        const widget = await this.widgetManager.getOrCreateWidget(PluginExecutorWidget.ID, { instanceId });
+
+        widget.id = this.generateWidgetId(instanceId);
+
+        return widget as PluginExecutorWidget;
     }
 
-    protected generateWidgetId(): string {
+    protected generateWidgetId(instanceId: number): string {
         const base = PluginExecutorWidget.ID;
-        const id = `${base}#${this.nextId++}`;
+        const id = `${base}#${instanceId}`;
         return id;
     }
 

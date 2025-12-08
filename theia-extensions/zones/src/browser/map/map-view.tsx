@@ -76,7 +76,10 @@ export const MapView: React.FC<MapViewProps> = ({
         if (mapInstanceRef.current) {
             mapInstanceRef.current.getView().setZoom(preferences.defaultZoom);
         }
-    }, [preferences]);
+        if (isInitialized && layerManagerRef.current) {
+            layerManagerRef.current.changeTileProvider(preferences.defaultProvider);
+        }
+    }, [preferences, isInitialized]);
 
     // Initialisation de la carte
     React.useEffect(() => {

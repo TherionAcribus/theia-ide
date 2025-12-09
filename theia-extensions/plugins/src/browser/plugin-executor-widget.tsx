@@ -47,6 +47,7 @@ export interface GeocacheContext {
     difficulty?: number;
     terrain?: number;
     waypoints?: any[]; // Ajout des waypoints
+    images?: { url: string }[];
 }
 
 interface SerializedPluginExecutorState {
@@ -570,17 +571,29 @@ const PluginExecutorComponent: React.FC<{
             
             const initialInputs = generateInitialInputs(details);
             console.log('[Plugin Executor] Inputs initiaux générés:', initialInputs);
+
+            // Correction de robustesse : pour analysis_web_page, si le champ 'text' est vide
+            // alors que le contexte contient une description, on force l'utilisation de cette description.
+            const patchedInputs = { ...initialInputs };
+            if (
+                details.name === 'analysis_web_page' &&
+                (!patchedInputs.text || String(patchedInputs.text).trim() === '') &&
+                context.description
+            ) {
+                console.log("[Plugin Executor] Forcing geocache description into 'text' for analysis_web_page");
+                patchedInputs.text = context.description;
+            }
             
             setState(prev => {
-                // Si initialInputs.text est défini (via description ou autre), on l'utilise en priorité.
+                // Si patchedInputs.text est défini (via description ou autre), on l'utilise en priorité.
                 // Sinon, on garde la valeur précédente si elle existe.
-                const newText = initialInputs.text || prev.formInputs.text || '';
+                const newText = patchedInputs.text || prev.formInputs.text || '';
                 
                 return {
                     ...prev,
                     pluginDetails: details,
                     // Fusionner les inputs
-                    formInputs: { ...initialInputs, text: newText },
+                    formInputs: { ...patchedInputs, text: newText },
                     result: null,
                     error: null
                 };
@@ -776,6 +789,22 @@ const PluginExecutorComponent: React.FC<{
             inputsToSend = {
                 ...inputsToSend,
                 waypoints: config.geocacheContext.waypoints
+            };
+        }
+
+        // Si le plugin est orienté image et que le contexte géocache contient des images,
+        // les ajouter explicitement aux inputs sans affecter les autres plugins.
+        const kinds = state.pluginDetails.metadata?.kinds as string[] | undefined;
+        if (
+            config.mode === 'geocache' &&
+            Array.isArray(kinds) &&
+            kinds.includes('image') &&
+            config.geocacheContext?.images &&
+            config.geocacheContext.images.length > 0
+        ) {
+            inputsToSend = {
+                ...inputsToSend,
+                images: config.geocacheContext.images.map(image => ({ url: image.url }))
             };
         }
 

@@ -1224,7 +1224,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             hint: this.data.hints,
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
-            waypoints: this.data.waypoints // Ajout des waypoints
+            waypoints: this.data.waypoints, // Ajout des waypoints
+            images: this.data.images
         };
         
         console.log('[GeocacheDetailsWidget] Context sent to executor:', context);
@@ -1256,7 +1257,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             hint: this.data.hints,
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
-            waypoints: this.data.waypoints
+            waypoints: this.data.waypoints,
+            images: this.data.images
         };
 
         // Ouvrir directement avec analysis_web_page et exécution automatique

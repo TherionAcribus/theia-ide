@@ -452,6 +452,8 @@ const BatchPluginExecutorComponent: React.FC<{
             messageService.info(`Démarrage de l'exécution batch sur ${config.geocaches.length} géocaches`);
 
             // Préparer la requête batch
+            const kinds = state.pluginDetails.metadata?.kinds as string[] | undefined;
+            const includeImages = Array.isArray(kinds) && kinds.includes('image');
             const batchRequest = {
                 plugin_name: state.plugin,
                 geocache_ids: config.geocaches.map(g => g.id),
@@ -459,7 +461,8 @@ const BatchPluginExecutorComponent: React.FC<{
                 options: {
                     execution_mode: state.executionMode,
                     max_concurrency: state.maxConcurrency,
-                    detect_coordinates: true
+                    detect_coordinates: true,
+                    include_images: includeImages
                 }
             };
 

@@ -1745,6 +1745,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     private buildGeocachePrompt(data: GeocacheDto): string {
+        const gcCode = (data.gc_code ?? '').trim();
+        const certitudeCheckerUrl = data.checkers?.find(c => (c.url || '').toLowerCase().includes('certitudes.org'))?.url;
+        const certitudeUrl = certitudeCheckerUrl || (gcCode ? `https://www.certitudes.org/certitude?wp=${gcCode}` : undefined);
+
         const lines: string[] = [
             `Nom : ${data.name}`,
             `Code : ${data.gc_code ?? 'Inconnu'} • Type : ${data.type ?? 'Inconnu'} • Taille : ${data.size ?? 'N/A'}`,
@@ -1776,7 +1780,21 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             "2. Limite ta réponse à 3 pistes ou plans d'action structurés maximum.",
             '3. Cite les outils, calculs ou vérifications nécessaires.',
             '4. Demande des précisions avant de conclure si les données sont insuffisantes.',
+            '5. Ne JAMAIS inventer une URL de checker. Utilise uniquement celles fournies dans "Checkers".',
             '',
+            ...(certitudeUrl
+                ? [
+                    'Certitude (URL canonique) :',
+                    certitudeUrl,
+                    ...(gcCode
+                        ? [
+                            `Pour Certitude, si tu appelles run_checker et que l'URL n'a pas de ?wp=..., passe aussi wp="${gcCode}".`,
+                            `Pour une éventuelle session Certitude: ensure_checker_session(provider="certitudes", wp="${gcCode}") (rare).`,
+                        ]
+                        : []),
+                    ''
+                ]
+                : []),
             'Tools disponibles (GeoApp) :',
             '~geoapp.checkers.run',
             '~geoapp.checkers.session.ensure',

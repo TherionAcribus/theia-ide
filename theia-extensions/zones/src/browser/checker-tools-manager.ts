@@ -64,6 +64,11 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
                     description: 'URL du checker à ouvrir',
                     required: true
                 },
+                wp: {
+                    type: 'string',
+                    description: 'Optionnel: code waypoint GC (ex: "GCAWZA2"). Utile pour Certitude si l\'URL ne contient pas ?wp=...',
+                    required: false
+                },
                 candidate: {
                     type: 'string',
                     description: 'Réponse candidate à tester (texte)',
@@ -154,8 +159,9 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const start = performance.now();
             const args = JSON.parse(argString);
-            const url = args.url as string;
+            let url = args.url as string;
             const candidate = args.candidate as string;
+            const wp = typeof args.wp === 'string' ? args.wp.trim() : undefined;
             const timeoutSec = typeof args.timeout_sec === 'number' ? args.timeout_sec : 300;
 
             const backendBaseUrl = this.getBackendBaseUrl();
@@ -168,6 +174,20 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             });
 
             const isCertitudes = this.isCertitudesUrl(url);
+            if (isCertitudes) {
+                const normalized = this.normalizeCertitudesUrl(url, wp);
+                if ('error' in normalized) {
+                    return { error: normalized.error };
+                }
+                if (normalized.url !== url) {
+                    console.log('[CHECKERS-TOOLS] run_checker:normalized-url', {
+                        requestId,
+                        from: url,
+                        to: normalized.url
+                    });
+                    url = normalized.url;
+                }
+            }
             if (isCertitudes) {
                 void this.messages.info(
                     'Certitude nécessite une validation manuelle (Cloudflare/Turnstile). Une fenêtre Chromium va s\'ouvrir : cliquez sur “Certifier”, puis revenez ici.'
@@ -249,6 +269,46 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             console.error('[CHECKERS-TOOLS] Erreur run_checker:', error);
             return { error: error.message || 'Erreur run_checker' };
         }
+    }
+
+    private normalizeCertitudesUrl(url: string, wp?: string): { url: string } | { error: string } {
+        if (!url || !url.trim()) {
+            return { error: 'Missing url' };
+        }
+
+        const raw = url.trim();
+        let parsed: URL;
+        try {
+            parsed = new URL(raw);
+        } catch {
+            try {
+                parsed = new URL(`https://${raw}`);
+            } catch {
+                return { error: `Invalid url: ${url}` };
+            }
+        }
+
+        const host = (parsed.hostname || '').toLowerCase();
+        if (!host.endsWith('certitudes.org')) {
+            return { url: parsed.toString() };
+        }
+
+        // Prefer the canonical host.
+        parsed.hostname = 'www.certitudes.org';
+        parsed.protocol = 'https:';
+
+        // Prefer the canonical certitude path.
+        const path = (parsed.pathname || '').toLowerCase();
+        if (!path.includes('certitude')) {
+            parsed.pathname = '/certitude';
+        }
+
+        // Ensure wp is present when provided.
+        if (!parsed.searchParams.get('wp') && wp) {
+            parsed.searchParams.set('wp', wp);
+        }
+
+        return { url: parsed.toString() };
     }
 
     private isCertitudesUrl(url: string): boolean {

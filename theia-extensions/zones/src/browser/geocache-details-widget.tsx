@@ -1792,6 +1792,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             lines.push('', 'Indices (extrait) :', this.truncate(decodedHints.trim(), 600));
         }
 
+        if (data.waypoints?.length) {
+            lines.push('', 'Waypoints (détails) :', ...this.buildWaypointsDetails(data.waypoints));
+        }
+
         return [
             "Tu es un assistant IA spécialisé dans la résolution d'énigmes de géocaching.",
             'Rappels stricts :',
@@ -1837,6 +1841,45 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             '--- OBJECTIF ---',
             "Analyse l'énigme, propose un plan d'action clair (max 3 pistes) et précise comment vérifier chaque hypothèse avant d'estimer la position finale."
         ].join('\n');
+    }
+
+    private buildWaypointsDetails(waypoints: GeocacheWaypoint[]): string[] {
+        return waypoints.map(w => {
+            const labelParts: string[] = [];
+            if (w.prefix) {
+                labelParts.push(w.prefix);
+            }
+            if (w.lookup) {
+                labelParts.push(w.lookup);
+            }
+
+            const label = labelParts.join(' / ');
+            const name = (w.name || '').trim();
+            const title = [label || undefined, name || undefined].filter(Boolean).join(' • ') || 'Waypoint';
+            const type = (w.type || '').trim();
+
+            let coords = (w.gc_coords || '').trim();
+            if (!coords && w.latitude !== undefined && w.longitude !== undefined) {
+                const gcFormat = toGCFormat(w.latitude, w.longitude);
+                coords = `${gcFormat.gcLat}, ${gcFormat.gcLon}`;
+            }
+
+            const decimalCoords = (w.latitude !== undefined && w.longitude !== undefined)
+                ? `${w.latitude.toFixed(5)}, ${w.longitude.toFixed(5)}`
+                : undefined;
+
+            const note = (w.note || '').trim();
+            const notePreview = note ? this.truncate(note.replace(/\s+/g, ' '), 220) : undefined;
+
+            const parts: string[] = [
+                `- ${title}${type ? ` (${type})` : ''}`,
+                ...(coords ? [`  Coordonnées : ${coords}`] : []),
+                ...(decimalCoords ? [`  Décimal : ${decimalCoords}`] : []),
+                ...(notePreview ? [`  Note : ${notePreview}`] : []),
+            ];
+
+            return parts.join('\n');
+        });
     }
 
     private buildWaypointsSummary(waypoints: GeocacheWaypoint[]): string {

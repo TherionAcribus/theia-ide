@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { injectable, inject } from 'inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ZoneTabsManager } from './zone-tabs-manager';
 

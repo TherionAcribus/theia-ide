@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { injectable, inject, postConstruct } from 'inversify';
+import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog, StatefulWidget } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core';
-import { ChatService, ChatAgentLocation, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
+import { ChatAgent, ChatAgentLocation, ChatAgentService, ChatService, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
+import { DEFAULT_CHAT_AGENT_PREF } from '@theia/ai-chat/lib/common/ai-chat-preferences';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
@@ -935,6 +936,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
         @inject(CommandService) protected readonly commandService: CommandService,
         @inject(ChatService) protected readonly chatService: ChatService,
+        @inject(ChatAgentService) protected readonly chatAgentService: ChatAgentService,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService
     ) {
         super();
@@ -1644,13 +1646,16 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         try {
             const existingSession = this.findGeocacheChatSession(this.geocacheId);
             if (existingSession) {
+                existingSession.pinnedAgent = this.resolveDefaultChatAgent();
                 this.setSessionGeocacheMetadata(existingSession, metadata);
                 this.chatService.setActiveSession(existingSession.id, { focus: true });
                 this.messages.info('Chat IA rouvert pour cette géocache.');
                 return;
             }
 
-            const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: true });
+            const pinnedAgent = this.resolveDefaultChatAgent();
+            console.log('[GeocacheDetailsWidget] Opening chat session with pinned agent:', pinnedAgent?.id, pinnedAgent?.name);
+            const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: true }, pinnedAgent);
             this.setSessionGeocacheMetadata(session, metadata);
             session.title = `CHAT IA - ${this.data.gc_code ?? this.data.name}`;
 
@@ -1662,6 +1667,34 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             this.messages.error('Impossible d\'ouvrir le chat IA pour cette géocache.');
         }
     };
+
+    private resolveDefaultChatAgent(): ChatAgent | undefined {
+        const available = this.chatAgentService.getAgents();
+
+        const isClaudeCode = (agent: ChatAgent): boolean => {
+            const id = (agent.id || '').toLowerCase();
+            const name = (agent.name || '').toLowerCase();
+            return id === 'claudecode' || name === 'claudecode' || id.includes('claude') || name.includes('claude');
+        };
+
+        const geoApp = available.find(a => (a.id || '').toLowerCase() === 'geoapp' || (a.name || '').toLowerCase() === 'geoapp');
+        if (geoApp) {
+            return geoApp;
+        }
+
+        const universal = available.find(a => (a.id || '').toLowerCase().includes('universal') || (a.name || '').toLowerCase().includes('universal'));
+        if (universal) {
+            return universal;
+        }
+
+        const configuredId = this.preferenceService.get(DEFAULT_CHAT_AGENT_PREF, undefined) as string | undefined;
+        const configured = configuredId ? this.chatAgentService.getAgent(configuredId) : undefined;
+        if (configured && !isClaudeCode(configured)) {
+            return configured;
+        }
+
+        return available.find(a => !isClaudeCode(a)) ?? available[0];
+    }
 
     /**
      * Ouvre le widget des logs pour cette géocache dans le panneau droit
@@ -1743,6 +1776,16 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             "2. Limite ta réponse à 3 pistes ou plans d'action structurés maximum.",
             '3. Cite les outils, calculs ou vérifications nécessaires.',
             '4. Demande des précisions avant de conclure si les données sont insuffisantes.',
+            '',
+            'Tools disponibles (GeoApp) :',
+            '~geoapp.checkers.run',
+            '~geoapp.checkers.session.ensure',
+            '~geoapp.checkers.session.login',
+            '~geoapp.checkers.session.reset',
+            '',
+            'Vérification (checkers) :',
+            "- Si un checker est fourni (ex: Certitude) et que tu proposes une réponse textuelle, valide-la en appelant le tool run_checker(url, candidate) AVANT de conclure.",
+            "- Si le checker nécessite une session (ex: Geocaching.com), appelle d'abord ensure_checker_session(provider=\"geocaching\"). Si logged_in=false, propose login_checker_session(provider=\"geocaching\") puis réessaie.",
             '',
             '--- CONTEXTE GÉOCACHE ---',
             ...lines,

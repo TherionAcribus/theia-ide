@@ -1,4 +1,4 @@
-import { injectable, inject } from 'inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { Command, CommandContribution, CommandRegistry } from '@theia/core/lib/common';
 import { ApplicationShell, WidgetManager } from '@theia/core/lib/browser';
 import { ZonesTreeWidget } from './zones-tree-widget';

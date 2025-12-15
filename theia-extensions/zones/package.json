@@ -19,6 +19,7 @@
     "@theia/core": "1.65.1",
     "@theia/workspace": "1.65.1",
     "@theia/ai-chat": "1.65.1",
+    "@theia/ai-core": "1.65.1",
     "inversify": "^6.0.1",
     "@tanstack/react-table": "^8.10.7",
     "ol": "^9.0.0",

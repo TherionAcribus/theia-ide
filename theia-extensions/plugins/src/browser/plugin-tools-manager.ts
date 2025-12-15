@@ -204,16 +204,20 @@ export class PluginToolsManager implements FrontendApplicationContribution {
 
     protected formatResult(result: PluginResult): ToolCallResult {
         if (result.text_output) {
-            return result.text_output;
+            return JSON.stringify(result.text_output);
         }
 
-        return {
-            status: result.status,
-            summary: result.summary ?? result.error ?? 'Résultat du plugin',
-            results: result.results,
-            coordinates: result.coordinates,
-            metadata: result.metadata ?? result.plugin_info
-        };
+        return JSON.stringify(
+            {
+                status: result.status,
+                summary: result.summary ?? result.error ?? 'Résultat du plugin',
+                results: result.results,
+                coordinates: result.coordinates,
+                metadata: result.metadata ?? result.plugin_info
+            },
+            null,
+            2
+        );
     }
 
     /**

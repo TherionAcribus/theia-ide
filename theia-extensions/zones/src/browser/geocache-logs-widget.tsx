@@ -5,7 +5,7 @@
  * Il permet de visualiser les logs récupérés depuis Geocaching.com et de les rafraîchir.
  */
 import * as React from 'react';
-import { injectable, inject, postConstruct } from 'inversify';
+import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 

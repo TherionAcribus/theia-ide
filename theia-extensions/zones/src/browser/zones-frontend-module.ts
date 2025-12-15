@@ -15,6 +15,9 @@ import { MapManagerWidget } from './map/map-manager-widget';
 import { BatchMapIntegration } from './batch-map-integration';
 import { GeocacheTabsManager } from './geocache-tabs-manager';
 import { ZoneTabsManager } from './zone-tabs-manager';
+import { CheckerToolsManager } from './checker-tools-manager';
+import { GeoAppChatAgent } from './geoapp-chat-agent';
+import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -100,6 +103,12 @@ export default new ContainerModule(bind => {
     // Batch Map Integration pour écouter les événements du plugin batch
     bind(BatchMapIntegration).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(BatchMapIntegration);
+
+    bind(CheckerToolsManager).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(CheckerToolsManager);
+
+    bind(GeoAppChatAgent).toSelf().inSingletonScope();
+    bind(ChatAgent).toService(GeoAppChatAgent);
 });
 
 

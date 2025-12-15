@@ -1,6 +1,6 @@
 // Service responsable de la gestion des onglets de détails de géocaches (ouverture, réutilisation, modes de remplacement)
 
-import { injectable, inject } from 'inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { ApplicationShell, Widget } from '@theia/core/lib/browser';
 import { WidgetManager } from '@theia/core/lib/browser/widget-manager';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';

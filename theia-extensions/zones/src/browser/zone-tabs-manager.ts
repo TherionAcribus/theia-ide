@@ -1,6 +1,6 @@
 // Service responsable de la gestion des onglets de tableau de géocaches par zone (ouverture, réutilisation, modes de remplacement)
 
-import { injectable, inject } from 'inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { ApplicationShell, Widget } from '@theia/core/lib/browser';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { MessageService } from '@theia/core';

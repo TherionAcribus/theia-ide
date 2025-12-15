@@ -11,6 +11,7 @@ import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
 import { FormulaSolverSolveFromGeocacheCommand } from '@mysterai/theia-formula-solver/lib/browser/formula-solver-contribution';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -136,6 +137,14 @@ function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number
     const lat = (parseInt(latMatch[2]) + parseFloat(latMatch[3]) / 60) * (latMatch[1] === 'S' ? -1 : 1);
     const lon = (parseInt(lonMatch[2]) + parseFloat(lonMatch[3]) / 60) * (lonMatch[1] === 'W' ? -1 : 1);
     return { lat, lon };
+}
+
+function rot13(value: string): string {
+    return value.replace(/[a-zA-Z]/g, (char) => {
+        const base = char <= 'Z' ? 65 : 97;
+        const code = char.charCodeAt(0) - base;
+        return String.fromCharCode(((code + 13) % 26) + base);
+    });
 }
 
 /**
@@ -895,6 +904,7 @@ type GeocacheDto = {
     zone_id?: number;
     description_html?: string;
     hints?: string;
+    hints_decoded?: string;
     attributes?: GeocacheAttribute[];
     favorites_count?: number;
     logs_count?: number;
@@ -918,6 +928,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
     protected isSavingWaypoint = false;
     protected interactionTimerId: number | undefined;
+
+    private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -1223,7 +1235,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 coordinatesRaw: this.data.coordinates_raw
             } : undefined,
             description: descriptionHtml,
-            hint: this.data.hints,
+            hint: this.getDecodedHints(this.data),
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
             waypoints: this.data.waypoints, // Ajout des waypoints
@@ -1256,7 +1268,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 coordinatesRaw: this.data.coordinates_raw
             } : undefined,
             description: descriptionHtml,
-            hint: this.data.hints,
+            hint: this.getDecodedHints(this.data),
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
             waypoints: this.data.waypoints,
@@ -1769,8 +1781,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             lines.push('', 'Description (extrait) :', descriptionSnippet);
         }
 
-        if (data.hints) {
-            lines.push('', 'Indices (extrait) :', this.truncate(data.hints.trim(), 600));
+        const decodedHints = this.getDecodedHints(data);
+        if (decodedHints) {
+            lines.push('', 'Indices (extrait) :', this.truncate(decodedHints.trim(), 600));
         }
 
         return [
@@ -1845,6 +1858,22 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return value.replace(/<[^>]+>/g, ' ').trim();
     }
 
+    private getDecodedHints(data: GeocacheDto): string | undefined {
+        if (data.hints_decoded) {
+            return data.hints_decoded;
+        }
+        if (!data.hints) {
+            return undefined;
+        }
+        return rot13(data.hints);
+    }
+
+    private toggleHintsDisplayMode = async (): Promise<void> => {
+        const current = this.preferenceService.get(this.displayDecodedHintsPreferenceKey, false) as boolean;
+        await this.preferenceService.set(this.displayDecodedHintsPreferenceKey, !current, PreferenceScope.User);
+        this.update();
+    };
+
     private truncate(value: string, maxLength: number): string {
         if (value.length <= maxLength) {
             return value;
@@ -1880,6 +1909,13 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     protected render(): React.ReactNode {
         const d = this.data;
+        const displayDecodedHints = this.preferenceService.get(this.displayDecodedHintsPreferenceKey, false) as boolean;
+        const decodedHints = d ? this.getDecodedHints(d) : undefined;
+        const rawHints = d?.hints;
+        const hasHints = Boolean(rawHints) || Boolean(d?.hints_decoded);
+        const displayedHints = hasHints
+            ? (displayDecodedHints ? (decodedHints || rawHints) : (rawHints || decodedHints))
+            : undefined;
         return (
             <div className='p-2'>
                 {this.isLoading && <div>Chargement…</div>}
@@ -2039,10 +2075,19 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 dangerouslySetInnerHTML={{ __html: d.description_html || '' }} />
                         </div>
 
-                        {d.hints ? (
+                        {displayedHints ? (
                             <div>
-                                <h4 style={{ margin: '8px 0' }}>Indices</h4>
-                                <div style={{ whiteSpace: 'pre-wrap', opacity: 0.9 }}>{d.hints}</div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 12 }}>
+                                    <h4 style={{ margin: '8px 0' }}>Indices</h4>
+                                    <button
+                                        className='theia-button'
+                                        onClick={() => { void this.toggleHintsDisplayMode(); }}
+                                        title={displayDecodedHints ? 'Coder (ROT13)' : 'Décoder (ROT13)'}
+                                    >
+                                        {displayDecodedHints ? 'Coder' : 'Décoder'}
+                                    </button>
+                                </div>
+                                <div style={{ whiteSpace: 'pre-wrap', opacity: 0.9 }}>{displayedHints}</div>
                             </div>
                         ) : undefined}
 

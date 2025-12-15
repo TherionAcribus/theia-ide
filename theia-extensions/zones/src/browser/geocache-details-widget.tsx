@@ -1759,10 +1759,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     private buildGeocachePrompt(data: GeocacheDto): string {
         const gcCode = (data.gc_code ?? '').trim();
         const certitudeCheckerUrl = data.checkers?.find(c => (c.url || '').toLowerCase().includes('certitudes.org'))?.url;
-        const certitudeUrl = certitudeCheckerUrl || (gcCode ? `https://www.certitudes.org/certitude?wp=${gcCode}` : undefined);
+        const certitudeUrl = certitudeCheckerUrl;
+        const geocachingCheckerUrl = data.checkers?.find(c => (c.name || '').toLowerCase().includes('geocaching'))?.url;
 
         const lines: string[] = [
             `Nom : ${data.name}`,
+            `ID : ${data.id}`,
             `Code : ${data.gc_code ?? 'Inconnu'} • Type : ${data.type ?? 'Inconnu'} • Taille : ${data.size ?? 'N/A'}`,
             `Difficulté / Terrain : ${data.difficulty ?? '?'} / ${data.terrain ?? '?'}`,
             `Propriétaire : ${data.owner ?? 'Inconnu'} • Statut : ${data.status ?? 'Inconnu'}`,
@@ -1773,7 +1775,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             data.placed_at ? `Placée le : ${data.placed_at}` : undefined,
             `Favoris : ${data.favorites_count ?? 0} • Logs : ${data.logs_count ?? 0}`,
             data.waypoints?.length ? `Waypoints (${data.waypoints.length}) : ${this.buildWaypointsSummary(data.waypoints)}` : undefined,
-            data.checkers?.length ? `Checkers : ${data.checkers.map(c => c.name || c.url).join(', ')}` : undefined
+            data.checkers?.length
+                ? `Checkers : ${data.checkers
+                    .map(c => (c.url ? `${c.name || 'Checker'}: ${c.url}` : (c.name || 'Checker')))
+                    .join(' • ')}`
+                : undefined
         ].filter((value): value is string => Boolean(value));
 
         const descriptionSnippet = this.sanitizeRichText(data.description_html, 1500);
@@ -1797,12 +1803,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             '',
             ...(certitudeUrl
                 ? [
-                    'Certitude (URL canonique) :',
+                    'Certitude (checker) :',
                     certitudeUrl,
                     ...(gcCode
                         ? [
                             `Pour Certitude, si tu appelles run_checker et que l'URL n'a pas de ?wp=..., passe aussi wp="${gcCode}".`,
-                            `Pour une éventuelle session Certitude: ensure_checker_session(provider="certitudes", wp="${gcCode}") (rare).`,
+                            `Pour une éventuelle session Certitude: ensure_checker_session(provider="certitudes", wp="${gcCode}").`,
                         ]
                         : []),
                     ''
@@ -1815,8 +1821,15 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             '~geoapp.checkers.session.reset',
             '',
             'Vérification (checkers) :',
+            '- Pour valider une réponse, appelle run_checker en mode tool-driven avec geocache_id (recommandé) : run_checker(geocache_id, candidate). Le tool résout automatiquement le bon checker, l\'URL et wp.',
             "- Si un checker est fourni (ex: Certitude) et que tu proposes une réponse textuelle, valide-la en appelant le tool run_checker(url, candidate) AVANT de conclure.",
             "- Si le checker nécessite une session (ex: Geocaching.com), appelle d'abord ensure_checker_session(provider=\"geocaching\"). Si logged_in=false, propose login_checker_session(provider=\"geocaching\") puis réessaie.",
+            ...(geocachingCheckerUrl && geocachingCheckerUrl.toLowerCase().includes('#solution-checker') && gcCode
+                ? [
+                    `Note: le checker Geocaching peut être stocké comme ancre (${geocachingCheckerUrl}). Dans ce cas, lors de l'appel à run_checker, passe aussi wp=\"${gcCode}\" pour que l'app reconstruise l'URL Geocaching correcte.`,
+                    ''
+                ]
+                : []),
             '',
             '--- CONTEXTE GÉOCACHE ---',
             ...lines,

@@ -56,13 +56,28 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
         return {
             id: 'geoapp.checkers.run',
             name: 'run_checker',
-            description: 'Exécute un checker externe en remplissant le champ et en détectant succès/échec. Pour Certitude (certitudes.org), un mode interactif est utilisé (fenêtre Playwright + action manuelle requise).',
+            description: 'Exécute un checker externe en remplissant le champ et en détectant succès/échec. Pour Certitude (certitudes.org) et le checker intégré Geocaching.com, un mode interactif est utilisé (fenêtre Playwright + action manuelle/captcha possible).',
             providerName: CheckerToolsManager.PROVIDER_NAME,
             parameters: this.buildParameters({
+                geocache_id: {
+                    type: 'number',
+                    description: 'Optionnel: id de la géocache (recommandé). Si fourni, GeoApp résout automatiquement le bon checker en base et reconstruit l\'URL si nécessaire.',
+                    required: false
+                },
+                gc_code: {
+                    type: 'string',
+                    description: 'Optionnel: code GC (ex: "GCAWZA2"). Utilisé pour résoudre une géocache et reconstruire certains checkers (ex: #solution-checker).',
+                    required: false
+                },
+                zone_id: {
+                    type: 'number',
+                    description: 'Optionnel: id de zone (utile si plusieurs géocaches partagent le même gc_code).',
+                    required: false
+                },
                 url: {
                     type: 'string',
-                    description: 'URL du checker à ouvrir',
-                    required: true
+                    description: 'Optionnel: URL du checker à ouvrir (mode legacy). Si geocache_id ou gc_code est fourni, url est résolu automatiquement.',
+                    required: false
                 },
                 wp: {
                     type: 'string',
@@ -159,21 +174,54 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const start = performance.now();
             const args = JSON.parse(argString);
-            let url = args.url as string;
+            let url = typeof args.url === 'string' ? (args.url as string) : '';
             const candidate = args.candidate as string;
-            const wp = typeof args.wp === 'string' ? args.wp.trim() : undefined;
+            const explicitWp = typeof args.wp === 'string' ? args.wp.trim() : undefined;
+            const geocacheId = typeof args.geocache_id === 'number' ? args.geocache_id : undefined;
+            const gcCodeArg = typeof args.gc_code === 'string' ? (args.gc_code as string).trim() : undefined;
+            const zoneIdArg = typeof args.zone_id === 'number' ? args.zone_id : undefined;
             const timeoutSec = typeof args.timeout_sec === 'number' ? args.timeout_sec : 300;
 
             const backendBaseUrl = this.getBackendBaseUrl();
+
+            const resolved = await this.resolveCheckerTarget({
+                backendBaseUrl,
+                geocacheId,
+                gcCode: gcCodeArg,
+                zoneId: zoneIdArg,
+                url,
+                wp: explicitWp
+            });
+            if ('error' in resolved) {
+                return { error: resolved.error };
+            }
+            url = resolved.url;
+            const wp = resolved.wp;
 
             console.log('[CHECKERS-TOOLS] run_checker:start', {
                 requestId,
                 url,
                 isCertitudes: this.isCertitudesUrl(url),
+                isGeocaching: this.isGeocachingUrl(url),
                 timeoutSec
             });
 
+            const normalizedGeocaching = this.normalizeGeocachingUrl(url, wp);
+            if ('error' in normalizedGeocaching) {
+                return { error: normalizedGeocaching.error };
+            }
+            if (normalizedGeocaching.url !== url) {
+                console.log('[CHECKERS-TOOLS] run_checker:normalized-geocaching-url', {
+                    requestId,
+                    from: url,
+                    to: normalizedGeocaching.url
+                });
+                url = normalizedGeocaching.url;
+            }
+
             const isCertitudes = this.isCertitudesUrl(url);
+            const isGeocaching = this.isGeocachingUrl(url);
+
             if (isCertitudes) {
                 const normalized = this.normalizeCertitudesUrl(url, wp);
                 if ('error' in normalized) {
@@ -194,16 +242,48 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
                 );
             }
 
-            const endpoint = isCertitudes ? '/api/checkers/run-interactive' : '/api/checkers/run';
+            if (isGeocaching) {
+                void this.messages.info(
+                    'Geocaching.com: le “Solution Checker” peut nécessiter une session + un reCAPTCHA. Si besoin, utilisez d\'abord ensure_checker_session(provider="geocaching") puis login_checker_session(provider="geocaching"). Une fenêtre Chromium peut s\'ouvrir : résolvez le captcha puis cliquez sur “Check Solution”.'
+                );
+            }
+
+            if (isGeocaching) {
+                const ensureResult = await this.ensureSession({
+                    backendBaseUrl,
+                    provider: 'geocaching',
+                    wp
+                });
+
+                if ('error' in ensureResult) {
+                    return { error: ensureResult.error };
+                }
+
+                if (!ensureResult.logged_in) {
+                    return JSON.stringify(
+                        {
+                            status: 'requires_login',
+                            provider: 'geocaching',
+                            logged_in: false,
+                            message: 'Geocaching.com session is not logged in. Call login_checker_session(provider="geocaching") then retry run_checker.'
+                        },
+                        null,
+                        2
+                    );
+                }
+            }
+
+            const isInteractive = isCertitudes || isGeocaching;
+            const endpoint = isInteractive ? '/api/checkers/run-interactive' : '/api/checkers/run';
             const body: any = {
                 url,
                 input: { candidate }
             };
-            if (isCertitudes) {
+            if (isInteractive) {
                 body.timeout_sec = timeoutSec;
             }
 
-            const fetchTimeoutMs = (isCertitudes ? timeoutSec : 60) * 1000 + 10000;
+            const fetchTimeoutMs = (isInteractive ? timeoutSec : 60) * 1000 + 10000;
             const controller = new AbortController();
             const timeoutHandle = window.setTimeout(() => controller.abort(), fetchTimeoutMs);
 
@@ -259,6 +339,10 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
                 void this.messages.info('Certitude: résultat récupéré depuis la fenêtre interactive.');
             }
 
+            if (isGeocaching) {
+                void this.messages.info('Geocaching.com: résultat récupéré depuis la fenêtre interactive.');
+            }
+
             console.log('[CHECKERS-TOOLS] run_checker:done', {
                 requestId,
                 durationMs: Math.round(performance.now() - start)
@@ -268,6 +352,112 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
         } catch (error: any) {
             console.error('[CHECKERS-TOOLS] Erreur run_checker:', error);
             return { error: error.message || 'Erreur run_checker' };
+        }
+    }
+
+    private async resolveCheckerTarget(params: {
+        backendBaseUrl: string;
+        geocacheId?: number;
+        gcCode?: string;
+        zoneId?: number;
+        url?: string;
+        wp?: string;
+    }): Promise<{ url: string; wp?: string } | { error: string }> {
+        const inputUrl = (params.url || '').trim();
+        const inputWp = (params.wp || '').trim();
+        const inputGcCode = (params.gcCode || '').trim();
+
+        if (inputUrl) {
+            return { url: inputUrl, wp: inputWp || inputGcCode || undefined };
+        }
+
+        if (!params.geocacheId && !inputGcCode) {
+            return { error: 'Missing url. Provide geocache_id (recommended), gc_code, or url.' };
+        }
+
+        let geocache: any;
+        try {
+            if (params.geocacheId) {
+                const res = await fetch(`${params.backendBaseUrl}/api/geocaches/${params.geocacheId}`, {
+                    method: 'GET',
+                    credentials: 'include'
+                });
+                if (!res.ok) {
+                    return { error: `Unable to fetch geocache ${params.geocacheId} (HTTP ${res.status})` };
+                }
+                geocache = await res.json();
+            } else {
+                const zoneQuery = typeof params.zoneId === 'number' ? `?zone_id=${encodeURIComponent(String(params.zoneId))}` : '';
+                const res = await fetch(
+                    `${params.backendBaseUrl}/api/geocaches/by-code/${encodeURIComponent(inputGcCode)}${zoneQuery}`,
+                    { method: 'GET', credentials: 'include' }
+                );
+                if (!res.ok) {
+                    return { error: `Unable to fetch geocache ${inputGcCode} (HTTP ${res.status})` };
+                }
+                geocache = await res.json();
+            }
+        } catch (e: any) {
+            return { error: e?.message || 'Unable to fetch geocache details' };
+        }
+
+        const gcCode = (geocache?.gc_code || inputGcCode || '').toString().trim();
+        const wp = inputWp || gcCode || undefined;
+
+        const checkers: any[] = Array.isArray(geocache?.checkers) ? geocache.checkers : [];
+        if (!checkers.length) {
+            if (typeof geocache?.url === 'string' && geocache.url.trim()) {
+                return { url: geocache.url.trim(), wp };
+            }
+            return { error: 'No checkers available for this geocache' };
+        }
+
+        const pick = (...predicates: Array<(c: any) => boolean>) => {
+            for (const pred of predicates) {
+                const found = checkers.find(pred);
+                if (found) {
+                    return found;
+                }
+            }
+            return undefined;
+        };
+
+        const chosen = pick(
+            c => (c?.url || '').toLowerCase().includes('certitudes.org'),
+            c => (c?.name || '').toLowerCase().includes('certitude'),
+            c => (c?.name || '').toLowerCase().includes('geocaching'),
+            c => (c?.url || '').toLowerCase().includes('geocaching.com'),
+            c => true
+        );
+
+        const chosenUrl = (chosen?.url || '').toString().trim();
+        if (!chosenUrl) {
+            return { error: 'Checker URL is missing for this geocache' };
+        }
+        return { url: chosenUrl, wp };
+    }
+
+    private async ensureSession(params: {
+        backendBaseUrl: string;
+        provider: string;
+        wp?: string;
+    }): Promise<{ provider: string; logged_in: boolean } | { error: string }> {
+        try {
+            const res = await fetch(`${params.backendBaseUrl}/api/checkers/session/ensure`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ provider: params.provider, wp: params.wp })
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status === 'error') {
+                return { error: data.error || `HTTP ${res.status}` };
+            }
+
+            return { provider: data.provider, logged_in: Boolean(data.logged_in) };
+        } catch (error: any) {
+            return { error: error?.message || 'Unable to ensure checker session' };
         }
     }
 
@@ -314,6 +504,51 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
     private isCertitudesUrl(url: string): boolean {
         const raw = (url || '').toLowerCase();
         return raw.includes('certitudes.org') || raw.includes('www.certitudes.org');
+    }
+
+    private isGeocachingUrl(url: string): boolean {
+        const raw = (url || '').toLowerCase();
+        if (!raw.includes('geocaching.com')) {
+            return false;
+        }
+        return raw.includes('/geocache/') || raw.includes('cache_details.aspx');
+    }
+
+    private normalizeGeocachingUrl(url: string, wp?: string): { url: string } | { error: string } {
+        const raw = (url || '').trim();
+        if (!raw) {
+            return { error: 'Missing url' };
+        }
+
+        if (raw.startsWith('#') || raw === 'solution-checker' || raw === '#solution-checker') {
+            if (!wp) {
+                return { error: 'Invalid checker url (#solution-checker). Provide wp (GC code) to build a valid Geocaching URL.' };
+            }
+            return { url: `https://www.geocaching.com/geocache/${encodeURIComponent(wp)}` };
+        }
+
+        if (raw.toLowerCase().includes('/geocache/#solution-checker') || raw.toLowerCase().includes('/geocache/#')) {
+            if (!wp) {
+                return { error: 'Geocaching checker url is missing the GC code. Provide wp (GC code) to build a valid Geocaching URL.' };
+            }
+            return { url: `https://www.geocaching.com/geocache/${encodeURIComponent(wp)}` };
+        }
+
+        if (raw.startsWith('/')) {
+            return { url: `https://www.geocaching.com${raw}` };
+        }
+
+        try {
+            // eslint-disable-next-line no-new
+            new URL(raw);
+            return { url: raw };
+        } catch {
+            if (raw.toLowerCase().includes('geocaching.com')) {
+                return { url: `https://${raw.replace(/^https?:\/\//i, '')}` };
+            }
+        }
+
+        return { url: raw };
     }
 
     private async handleEnsureSession(argString: string): Promise<ToolCallResult> {

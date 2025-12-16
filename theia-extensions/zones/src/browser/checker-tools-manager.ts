@@ -52,6 +52,35 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
         }
     }
 
+    private async loginSession(params: {
+        backendBaseUrl: string;
+        provider: string;
+        wp?: string;
+        timeoutSec: number;
+    }): Promise<{ provider: string; logged_in: boolean } | { error: string }> {
+        try {
+            const res = await fetch(`${params.backendBaseUrl}/api/checkers/session/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    provider: params.provider,
+                    wp: params.wp,
+                    timeout_sec: params.timeoutSec
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status === 'error') {
+                return { error: data.error || `HTTP ${res.status}` };
+            }
+
+            return { provider: data.provider, logged_in: Boolean(data.logged_in) };
+        } catch (error: any) {
+            return { error: error?.message || 'Unable to login checker session' };
+        }
+    }
+
     private createRunCheckerTool(): ToolRequest {
         return {
             id: 'geoapp.checkers.run',
@@ -88,6 +117,16 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
                     type: 'string',
                     description: 'Réponse candidate à tester (texte)',
                     required: true
+                },
+                auto_login: {
+                    type: 'boolean',
+                    description: 'Optionnel: pour Geocaching.com, déclenche automatiquement la fenêtre de login si la session n\'est pas authentifiée. Défaut: true.',
+                    required: false
+                },
+                login_timeout_sec: {
+                    type: 'number',
+                    description: 'Optionnel: durée max (secondes) pour se connecter lors de l\'auto-login Geocaching.com. Défaut: 180.',
+                    required: false
                 },
                 timeout_sec: {
                     type: 'number',
@@ -180,6 +219,8 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             const geocacheId = typeof args.geocache_id === 'number' ? args.geocache_id : undefined;
             const gcCodeArg = typeof args.gc_code === 'string' ? (args.gc_code as string).trim() : undefined;
             const zoneIdArg = typeof args.zone_id === 'number' ? args.zone_id : undefined;
+            const autoLogin = args.auto_login === undefined ? true : Boolean(args.auto_login);
+            const loginTimeoutSec = typeof args.login_timeout_sec === 'number' ? args.login_timeout_sec : 180;
             const timeoutSec = typeof args.timeout_sec === 'number' ? args.timeout_sec : 300;
 
             const backendBaseUrl = this.getBackendBaseUrl();
@@ -249,7 +290,7 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
             }
 
             if (isGeocaching) {
-                const ensureResult = await this.ensureSession({
+                let ensureResult = await this.ensureSession({
                     backendBaseUrl,
                     provider: 'geocaching',
                     wp
@@ -259,13 +300,37 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
                     return { error: ensureResult.error };
                 }
 
+                if (!ensureResult.logged_in && autoLogin) {
+                    const loginResult = await this.loginSession({
+                        backendBaseUrl,
+                        provider: 'geocaching',
+                        wp,
+                        timeoutSec: loginTimeoutSec
+                    });
+
+                    if ('error' in loginResult) {
+                        return { error: loginResult.error };
+                    }
+
+                    ensureResult = await this.ensureSession({
+                        backendBaseUrl,
+                        provider: 'geocaching',
+                        wp
+                    });
+                    if ('error' in ensureResult) {
+                        return { error: ensureResult.error };
+                    }
+                }
+
                 if (!ensureResult.logged_in) {
                     return JSON.stringify(
                         {
                             status: 'requires_login',
                             provider: 'geocaching',
                             logged_in: false,
-                            message: 'Geocaching.com session is not logged in. Call login_checker_session(provider="geocaching") then retry run_checker.'
+                            message: autoLogin
+                                ? 'Geocaching.com session is still not logged in after auto-login attempt. Run login_checker_session(provider="geocaching") then retry run_checker.'
+                                : 'Geocaching.com session is not logged in. Call login_checker_session(provider="geocaching") then retry run_checker.'
                         },
                         null,
                         2

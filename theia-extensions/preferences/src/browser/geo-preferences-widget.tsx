@@ -170,6 +170,7 @@ export class GeoPreferencesWidget extends ReactWidget {
             map: 'Carte',
             updates: 'Mises à jour',
             search: 'Recherche',
+            checkers: 'Checkers',
             plugins: 'Plugins',
             backend: 'Backend',
             notes: 'Notes',

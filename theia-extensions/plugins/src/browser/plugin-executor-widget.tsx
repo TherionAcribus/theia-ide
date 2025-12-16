@@ -35,6 +35,7 @@ export type PluginExecutorMode = 'plugin' | 'geocache';
  * Contexte de géocache passé au widget
  */
 export interface GeocacheContext {
+    geocacheId?: number;
     gcCode: string;
     name: string;
     coordinates?: {
@@ -48,6 +49,7 @@ export interface GeocacheContext {
     terrain?: number;
     waypoints?: any[]; // Ajout des waypoints
     images?: { url: string }[];
+    checkers?: Array<{ id?: number; name?: string; url?: string }>;
 }
 
 interface SerializedPluginExecutorState {
@@ -255,6 +257,11 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
         this.update();
     }
 
+    private getBackendBaseUrl(): string {
+        const value = this.preferenceService.get('geoApp.backend.apiBaseUrl', 'http://localhost:8000') as string;
+        return (value || 'http://localhost:8000').replace(/\/$/, '');
+    }
+
     protected onAfterAttach(msg: any): void {
         super.onAfterAttach(msg);
         this.addInteractionListeners();
@@ -429,6 +436,7 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
             pluginsService={this.pluginsService}
             tasksService={this.tasksService}
             messageService={this.messageService}
+            backendBaseUrl={this.getBackendBaseUrl()}
         />;
     }
 }
@@ -440,7 +448,8 @@ const PluginExecutorComponent: React.FC<{
     pluginsService: PluginsService;
     tasksService: TasksService;
     messageService: MessageService;
-}> = ({ config, pluginsService, tasksService, messageService }) => {
+    backendBaseUrl: string;
+}> = ({ config, pluginsService, tasksService, messageService, backendBaseUrl }) => {
     // Initialisation de l'état basée sur le mode
     const [state, setState] = React.useState<ExecutorState>(() => {
         // En mode plugin ou geocache, on peut avoir un plugin pré-sélectionné
@@ -904,6 +913,277 @@ const PluginExecutorComponent: React.FC<{
         messageService.info('Coordonnées envoyées au widget Waypoints');
     }, [config.mode, config.geocacheContext, messageService]);
 
+    interface CheckerRunResult {
+        status?: 'success' | 'failure' | 'unknown';
+        message?: string;
+        evidence?: string | null;
+        extracted?: Record<string, any>;
+    }
+
+    const getCandidateTextFromCoords = React.useCallback((coords?: { formatted?: string; latitude?: string; longitude?: string }): string => {
+        if (!coords) {
+            return '';
+        }
+        if (coords.formatted && String(coords.formatted).trim()) {
+            return String(coords.formatted).trim();
+        }
+        const lat = (coords.latitude || '').toString().trim();
+        const lon = (coords.longitude || '').toString().trim();
+        return `${lat} ${lon}`.trim();
+    }, []);
+
+    const pickCheckerUrl = React.useCallback((checkers?: Array<{ name?: string; url?: string }>): string | null => {
+        if (!checkers || checkers.length === 0) {
+            return null;
+        }
+        const withUrl = checkers.filter(c => typeof c.url === 'string' && c.url.trim());
+        if (withUrl.length === 0) {
+            return null;
+        }
+        const pick = (...predicates: Array<(c: { name?: string; url?: string }) => boolean>) => {
+            for (const pred of predicates) {
+                const found = withUrl.find(pred);
+                if (found && found.url) {
+                    return found.url.trim();
+                }
+            }
+            return withUrl[0].url!.trim();
+        };
+
+        return pick(
+            c => (c.url || '').toLowerCase().includes('geocaching.com'),
+            c => (c.name || '').toLowerCase().includes('geocaching'),
+            c => (c.url || '').toLowerCase().includes('certitudes.org'),
+            c => (c.name || '').toLowerCase().includes('certitude'),
+            () => true
+        );
+    }, []);
+
+    const isCertitudesUrl = React.useCallback((url: string): boolean => {
+        const raw = (url || '').toLowerCase();
+        return raw.includes('certitudes.org') || raw.includes('www.certitudes.org');
+    }, []);
+
+    const isGeocachingUrl = React.useCallback((url: string): boolean => {
+        const raw = (url || '').toLowerCase();
+        if (!raw.includes('geocaching.com')) {
+            return false;
+        }
+        return raw.includes('/geocache/') || raw.includes('cache_details.aspx');
+    }, []);
+
+    const hasHttpScheme = React.useCallback((url: string): boolean => {
+        return /^https?:\/\//i.test((url || '').trim());
+    }, []);
+
+    const normalizeKnownDomainUrl = React.useCallback((url: string): string => {
+        const raw = (url || '').trim();
+        if (!raw || hasHttpScheme(raw)) {
+            return raw;
+        }
+
+        const lower = raw.toLowerCase();
+        if (lower.includes('certitudes.org') || lower.includes('geocaching.com')) {
+            return `https://${raw.replace(/^https?:\/\//i, '')}`;
+        }
+
+        return raw;
+    }, [hasHttpScheme]);
+
+    const normalizeGeocachingUrl = React.useCallback((url: string, wp?: string): { url: string } | { error: string } => {
+        const raw = (url || '').trim();
+        if (!raw) {
+            return { error: 'Missing checker url' };
+        }
+
+        if (raw.startsWith('#') || raw === 'solution-checker' || raw === '#solution-checker') {
+            if (!wp) {
+                return { error: 'Invalid checker url (#solution-checker). Provide a GC code to build a valid Geocaching URL.' };
+            }
+            return { url: `https://www.geocaching.com/geocache/${encodeURIComponent(wp)}` };
+        }
+
+        if (raw.toLowerCase().includes('/geocache/#solution-checker') || raw.toLowerCase().includes('/geocache/#')) {
+            if (!wp) {
+                return { error: 'Geocaching checker url is missing the GC code. Provide a GC code to build a valid Geocaching URL.' };
+            }
+            return { url: `https://www.geocaching.com/geocache/${encodeURIComponent(wp)}` };
+        }
+
+        if (raw.startsWith('/')) {
+            return { url: `https://www.geocaching.com${raw}` };
+        }
+
+        try {
+            // eslint-disable-next-line no-new
+            new URL(raw);
+            return { url: raw };
+        } catch {
+            if (raw.toLowerCase().includes('geocaching.com')) {
+                return { url: `https://${raw.replace(/^https?:\/\//i, '')}` };
+            }
+        }
+
+        return { url: raw };
+    }, []);
+
+    const ensureCheckerSession = React.useCallback(async (params: {
+        provider: string;
+        wp?: string;
+    }): Promise<{ provider: string; logged_in: boolean } | { error: string }> => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/checkers/session/ensure`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ provider: params.provider, wp: params.wp })
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status === 'error') {
+                return { error: data.error || `HTTP ${res.status}` };
+            }
+
+            return { provider: data.provider, logged_in: Boolean(data.logged_in) };
+        } catch (error: any) {
+            return { error: error?.message || 'Unable to ensure checker session' };
+        }
+    }, [backendBaseUrl]);
+
+    const loginCheckerSession = React.useCallback(async (params: {
+        provider: string;
+        wp?: string;
+        timeoutSec: number;
+    }): Promise<{ provider: string; logged_in: boolean } | { error: string }> => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/checkers/session/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ provider: params.provider, wp: params.wp, timeout_sec: params.timeoutSec })
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status === 'error') {
+                return { error: data.error || `HTTP ${res.status}` };
+            }
+
+            return { provider: data.provider, logged_in: Boolean(data.logged_in) };
+        } catch (error: any) {
+            return { error: error?.message || 'Unable to login checker session' };
+        }
+    }, [backendBaseUrl]);
+
+    const handleVerifyCoordinates = React.useCallback(async (coords?: { formatted?: string; latitude?: string; longitude?: string }): Promise<CheckerRunResult> => {
+        if (config.mode !== 'geocache' || !config.geocacheContext) {
+            return { status: 'unknown', message: 'Aucune géocache associée.' };
+        }
+
+        const candidate = getCandidateTextFromCoords(coords);
+        if (!candidate) {
+            return { status: 'unknown', message: 'Coordonnées invalides.' };
+        }
+
+        const checkerUrl = pickCheckerUrl(config.geocacheContext.checkers);
+        if (!checkerUrl) {
+            return { status: 'unknown', message: 'Aucun checker disponible pour cette géocache.' };
+        }
+
+        const wp = (config.geocacheContext.gcCode || '').trim();
+        let url = checkerUrl;
+
+        url = normalizeKnownDomainUrl(url);
+
+        const rawLower = (url || '').trim().toLowerCase();
+        const shouldNormalizeGeocaching =
+            rawLower.startsWith('#') ||
+            rawLower.includes('solution-checker') ||
+            rawLower.includes('geocaching.com') ||
+            rawLower.startsWith('/');
+
+        if (shouldNormalizeGeocaching) {
+            const normalized = normalizeGeocachingUrl(url, wp);
+            if ('error' in normalized) {
+                return { status: 'unknown', message: normalized.error };
+            }
+            url = normalized.url;
+        }
+
+        url = normalizeKnownDomainUrl(url);
+
+        if (isGeocachingUrl(url)) {
+            let ensureResult = await ensureCheckerSession({ provider: 'geocaching', wp });
+            if ('error' in ensureResult) {
+                return { status: 'unknown', message: ensureResult.error };
+            }
+
+            if (!ensureResult.logged_in) {
+                messageService.info(
+                    'Geocaching.com: session non connectée. Une fenêtre Chromium va s\'ouvrir pour le login. Connectez-vous puis revenez ici.'
+                );
+                const loginResult = await loginCheckerSession({ provider: 'geocaching', wp, timeoutSec: 180 });
+                if ('error' in loginResult) {
+                    return { status: 'unknown', message: loginResult.error };
+                }
+
+                ensureResult = await ensureCheckerSession({ provider: 'geocaching', wp });
+                if ('error' in ensureResult) {
+                    return { status: 'unknown', message: ensureResult.error };
+                }
+
+                if (!ensureResult.logged_in) {
+                    return {
+                        status: 'unknown',
+                        message: 'Geocaching.com: session toujours non connectée après tentative de login.'
+                    };
+                }
+            }
+        }
+
+        const interactive = isCertitudesUrl(url) || isGeocachingUrl(url);
+        const endpoint = interactive ? '/api/checkers/run-interactive' : '/api/checkers/run';
+        const body: any = {
+            url,
+            input: { candidate }
+        };
+        if (interactive) {
+            body.timeout_sec = 300;
+        }
+
+        if (isCertitudesUrl(url)) {
+            messageService.info('Certitude nécessite une validation manuelle. Une fenêtre Chromium va s\'ouvrir : cliquez sur “Certifier”, puis revenez ici.');
+        }
+
+        if (isGeocachingUrl(url)) {
+            messageService.info('Geocaching.com: le “Solution Checker” peut nécessiter une session + un reCAPTCHA. Une fenêtre Chromium peut s\'ouvrir : résolvez le captcha puis cliquez sur “Check Solution”.');
+        }
+
+        const fetchTimeoutMs = (interactive ? 300 : 60) * 1000 + 10000;
+        const controller = new AbortController();
+        const timeoutHandle = window.setTimeout(() => controller.abort(), fetchTimeoutMs);
+
+        try {
+            const res = await fetch(`${backendBaseUrl}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(body),
+                signal: controller.signal
+            });
+
+            const data = await res.json();
+            if (!res.ok || data.status === 'error') {
+                return { status: 'unknown', message: data.error || `HTTP ${res.status}` };
+            }
+
+            return data.result as CheckerRunResult;
+        } catch (error: any) {
+            return { status: 'unknown', message: error?.message || 'Erreur lors de l\'appel au checker.' };
+        } finally {
+            window.clearTimeout(timeoutHandle);
+        }
+    }, [config.mode, config.geocacheContext, getCandidateTextFromCoords, pickCheckerUrl, isGeocachingUrl, normalizeGeocachingUrl, ensureCheckerSession, loginCheckerSession, isCertitudesUrl, backendBaseUrl, messageService]);
+
     return (
         <div className='plugin-executor-container'>
             {/* En-tête MODE GEOCACHE */}
@@ -1140,6 +1420,8 @@ const PluginExecutorComponent: React.FC<{
                         geocacheContext={config.geocacheContext}
                         pluginName={state.pluginDetails?.name || state.selectedPlugin}
                         onRequestAddWaypoint={handleRequestAddWaypoint}
+                        onVerifyCoordinates={handleVerifyCoordinates}
+                        messageService={messageService}
                     />
                     
                     {/* Bouton d'enchaînement (MODE GEOCACHE uniquement) */}
@@ -1314,11 +1596,16 @@ const PluginResultDisplay: React.FC<{
     geocacheContext?: GeocacheContext;
     pluginName?: string | null;
     onRequestAddWaypoint?: (detail: AddWaypointEventDetail) => void;
-}> = ({ result, configMode, geocacheContext, pluginName, onRequestAddWaypoint }) => {
+    onVerifyCoordinates?: (coords?: { formatted?: string; latitude?: string; longitude?: string }) => Promise<{ status?: 'success' | 'failure' | 'unknown'; message?: string }>;
+    messageService: MessageService;
+}> = ({ result, configMode, geocacheContext, pluginName, onRequestAddWaypoint, onVerifyCoordinates, messageService }) => {
     console.log('=== PluginResultDisplay RENDER ===');
     console.log('Received result:', result);
     console.log('result.results:', result.results);
     console.log('result.summary:', result.summary);
+
+    const [verifiedCoordinates, setVerifiedCoordinates] = React.useState<Record<string, { status?: string; message?: string }>>({});
+    const [verifyingCoordinates, setVerifyingCoordinates] = React.useState<Record<string, boolean>>({});
 
     // Vérifications de sécurité
     if (!result) {
@@ -1347,6 +1634,20 @@ const PluginResultDisplay: React.FC<{
 
     const isBruteForce = sortedResults.length > 5; // Considérer comme brute-force si plus de 5 résultats
     const canRequestWaypoint = configMode === 'geocache' && !!geocacheContext && !!onRequestAddWaypoint;
+    const canVerifyCoordinates = configMode === 'geocache' && !!geocacheContext?.checkers?.length && !!onVerifyCoordinates;
+
+    const getCoordsKey = (coords?: { formatted?: string; latitude?: string; longitude?: string }): string => {
+        if (!coords) {
+            return '';
+        }
+        const formatted = (coords.formatted || '').toString().trim();
+        if (formatted) {
+            return formatted;
+        }
+        const lat = (coords.latitude || '').toString().trim();
+        const lon = (coords.longitude || '').toString().trim();
+        return `${lat} ${lon}`.trim();
+    };
 
     const buildGcCoords = (coords?: {
         latitude?: number | string;
@@ -1501,6 +1802,43 @@ const PluginResultDisplay: React.FC<{
                                                 >
                                                     📋 Copier
                                                 </button>
+                                                {canVerifyCoordinates && (
+                                                    <button
+                                                        className='theia-button'
+                                                        onClick={async () => {
+                                                            const key = getCoordsKey(item.coordinates);
+                                                            if (!key || !onVerifyCoordinates) {
+                                                                return;
+                                                            }
+                                                            setVerifyingCoordinates(prev => ({ ...prev, [key]: true }));
+                                                            try {
+                                                                const result = await onVerifyCoordinates(item.coordinates);
+                                                                const status = result?.status || 'unknown';
+                                                                setVerifiedCoordinates(prev => ({
+                                                                    ...prev,
+                                                                    [key]: { status, message: result?.message }
+                                                                }));
+
+                                                                if (status === 'success') {
+                                                                    messageService.info('Checker: coordonnées validées.');
+                                                                } else if (status === 'failure') {
+                                                                    messageService.warn('Checker: coordonnées refusées.');
+                                                                } else {
+                                                                    messageService.warn(result?.message || 'Checker: résultat indéterminé.');
+                                                                }
+                                                            } catch (error: any) {
+                                                                messageService.error(error?.message || 'Erreur lors de la vérification via checker.');
+                                                            } finally {
+                                                                setVerifyingCoordinates(prev => ({ ...prev, [key]: false }));
+                                                            }
+                                                        }}
+                                                        title='Envoyer ces coordonnées au checker de la géocache'
+                                                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                        disabled={verifyingCoordinates[getCoordsKey(item.coordinates)] === true}
+                                                    >
+                                                        {verifyingCoordinates[getCoordsKey(item.coordinates)] === true ? '⏳ Vérification...' : '🔎 Vérifier via Checkeur'}
+                                                    </button>
+                                                )}
                                                 {canRequestWaypoint && buildGcCoords(item.coordinates) && (
                                                     <>
                                                         {['manual', 'auto'].map(mode => (
@@ -1551,6 +1889,28 @@ const PluginResultDisplay: React.FC<{
                                                   ? `${item.coordinates.latitude} ${item.coordinates.longitude}`
                                                   : 'Coordonnées invalides')}
                                             </div>
+                                            {(() => {
+                                                const key = getCoordsKey(item.coordinates);
+                                                const record = key ? verifiedCoordinates[key] : undefined;
+                                                if (!record) {
+                                                    return null;
+                                                }
+                                                if (record.status === 'failure') {
+                                                    return (
+                                                        <div style={{ marginTop: '6px', fontSize: '12px', opacity: 0.85 }}>
+                                                            ❌ Coordonnées refusées
+                                                        </div>
+                                                    );
+                                                }
+                                                if (record.status !== 'success') {
+                                                    return null;
+                                                }
+                                                return (
+                                                    <div style={{ marginTop: '6px', fontSize: '12px', opacity: 0.85 }}>
+                                                        ✅ Coordonnées vérifiées
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     )}
 

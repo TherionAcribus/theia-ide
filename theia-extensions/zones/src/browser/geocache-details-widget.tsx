@@ -1227,6 +1227,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         const descriptionHtml = this.data.description_html || '';
 
         const context: GeocacheContext = {
+            geocacheId: this.data.id,
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
             coordinates: this.data.latitude && this.data.longitude ? {
@@ -1239,7 +1240,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
             waypoints: this.data.waypoints, // Ajout des waypoints
-            images: this.data.images
+            images: this.data.images,
+            checkers: this.data.checkers
         };
         
         console.log('[GeocacheDetailsWidget] Context sent to executor:', context);
@@ -1260,6 +1262,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         const descriptionHtml = this.data.description_html || '';
 
         const context: GeocacheContext = {
+            geocacheId: this.data.id,
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
             coordinates: this.data.latitude && this.data.longitude ? {
@@ -1272,7 +1275,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             difficulty: this.data.difficulty,
             terrain: this.data.terrain,
             waypoints: this.data.waypoints,
-            images: this.data.images
+            images: this.data.images,
+            checkers: this.data.checkers
         };
 
         // Ouvrir directement avec analysis_web_page et exécution automatique

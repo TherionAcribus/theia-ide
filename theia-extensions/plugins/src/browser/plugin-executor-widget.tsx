@@ -1747,6 +1747,16 @@ const PluginResultDisplay: React.FC<{
                     {sortedResults.map((item, index) => {
                         console.log(`Rendering result ${index}:`, item);
                         try {
+                            const gpsCoordinates = (item.metadata as any)?.gps_coordinates;
+                            const resolvedCoordinates =
+                                item.coordinates ||
+                                (gpsCoordinates && gpsCoordinates.exist
+                                    ? {
+                                        latitude: gpsCoordinates.ddm_lat || '',
+                                        longitude: gpsCoordinates.ddm_lon || '',
+                                        formatted: gpsCoordinates.ddm || ''
+                                    }
+                                    : undefined);
                             return (
                                 <div 
                                     key={item.id || index} 
@@ -1805,7 +1815,7 @@ const PluginResultDisplay: React.FC<{
                                         <div style={{ color: 'orange' }}>No text_output for result {index}</div>
                                     )}
 
-                                    {item.coordinates && (
+                                    {resolvedCoordinates && (
                                         <div className='result-coordinates' style={{ 
                                             marginTop: '8px',
                                             padding: '10px',
@@ -1817,9 +1827,9 @@ const PluginResultDisplay: React.FC<{
                                                 <strong>📍 Coordonnées détectées :</strong>
                                                 <button
                                                     className='theia-button secondary'
-                                                    onClick={() => copyToClipboard(item.coordinates?.formatted ||
-                                                        (item.coordinates?.latitude && item.coordinates?.longitude
-                                                         ? `${item.coordinates.latitude} ${item.coordinates.longitude}`
+                                                    onClick={() => copyToClipboard(resolvedCoordinates?.formatted ||
+                                                        (resolvedCoordinates?.latitude && resolvedCoordinates?.longitude
+                                                         ? `${resolvedCoordinates.latitude} ${resolvedCoordinates.longitude}`
                                                          : 'Coordonnées invalides'))}
                                                     title='Copier les coordonnées'
                                                     style={{ padding: '4px 8px', fontSize: '11px' }}
@@ -1830,13 +1840,13 @@ const PluginResultDisplay: React.FC<{
                                                     <button
                                                         className='theia-button'
                                                         onClick={async () => {
-                                                            const key = getCoordsKey(item.coordinates);
-                                                            if (!key || !onVerifyCoordinates) {
+                                                            const key = resolvedCoordinates ? getCoordsKey(resolvedCoordinates) : undefined;
+                                                            if (!key || !onVerifyCoordinates || !resolvedCoordinates) {
                                                                 return;
                                                             }
                                                             setVerifyingCoordinates(prev => ({ ...prev, [key]: true }));
                                                             try {
-                                                                const result = await onVerifyCoordinates(item.coordinates);
+                                                                const result = await onVerifyCoordinates(resolvedCoordinates);
                                                                 const status = result?.status || 'unknown';
                                                                 setVerifiedCoordinates(prev => ({
                                                                     ...prev,
@@ -1858,26 +1868,28 @@ const PluginResultDisplay: React.FC<{
                                                         }}
                                                         title='Envoyer ces coordonnées au checker de la géocache'
                                                         style={{ padding: '4px 8px', fontSize: '11px' }}
-                                                        disabled={verifyingCoordinates[getCoordsKey(item.coordinates)] === true}
+                                                        disabled={resolvedCoordinates ? verifyingCoordinates[getCoordsKey(resolvedCoordinates)] === true : false}
                                                     >
-                                                        {verifyingCoordinates[getCoordsKey(item.coordinates)] === true ? '⏳ Vérification...' : '🔎 Vérifier via Checkeur'}
+                                                        {resolvedCoordinates && verifyingCoordinates[getCoordsKey(resolvedCoordinates)] === true
+                                                            ? '⏳ Vérification...'
+                                                            : '🔎 Vérifier via Checkeur'}
                                                     </button>
                                                 )}
-                                                {canRequestWaypoint && buildGcCoords(item.coordinates) && (
+                                                {canRequestWaypoint && resolvedCoordinates && buildGcCoords(resolvedCoordinates) && (
                                                     <>
                                                         {['manual', 'auto'].map(mode => (
                                                             <button
                                                                 key={mode}
                                                                 className='theia-button'
                                                                 onClick={() => {
-                                                                    const gcCoords = buildGcCoords(item.coordinates);
+                                                                    const gcCoords = buildGcCoords(resolvedCoordinates);
                                                                     if (!gcCoords) {
                                                                         return;
                                                                     }
-                                                                    const decimalCoords = extractDecimalCoordinates(item.coordinates, gcCoords);
+                                                                    const decimalCoords = extractDecimalCoordinates(resolvedCoordinates, gcCoords);
                                                                     if (!decimalCoords) {
                                                                         console.warn('[Plugin Executor] Impossible de convertir les coordonnées pour la carte', {
-                                                                            coordinates: item.coordinates,
+                                                                            coordinates: resolvedCoordinates,
                                                                             fallback: gcCoords
                                                                         });
                                                                     }
@@ -1908,13 +1920,13 @@ const PluginResultDisplay: React.FC<{
                                                 )}
                                             </div>
                                             <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
-                                                {item.coordinates.formatted ||
-                                                 (item.coordinates.latitude && item.coordinates.longitude
-                                                  ? `${item.coordinates.latitude} ${item.coordinates.longitude}`
+                                                {resolvedCoordinates.formatted ||
+                                                 (resolvedCoordinates.latitude && resolvedCoordinates.longitude
+                                                  ? `${resolvedCoordinates.latitude} ${resolvedCoordinates.longitude}`
                                                   : 'Coordonnées invalides')}
                                             </div>
                                             {(() => {
-                                                const key = getCoordsKey(item.coordinates);
+                                                const key = getCoordsKey(resolvedCoordinates);
                                                 const record = key ? verifiedCoordinates[key] : undefined;
                                                 if (!record) {
                                                     return null;
@@ -1943,7 +1955,12 @@ const PluginResultDisplay: React.FC<{
                                             <strong>Métadonnées:</strong>
                                             <ul>
                                                 {Object.entries(item.metadata).map(([k, v]) => (
-                                                    <li key={k}><strong>{k}:</strong> {String(v)}</li>
+                                                    <li key={k}>
+                                                        <strong>{k}:</strong>{' '}
+                                                        {v !== null && typeof v === 'object'
+                                                            ? JSON.stringify(v)
+                                                            : String(v)}
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>

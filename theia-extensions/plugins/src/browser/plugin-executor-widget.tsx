@@ -674,6 +674,13 @@ const PluginExecutorComponent: React.FC<{
                     inputs[key] = context.coordinates.coordinatesRaw;
                 }
             }
+            // Pour les plugins qui attendent explicitement une coordonnée d'origine (ex: coordinate_projection)
+            else if (key === 'origin_coords') {
+                if (context.coordinates?.coordinatesRaw) {
+                    console.log(`[Plugin Executor] Fallback for 'origin_coords': using geocache coordinatesRaw`);
+                    inputs[key] = context.coordinates.coordinatesRaw;
+                }
+            }
             else if (key === 'hint' && context.hint) {
                 inputs[key] = context.hint;
             }
@@ -791,6 +798,18 @@ const PluginExecutorComponent: React.FC<{
 
         // Préparer les inputs pour l'envoi
         let inputsToSend = { ...state.formInputs };
+
+        // En mode geocache, injecter les coordonnées de la cache si le plugin attend origin_coords
+        if (
+            config.mode === 'geocache' &&
+            config.geocacheContext?.coordinates?.coordinatesRaw &&
+            (inputsToSend.origin_coords === undefined || String(inputsToSend.origin_coords || '').trim() === '')
+        ) {
+            inputsToSend = {
+                ...inputsToSend,
+                origin_coords: config.geocacheContext.coordinates.coordinatesRaw
+            };
+        }
         
         // Si on est en mode geocache, ajouter les waypoints au contexte envoyé
         if (config.mode === 'geocache' && config.geocacheContext?.waypoints) {
@@ -893,7 +912,12 @@ const PluginExecutorComponent: React.FC<{
             resultsHistory: [...prev.resultsHistory, prev.result!],
             selectedPlugin: null,
             pluginDetails: null,
-            formInputs: { text: resultText },
+            formInputs: {
+                text: resultText,
+                ...(config.mode === 'geocache' && config.geocacheContext?.coordinates?.coordinatesRaw
+                    ? { origin_coords: config.geocacheContext.coordinates.coordinatesRaw }
+                    : {})
+            },
             result: null,
             error: null
         }));

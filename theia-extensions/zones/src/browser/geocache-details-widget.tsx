@@ -1226,15 +1226,38 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         // Comme demandé, on passe le HTML brut pour analyse (commentaires, attributs cachés, etc.)
         const descriptionHtml = this.data.description_html || '';
 
+        const coordinatesRaw = this.data.coordinates_raw || this.data.original_coordinates_raw;
+        let contextCoordinates: GeocacheContext['coordinates'] = undefined;
+        if (coordinatesRaw) {
+            let lat = this.data.latitude;
+            let lon = this.data.longitude;
+
+            if (lat === undefined || lat === null || lon === undefined || lon === null) {
+                const raw = coordinatesRaw.replace(',', ' ');
+                const parts = raw.match(/([NS].*?)([EW].*)/i);
+                if (parts?.[1] && parts?.[2]) {
+                    const parsed = parseGCCoords(parts[1].trim(), parts[2].trim());
+                    if (parsed) {
+                        lat = parsed.lat;
+                        lon = parsed.lon;
+                    }
+                }
+            }
+
+            if (lat !== undefined && lat !== null && lon !== undefined && lon !== null) {
+                contextCoordinates = {
+                    latitude: lat,
+                    longitude: lon,
+                    coordinatesRaw
+                };
+            }
+        }
+
         const context: GeocacheContext = {
             geocacheId: this.data.id,
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
-            coordinates: this.data.latitude && this.data.longitude ? {
-                latitude: this.data.latitude,
-                longitude: this.data.longitude,
-                coordinatesRaw: this.data.coordinates_raw
-            } : undefined,
+            coordinates: contextCoordinates,
             description: descriptionHtml,
             hint: this.getDecodedHints(this.data),
             difficulty: this.data.difficulty,
@@ -1261,15 +1284,38 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
         const descriptionHtml = this.data.description_html || '';
 
+        const coordinatesRaw = this.data.coordinates_raw || this.data.original_coordinates_raw;
+        let contextCoordinates: GeocacheContext['coordinates'] = undefined;
+        if (coordinatesRaw) {
+            let lat = this.data.latitude;
+            let lon = this.data.longitude;
+
+            if (lat === undefined || lat === null || lon === undefined || lon === null) {
+                const raw = coordinatesRaw.replace(',', ' ');
+                const parts = raw.match(/([NS].*?)([EW].*)/i);
+                if (parts?.[1] && parts?.[2]) {
+                    const parsed = parseGCCoords(parts[1].trim(), parts[2].trim());
+                    if (parsed) {
+                        lat = parsed.lat;
+                        lon = parsed.lon;
+                    }
+                }
+            }
+
+            if (lat !== undefined && lat !== null && lon !== undefined && lon !== null) {
+                contextCoordinates = {
+                    latitude: lat,
+                    longitude: lon,
+                    coordinatesRaw
+                };
+            }
+        }
+
         const context: GeocacheContext = {
             geocacheId: this.data.id,
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
-            coordinates: this.data.latitude && this.data.longitude ? {
-                latitude: this.data.latitude,
-                longitude: this.data.longitude,
-                coordinatesRaw: this.data.coordinates_raw
-            } : undefined,
+            coordinates: contextCoordinates,
             description: descriptionHtml,
             hint: this.getDecodedHints(this.data),
             difficulty: this.data.difficulty,

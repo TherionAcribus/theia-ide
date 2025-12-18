@@ -12,6 +12,7 @@ import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-exec
 import { FormulaSolverSolveFromGeocacheCommand } from '@mysterai/theia-formula-solver/lib/browser/formula-solver-contribution';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
+import { GeocacheImagesPanel } from './geocache-images-panel';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -1987,19 +1988,6 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return `${value.substring(0, maxLength).trim()}…`;
     }
 
-    protected renderImages(images?: GeocacheImage[]): React.ReactNode {
-        if (!images || images.length === 0) { return undefined; }
-        return (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {images.map((img, i) => (
-                    <a key={i} href={img.url} target='_blank' rel='noreferrer' title={img.url}>
-                        <img src={img.url} style={{ maxWidth: 160, maxHeight: 120, objectFit: 'cover', borderRadius: 4 }} />
-                    </a>
-                ))}
-            </div>
-        );
-    }
-
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -2197,7 +2185,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             </div>
                         ) : undefined}
 
-                        {this.renderImages(d.images)}
+                        {this.geocacheId ? (
+                            <GeocacheImagesPanel
+                                backendBaseUrl={this.backendBaseUrl}
+                                geocacheId={this.geocacheId}
+                            />
+                        ) : undefined}
 
                         <div>
                             <WaypointsEditorWrapper

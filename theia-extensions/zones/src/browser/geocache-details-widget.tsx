@@ -931,6 +931,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected interactionTimerId: number | undefined;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
+    private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -1988,6 +1989,23 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return `${value.substring(0, maxLength).trim()}…`;
     }
 
+    private async confirmStoreAllImages(options: { geocacheId: number; pendingCount: number }): Promise<boolean> {
+        const dialog = new ConfirmDialog({
+            title: 'Stockage local des images',
+            msg: `Stocker localement ${options.pendingCount} image(s) pour cette géocache ?`,
+        });
+        const confirmed = await dialog.open();
+        return Boolean(confirmed);
+    }
+
+    private getImagesStorageDefaultMode(): 'never' | 'prompt' | 'always' {
+        const raw = this.preferenceService.get(this.imagesStorageDefaultModePreferenceKey, 'prompt') as string;
+        if (raw === 'never' || raw === 'prompt' || raw === 'always') {
+            return raw;
+        }
+        return 'prompt';
+    }
+
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -2189,6 +2207,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             <GeocacheImagesPanel
                                 backendBaseUrl={this.backendBaseUrl}
                                 geocacheId={this.geocacheId}
+                                storageDefaultMode={this.getImagesStorageDefaultMode()}
+                                onConfirmStoreAll={async (opts) => this.confirmStoreAllImages(opts)}
                             />
                         ) : undefined}
 

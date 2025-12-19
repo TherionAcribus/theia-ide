@@ -23,13 +23,22 @@ export type GeocacheImageV2Dto = {
 export interface GeocacheImagesPanelProps {
     backendBaseUrl: string;
     geocacheId: number;
+    storageDefaultMode?: 'never' | 'prompt' | 'always';
+    onConfirmStoreAll?: (options: { geocacheId: number; pendingCount: number }) => Promise<boolean>;
 }
 
-export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({ backendBaseUrl, geocacheId }) => {
+export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
+    backendBaseUrl,
+    geocacheId,
+    storageDefaultMode = 'prompt',
+    onConfirmStoreAll,
+}) => {
     const [images, setImages] = React.useState<GeocacheImageV2Dto[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
     const [selectedId, setSelectedId] = React.useState<number | null>(null);
     const [isSaving, setIsSaving] = React.useState(false);
+
+    const didApplyDefaultStorageRef = React.useRef<Record<number, boolean>>({});
 
     const selected = React.useMemo(() => images.find(i => i.id === selectedId) ?? null, [images, selectedId]);
 
@@ -161,6 +170,60 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({ backen
             setIsSaving(false);
         }
     };
+
+    const applyDefaultStorageMode = React.useCallback(async () => {
+        if (!geocacheId) {
+            return;
+        }
+
+        if (didApplyDefaultStorageRef.current[geocacheId]) {
+            return;
+        }
+
+        if (!images.length) {
+            return;
+        }
+
+        const pendingCount = images.filter(i => !i.stored).length;
+        if (pendingCount <= 0) {
+            didApplyDefaultStorageRef.current[geocacheId] = true;
+            return;
+        }
+
+        if (storageDefaultMode === 'never') {
+            didApplyDefaultStorageRef.current[geocacheId] = true;
+            return;
+        }
+
+        if (storageDefaultMode === 'always') {
+            didApplyDefaultStorageRef.current[geocacheId] = true;
+            await storeAll();
+            return;
+        }
+
+        // prompt
+        didApplyDefaultStorageRef.current[geocacheId] = true;
+
+        if (!onConfirmStoreAll) {
+            return;
+        }
+
+        try {
+            const shouldStore = await onConfirmStoreAll({ geocacheId, pendingCount });
+            if (shouldStore) {
+                await storeAll();
+            }
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] confirm store all error', e);
+        }
+    }, [geocacheId, images, onConfirmStoreAll, storageDefaultMode]);
+
+    React.useEffect(() => {
+        if (isLoading || isSaving) {
+            return;
+        }
+        void applyDefaultStorageMode();
+    }, [applyDefaultStorageMode, isLoading, isSaving]);
 
     const renderBadges = (img: GeocacheImageV2Dto) => {
         const hasNote = Boolean((img.note || '').trim());

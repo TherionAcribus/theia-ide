@@ -932,6 +932,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
+    private readonly imagesGalleryThumbnailSizePreferenceKey = 'geoApp.images.gallery.thumbnailSize';
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -2006,6 +2007,19 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return 'prompt';
     }
 
+    private getImagesGalleryThumbnailSize(): 'small' | 'medium' | 'large' {
+        const raw = this.preferenceService.get(this.imagesGalleryThumbnailSizePreferenceKey, 'small') as string;
+        if (raw === 'small' || raw === 'medium' || raw === 'large') {
+            return raw;
+        }
+        return 'small';
+    }
+
+    private async setImagesGalleryThumbnailSize(size: 'small' | 'medium' | 'large'): Promise<void> {
+        await this.preferenceService.set(this.imagesGalleryThumbnailSizePreferenceKey, size, PreferenceScope.User);
+        this.update();
+    }
+
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -2209,6 +2223,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 geocacheId={this.geocacheId}
                                 storageDefaultMode={this.getImagesStorageDefaultMode()}
                                 onConfirmStoreAll={async (opts) => this.confirmStoreAllImages(opts)}
+                                thumbnailSize={this.getImagesGalleryThumbnailSize()}
+                                onThumbnailSizeChange={async (size) => this.setImagesGalleryThumbnailSize(size)}
                             />
                         ) : undefined}
 

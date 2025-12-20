@@ -961,6 +961,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.title.closable = true;
         this.title.iconClass = 'fa fa-map-marker';
         this.addClass('theia-geocache-details-widget');
+
+        this.node.tabIndex = 0;
     }
 
     @postConstruct()
@@ -1353,6 +1355,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
      */
     protected onActivateRequest(msg: any): void {
         super.onActivateRequest(msg);
+        this.node.focus();
         this.reactivateMap();
     }
 

@@ -54,6 +54,8 @@ export class MapWidgetFactory {
         } else {
             console.log(`[MapWidgetFactory] Réutilisation du widget existant ${widgetId}`);
         }
+
+        const targetWidgetId = widget.id;
         
         // Charger les géocaches si fournies
         if (geocaches && geocaches.length > 0) {
@@ -71,7 +73,7 @@ export class MapWidgetFactory {
         }
         
         // Activer le widget après avoir chargé les données
-        this.shell.activateWidget(widgetId);
+        this.shell.activateWidget(targetWidgetId);
         
         return widget;
     }

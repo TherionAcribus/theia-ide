@@ -44,6 +44,9 @@ export class MapWidget extends ReactWidget {
         @inject(PreferenceService) private readonly preferenceService: PreferenceService,
     ) {
         super();
+
+        this.node.tabIndex = 0;
+
         // Contexte par défaut
         this.context = {
             type: 'general',
@@ -385,6 +388,8 @@ export class MapWidget extends ReactWidget {
      */
     protected onActivateRequest(msg: any): void {
         super.onActivateRequest(msg);
+
+        this.node.focus();
         
         if (this.mapInstance) {
             // Forcer un update de la taille après un court délai

@@ -47,7 +47,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected canvasElement: HTMLCanvasElement | null = null;
     protected fabricCanvas: any | null = null;
 
-    protected tool: 'select' | 'draw' | 'text' = 'select';
+    protected tool: 'select' | 'draw' | 'text' | 'image' = 'select';
     protected isRestoringHistory = false;
     protected undoStack: string[] = [];
     protected redoStack: string[] = [];
@@ -73,6 +73,22 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected selectionOpacity = 1;
     protected selectionLocked = false;
 
+    protected imageZoom = 1;
+    protected imageCanvasWidth = 0;
+    protected imageCanvasHeight = 0;
+
+    protected imageBaseScale = 1;
+    protected imageScale = 1;
+
+    protected imageBrightness = 0;
+    protected imageContrast = 0;
+    protected imageSaturation = 0;
+    protected imageHueRotationDeg = 0;
+    protected imageBlur = 0;
+    protected imageGrayscale = false;
+    protected imageSepia = false;
+    protected imageInvert = false;
+
     constructor() {
         super();
         this.id = GeocacheImageEditorWidget.ID;
@@ -81,6 +97,8 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-image';
         this.addClass('theia-geocache-image-editor-widget');
+
+        this.node.tabIndex = 0;
     }
 
     setContext(context: GeocacheImageEditorContext): void {
@@ -97,6 +115,11 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected override onBeforeDetach(msg: any): void {
         this.disposeFabric();
         super.onBeforeDetach(msg);
+    }
+
+    protected override onActivateRequest(msg: any): void {
+        super.onActivateRequest(msg);
+        this.node.focus();
     }
 
     override dispose(): void {
@@ -220,12 +243,42 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
 
         if (this.fabricCanvas && this.fabricCanvas.getObjects().length === 0) {
-            this.setBackgroundImageFromCurrentImage();
+            this.ensureBaseImageObject();
         }
     }
 
-    protected setBackgroundImageFromCurrentImage(): void {
+    protected applyTool(tool: 'select' | 'draw' | 'text' | 'image'): void {
+        this.tool = tool;
+        if (!this.fabricCanvas) {
+            this.update();
+            return;
+        }
+
+        if (tool === 'draw') {
+            this.fabricCanvas.isDrawingMode = true;
+            this.applyDrawOptions();
+        } else {
+            this.fabricCanvas.isDrawingMode = false;
+        }
+
+        this.update();
+    }
+
+    protected getBaseImageObject(): any | null {
+        if (!this.fabricCanvas) {
+            return null;
+        }
+        const objects = this.fabricCanvas.getObjects?.() ?? [];
+        const base = objects.find((o: any) => o && o.type === 'image' && o.selectable === false);
+        return base ?? null;
+    }
+
+    protected ensureBaseImageObject(): void {
         if (!this.fabricCanvas || !this.canvasElement || !this.image) {
+            return;
+        }
+
+        if (this.getBaseImageObject()) {
             return;
         }
 
@@ -243,12 +296,33 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 this.fabricCanvas.setWidth(Math.max(300, containerWidth - 16));
                 this.fabricCanvas.setHeight(Math.max(300, containerHeight));
 
-                img.set({ selectable: false, evented: false });
+                this.imageCanvasWidth = this.fabricCanvas.getWidth();
+                this.imageCanvasHeight = this.fabricCanvas.getHeight();
+
+                img.set({
+                    selectable: false,
+                    evented: false,
+                    hasControls: false,
+                    hoverCursor: 'default',
+                    lockMovementX: true,
+                    lockMovementY: true,
+                    lockScalingX: true,
+                    lockScalingY: true,
+                    lockRotation: true,
+                });
+
                 const scaleX = this.fabricCanvas.getWidth() / (img.width || 1);
                 const scaleY = this.fabricCanvas.getHeight() / (img.height || 1);
                 const scale = Math.min(scaleX, scaleY);
                 img.scale(scale);
-                this.fabricCanvas.setBackgroundImage(img, this.fabricCanvas.renderAll.bind(this.fabricCanvas));
+                img.set({ left: 0, top: 0, originX: 'left', originY: 'top' });
+
+                this.imageBaseScale = scale;
+                this.imageScale = 1;
+
+                this.fabricCanvas.add(img);
+                this.fabricCanvas.sendToBack(img);
+                this.fabricCanvas.requestRenderAll?.();
 
                 if (!this.undoStack.length) {
                     this.undoStack = [JSON.stringify(this.fabricCanvas.toJSON())];
@@ -258,23 +332,6 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             },
             { crossOrigin: 'anonymous' }
         );
-    }
-
-    protected applyTool(tool: 'select' | 'draw' | 'text'): void {
-        this.tool = tool;
-        if (!this.fabricCanvas) {
-            this.update();
-            return;
-        }
-
-        if (tool === 'draw') {
-            this.fabricCanvas.isDrawingMode = true;
-            this.applyDrawOptions();
-        } else {
-            this.fabricCanvas.isDrawingMode = false;
-        }
-
-        this.update();
     }
 
     protected rgbaFromHex(hex: string, alpha: number): string {
@@ -803,10 +860,211 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 return;
             }
             this.fabricCanvas.renderAll();
-            this.setBackgroundImageFromCurrentImage();
+            if (!this.getBaseImageObject()) {
+                this.ensureBaseImageObject();
+            }
             this.isRestoringHistory = false;
             this.update();
         });
+    }
+
+    protected getActiveImageObject(): any | null {
+        if (!this.fabricCanvas) {
+            return null;
+        }
+        const obj = this.fabricCanvas.getActiveObject?.();
+        if (obj && obj.type === 'image') {
+            return obj;
+        }
+        return this.getBaseImageObject();
+    }
+
+    protected applyImageFilters(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const img = this.getActiveImageObject();
+        if (!img) {
+            return;
+        }
+
+        const filters: any[] = [];
+        const F: any = (fabric as any).Image?.filters ?? (fabric as any).ImageFilters;
+
+        if (F?.Brightness && this.imageBrightness !== 0) {
+            filters.push(new F.Brightness({ brightness: this.clamp(this.imageBrightness, -1, 1) }));
+        }
+        if (F?.Contrast && this.imageContrast !== 0) {
+            filters.push(new F.Contrast({ contrast: this.clamp(this.imageContrast, -1, 1) }));
+        }
+        if (F?.Saturation && this.imageSaturation !== 0) {
+            filters.push(new F.Saturation({ saturation: this.clamp(this.imageSaturation, -1, 1) }));
+        }
+        if (F?.HueRotation && this.imageHueRotationDeg !== 0) {
+            const rad = (this.imageHueRotationDeg * Math.PI) / 180;
+            filters.push(new F.HueRotation({ rotation: rad }));
+        }
+        if (F?.Blur && this.imageBlur !== 0) {
+            filters.push(new F.Blur({ blur: this.clamp(this.imageBlur, 0, 1) }));
+        }
+        if (F?.Grayscale && this.imageGrayscale) {
+            filters.push(new F.Grayscale());
+        }
+        if (F?.Sepia && this.imageSepia) {
+            filters.push(new F.Sepia());
+        }
+        if (F?.Invert && this.imageInvert) {
+            filters.push(new F.Invert());
+        }
+
+        img.filters = filters;
+
+        const afterApply = () => {
+            this.fabricCanvas?.requestRenderAll?.();
+            this.recordHistorySnapshot();
+        };
+
+        if (typeof img.applyFilters !== 'function') {
+            afterApply();
+            return;
+        }
+
+        let applied = false;
+
+        try {
+            img.applyFilters();
+            applied = true;
+        } catch {
+            // Ignore; we'll try other call signatures below.
+        }
+
+        if (!applied) {
+            try {
+                img.applyFilters(filters);
+                applied = true;
+            } catch {
+                // Ignore; we'll log once below.
+            }
+        }
+
+        if (applied) {
+            afterApply();
+            return;
+        }
+
+        try {
+            // Last resort: some Fabric builds accept (filters, callback).
+            img.applyFilters(filters, afterApply);
+            return;
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] applyImageFilters error', e);
+            this.fabricCanvas?.requestRenderAll?.();
+        }
+    }
+
+    protected resetImageEdits(): void {
+        this.imageBrightness = 0;
+        this.imageContrast = 0;
+        this.imageSaturation = 0;
+        this.imageHueRotationDeg = 0;
+        this.imageBlur = 0;
+        this.imageGrayscale = false;
+        this.imageSepia = false;
+        this.imageInvert = false;
+        this.imageZoom = 1;
+
+        const img = this.getActiveImageObject();
+        if (img) {
+            img.set({ angle: 0, flipX: false, flipY: false });
+            img.scale(this.imageBaseScale);
+            img.set({ left: 0, top: 0 });
+            img.setCoords?.();
+        }
+        this.imageScale = 1;
+        this.applyImageFilters();
+        this.applyZoom();
+        this.update();
+    }
+
+    protected applyZoom(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const z = this.clamp(this.imageZoom, 0.1, 6);
+        this.imageZoom = z;
+        this.fabricCanvas.setViewportTransform([z, 0, 0, z, 0, 0]);
+        this.fabricCanvas.requestRenderAll?.();
+    }
+
+    protected applyImageScale(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const base = this.getBaseImageObject();
+        if (!base) {
+            return;
+        }
+        const scale = this.imageBaseScale * this.clamp(this.imageScale, 0.1, 10);
+        base.scale(scale);
+        base.set({ left: 0, top: 0 });
+        base.setCoords?.();
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected resizeCanvas(width: number, height: number): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const w = Math.max(100, Math.floor(width));
+        const h = Math.max(100, Math.floor(height));
+        this.fabricCanvas.setWidth(w);
+        this.fabricCanvas.setHeight(h);
+        this.imageCanvasWidth = w;
+        this.imageCanvasHeight = h;
+
+        const base = this.getBaseImageObject();
+        if (base) {
+            const scaleX = w / (base.width || 1);
+            const scaleY = h / (base.height || 1);
+            const scale = Math.min(scaleX, scaleY);
+            this.imageBaseScale = scale;
+            base.scale(this.imageBaseScale * this.imageScale);
+            base.set({ left: 0, top: 0 });
+        }
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected rotateImage(deg: number): void {
+        const img = this.getActiveImageObject();
+        if (!this.fabricCanvas || !img) {
+            return;
+        }
+        const current = (img.angle ?? 0) as number;
+        img.set({ angle: current + deg });
+        img.setCoords?.();
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected flipImage(axis: 'x' | 'y'): void {
+        const img = this.getActiveImageObject();
+        if (!this.fabricCanvas || !img) {
+            return;
+        }
+        if (axis === 'x') {
+            img.set({ flipX: !img.flipX });
+        } else {
+            img.set({ flipY: !img.flipY });
+        }
+        img.setCoords?.();
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
     }
 
     protected async save(): Promise<void> {
@@ -921,9 +1179,13 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         const showTextControls = this.tool === 'text' || Boolean(activeText);
         const showDrawControls = this.tool === 'draw';
         const showSelectControls = this.tool === 'select' && this.selectionCount > 0;
+        const showImageControls = this.tool === 'image';
         const activeAny = this.fabricCanvas?.getActiveObject?.();
         const canGroup = Boolean(activeAny && activeAny.type === 'activeSelection');
         const canUngroup = Boolean(activeAny && activeAny.type === 'group');
+
+        const baseImage = this.getBaseImageObject();
+        const canEditImage = Boolean(baseImage);
 
         return (
             <div className='p-3 grid gap-3'>
@@ -1080,6 +1342,293 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                     >
                         Dessin
                     </button>
+
+                    <button
+                        type='button'
+                        className={`theia-button secondary ${this.tool === 'image' ? 'border border-sky-500' : ''}`}
+                        onClick={() => {
+                            this.applyTool('image');
+                            this.ensureBaseImageObject();
+                        }}
+                        disabled={!canEditImage && !this.image}
+                    >
+                        Image
+                    </button>
+
+                    {showImageControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <span className='text-xs opacity-70'>Ajustements image</span>
+
+                            <label className='text-xs opacity-70'>
+                                Zoom
+                                <input
+                                    type='number'
+                                    min={0.1}
+                                    max={6}
+                                    step={0.1}
+                                    value={this.imageZoom}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageZoom = this.clamp(next, 0.1, 6);
+                                            this.applyZoom();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => {
+                                    this.imageZoom = 1;
+                                    this.applyZoom();
+                                    this.update();
+                                }}
+                            >
+                                100%
+                            </button>
+
+                            <label className='text-xs opacity-70'>
+                                Échelle image
+                                <input
+                                    type='number'
+                                    min={0.1}
+                                    max={10}
+                                    step={0.1}
+                                    value={this.imageScale}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageScale = this.clamp(next, 0.1, 10);
+                                            this.applyImageScale();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.rotateImage(-90)}
+                            >
+                                ↺ 90°
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.rotateImage(90)}
+                            >
+                                ↻ 90°
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.flipImage('x')}
+                            >
+                                Flip X
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.flipImage('y')}
+                            >
+                                Flip Y
+                            </button>
+
+                            <label className='text-xs opacity-70'>
+                                Canvas W
+                                <input
+                                    type='number'
+                                    min={100}
+                                    max={8000}
+                                    value={this.imageCanvasWidth || (this.fabricCanvas?.getWidth?.() ?? 0)}
+                                    className='ml-2 w-24 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.imageCanvasWidth = Math.floor(next);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+                            <label className='text-xs opacity-70'>
+                                H
+                                <input
+                                    type='number'
+                                    min={100}
+                                    max={8000}
+                                    value={this.imageCanvasHeight || (this.fabricCanvas?.getHeight?.() ?? 0)}
+                                    className='ml-2 w-24 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.imageCanvasHeight = Math.floor(next);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.resizeCanvas(this.imageCanvasWidth, this.imageCanvasHeight)}
+                            >
+                                Appliquer taille
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.resetImageEdits()}
+                            >
+                                Reset image
+                            </button>
+
+                            <div className='w-full' />
+
+                            <label className='text-xs opacity-70'>
+                                Luminosité
+                                <input
+                                    type='number'
+                                    min={-1}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.imageBrightness}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageBrightness = this.clamp(next, -1, 1);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Contraste
+                                <input
+                                    type='number'
+                                    min={-1}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.imageContrast}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageContrast = this.clamp(next, -1, 1);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Saturation
+                                <input
+                                    type='number'
+                                    min={-1}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.imageSaturation}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageSaturation = this.clamp(next, -1, 1);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Hue (°)
+                                <input
+                                    type='number'
+                                    min={-180}
+                                    max={180}
+                                    step={1}
+                                    value={this.imageHueRotationDeg}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageHueRotationDeg = this.clamp(next, -180, 180);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Flou
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.imageBlur}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageBlur = this.clamp(next, 0, 1);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                N&B
+                                <input
+                                    type='checkbox'
+                                    checked={this.imageGrayscale}
+                                    onChange={e => {
+                                        this.imageGrayscale = e.target.checked;
+                                        this.applyImageFilters();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Sépia
+                                <input
+                                    type='checkbox'
+                                    checked={this.imageSepia}
+                                    onChange={e => {
+                                        this.imageSepia = e.target.checked;
+                                        this.applyImageFilters();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Inverser
+                                <input
+                                    type='checkbox'
+                                    checked={this.imageInvert}
+                                    onChange={e => {
+                                        this.imageInvert = e.target.checked;
+                                        this.applyImageFilters();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+                        </div>
+                    ) : null}
 
                     {showDrawControls ? (
                         <div className='flex flex-wrap items-center gap-2 ml-2'>

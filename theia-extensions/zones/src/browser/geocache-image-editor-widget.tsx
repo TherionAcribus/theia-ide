@@ -47,6 +47,9 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected canvasElement: HTMLCanvasElement | null = null;
     protected fabricCanvas: any | null = null;
 
+    protected baseImageObjectUrl: string | null = null;
+    protected baseImageObjectUrlPendingRevoke: string | null = null;
+
     protected tool: 'select' | 'draw' | 'text' | 'image' = 'select';
     protected isRestoringHistory = false;
     protected undoStack: string[] = [];
@@ -132,6 +135,14 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             this.fabricCanvas.dispose();
             this.fabricCanvas = null;
         }
+        if (this.baseImageObjectUrl) {
+            URL.revokeObjectURL(this.baseImageObjectUrl);
+            this.baseImageObjectUrl = null;
+        }
+        if (this.baseImageObjectUrlPendingRevoke) {
+            URL.revokeObjectURL(this.baseImageObjectUrlPendingRevoke);
+            this.baseImageObjectUrlPendingRevoke = null;
+        }
         this.canvasElement = null;
     }
 
@@ -146,6 +157,34 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             return `${this.backendBaseUrl}${url}`;
         }
         return `${this.backendBaseUrl}/${url}`;
+    }
+
+    protected async resolveImageUrlForCanvas(url: string): Promise<string> {
+        const resolved = this.resolveImageUrl(url);
+        if (!resolved) {
+            return resolved;
+        }
+
+        if (resolved.startsWith(this.backendBaseUrl)) {
+            try {
+                const res = await fetch(resolved, { credentials: 'include' });
+                if (!res.ok) {
+                    return resolved;
+                }
+                const blob = await res.blob();
+                const nextUrl = URL.createObjectURL(blob);
+                if (this.baseImageObjectUrl && this.baseImageObjectUrl !== nextUrl) {
+                    // IMPORTANT: do not revoke immediately, Fabric may still be using it.
+                    this.baseImageObjectUrlPendingRevoke = this.baseImageObjectUrl;
+                }
+                this.baseImageObjectUrl = nextUrl;
+                return nextUrl;
+            } catch {
+                return resolved;
+            }
+        }
+
+        return resolved;
     }
 
     protected async load(): Promise<void> {
@@ -181,7 +220,8 @@ export class GeocacheImageEditorWidget extends ReactWidget {
 
             if (!this.error && this.image) {
                 this.ensureFabricReady();
-                void this.loadRemoteEditorStateIfAny();
+                await this.loadRemoteEditorStateIfAny();
+                void this.refreshBaseImageSource();
             }
         }
     }
@@ -282,9 +322,9 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             return;
         }
 
-        const src = this.resolveImageUrl(this.image.url);
-        fabric.Image.fromURL(
-            src,
+        void this.resolveImageUrlForCanvas(this.image.url).then(src => {
+            fabric.Image.fromURL(
+                src,
             (img: any) => {
                 if (!this.fabricCanvas || !img) {
                     return;
@@ -331,7 +371,61 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 }
             },
             { crossOrigin: 'anonymous' }
-        );
+            );
+        });
+    }
+
+    protected async refreshBaseImageSource(): Promise<void> {
+        if (!this.fabricCanvas || !this.image) {
+            return;
+        }
+        const base = this.getBaseImageObject();
+        if (!base) {
+            this.ensureBaseImageObject();
+            return;
+        }
+
+        const src = await this.resolveImageUrlForCanvas(this.image.url);
+        if (!src) {
+            return;
+        }
+
+        if (typeof base.setSrc === 'function') {
+            const pendingRevoke = this.baseImageObjectUrlPendingRevoke;
+            base.setSrc(src, () => {
+                if (!this.fabricCanvas) {
+                    return;
+                }
+                const w = this.fabricCanvas.getWidth();
+                const h = this.fabricCanvas.getHeight();
+                const scaleX = w / (base.width || 1);
+                const scaleY = h / (base.height || 1);
+                this.imageBaseScale = Math.min(scaleX, scaleY);
+                base.scale(this.imageBaseScale * this.imageScale);
+                base.set({ left: 0, top: 0, originX: 'left', originY: 'top' });
+                base.setCoords?.();
+                this.fabricCanvas.sendToBack(base);
+                this.fabricCanvas.requestRenderAll?.();
+
+                // Revoke the previous object URL only after the new source is loaded.
+                if (pendingRevoke) {
+                    try {
+                        URL.revokeObjectURL(pendingRevoke);
+                    } finally {
+                        if (this.baseImageObjectUrlPendingRevoke === pendingRevoke) {
+                            this.baseImageObjectUrlPendingRevoke = null;
+                        }
+                    }
+                }
+            }, { crossOrigin: 'anonymous' });
+        } else {
+            try {
+                this.fabricCanvas.remove(base);
+            } catch {
+                // ignore
+            }
+            this.ensureBaseImageObject();
+        }
     }
 
     protected rgbaFromHex(hex: string, alpha: number): string {
@@ -863,6 +957,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             if (!this.getBaseImageObject()) {
                 this.ensureBaseImageObject();
             }
+            void this.refreshBaseImageSource();
             this.isRestoringHistory = false;
             this.update();
         });
@@ -1092,16 +1187,41 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             }
 
             const isDerived = Boolean(this.image.parent_image_id);
-            const endpoint = isDerived
-                ? `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits`
-                : `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits`;
-            const method = isDerived ? 'PUT' : 'POST';
+            const initialEndpoint = `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits`;
+            const initialMethod = isDerived ? 'PUT' : 'POST';
 
-            const res = await fetch(endpoint, {
-                method,
+            let res = await fetch(initialEndpoint, {
+                method: initialMethod,
                 credentials: 'include',
                 body: form,
             });
+
+            if (res.status === 409 && initialMethod === 'POST') {
+                const conflictPayload = await res.json().catch(() => null);
+                let existingId = conflictPayload?.existing_image_id;
+                if (typeof existingId !== 'number') {
+                    const listRes = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/images`, {
+                        method: 'GET',
+                        credentials: 'include',
+                    });
+                    if (listRes.ok) {
+                        const images = (await listRes.json()) as GeocacheImageV2Dto[];
+                        const match = images.find(i => i.parent_image_id === this.imageId && i.derivation_type === 'edited');
+                        if (match) {
+                            existingId = match.id;
+                        }
+                    }
+                }
+
+                if (typeof existingId === 'number') {
+                    res = await fetch(`${this.backendBaseUrl}/api/geocache-images/${existingId}/edits`, {
+                        method: 'PUT',
+                        credentials: 'include',
+                        body: form,
+                    });
+                }
+            }
+
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}`);
             }
@@ -1109,15 +1229,17 @@ export class GeocacheImageEditorWidget extends ReactWidget {
 
             this.image = updated;
             this.imageId = updated.id;
-            this.didApplyRemoteEditorState = false;
-            this.undoStack = [];
-            this.redoStack = [];
-            this.setContext({
-                backendBaseUrl: this.backendBaseUrl,
-                geocacheId: updated.geocache_id,
-                imageId: updated.id,
-                imageTitle: (updated.title || '').trim() || undefined,
-            });
+            this.geocacheId = updated.geocache_id;
+            this.didApplyRemoteEditorState = true;
+
+            const label = (updated.title || '').trim()
+                ? `Image Editor - ${(updated.title || '').trim()}`
+                : `Image Editor - #${updated.id}`;
+            this.title.label = label;
+
+            // Keep the existing canvas state; only refresh the base image source to match
+            // the new backend-served URL (avoids a temporary blank canvas after save).
+            await this.refreshBaseImageSource();
 
             window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {
                 detail: { geocacheId: updated.geocache_id }

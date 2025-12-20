@@ -61,6 +61,14 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected textBackgroundFill = '#000000';
     protected textBackgroundOpacity = 0.4;
 
+    protected drawBrushType: 'pen' | 'highlighter' | 'eraser' = 'pen';
+    protected drawBrushSize = 6;
+    protected drawColor = '#ffcc00';
+    protected drawOpacity = 0.85;
+    protected drawLineCap: 'round' | 'butt' | 'square' = 'round';
+    protected drawLineJoin: 'round' | 'bevel' | 'miter' = 'round';
+    protected drawDecimate = 0.4;
+
     constructor() {
         super();
         this.id = GeocacheImageEditorWidget.ID;
@@ -257,15 +265,61 @@ export class GeocacheImageEditorWidget extends ReactWidget {
 
         if (tool === 'draw') {
             this.fabricCanvas.isDrawingMode = true;
-            if (this.fabricCanvas.freeDrawingBrush) {
-                this.fabricCanvas.freeDrawingBrush.width = 3;
-                this.fabricCanvas.freeDrawingBrush.color = '#ffcc00';
-            }
+            this.applyDrawOptions();
         } else {
             this.fabricCanvas.isDrawingMode = false;
         }
 
         this.update();
+    }
+
+    protected rgbaFromHex(hex: string, alpha: number): string {
+        const rgb = this.hexToRgb(hex);
+        const a = this.clamp(alpha, 0, 1);
+        if (!rgb) {
+            return `rgba(255,204,0,${a})`;
+        }
+        return `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`;
+    }
+
+    protected applyDrawOptions(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+
+        const canvas = this.fabricCanvas;
+        let brush: any = canvas.freeDrawingBrush;
+
+        const FabricAny = fabric as any;
+
+        if (this.drawBrushType === 'eraser') {
+            if (FabricAny.EraserBrush) {
+                brush = new FabricAny.EraserBrush(canvas);
+            } else {
+                brush = new fabric.PencilBrush(canvas);
+                brush.color = '#000000';
+                brush.globalCompositeOperation = 'destination-out';
+            }
+        } else {
+            brush = new fabric.PencilBrush(canvas);
+            brush.globalCompositeOperation = 'source-over';
+        }
+
+        brush.width = this.drawBrushSize;
+
+        if (this.drawBrushType === 'highlighter') {
+            brush.color = this.rgbaFromHex(this.drawColor, this.clamp(this.drawOpacity, 0, 1) * 0.35);
+        } else if (this.drawBrushType === 'pen') {
+            brush.color = this.rgbaFromHex(this.drawColor, this.drawOpacity);
+        }
+
+        brush.strokeLineCap = this.drawLineCap;
+        brush.strokeLineJoin = this.drawLineJoin;
+        brush.decimate = this.clamp(this.drawDecimate, 0, 1);
+
+        canvas.freeDrawingBrush = brush;
+        canvas.isDrawingMode = true;
+        canvas.requestRenderAll?.();
     }
 
     protected readonly recordHistorySnapshot = (): void => {
@@ -432,6 +486,30 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         this.fabricCanvas.renderAll();
     }
 
+    protected deleteSelection(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (!active) {
+            return;
+        }
+
+        if (active.type === 'activeSelection') {
+            const objects = active.getObjects?.() ?? [];
+            objects.forEach((obj: any) => {
+                this.fabricCanvas.remove(obj);
+            });
+            this.fabricCanvas.discardActiveObject?.();
+        } else {
+            this.fabricCanvas.remove(active);
+            this.fabricCanvas.discardActiveObject?.();
+        }
+
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
     protected undo(): void {
         if (!this.fabricCanvas || this.undoStack.length <= 1) {
             return;
@@ -590,6 +668,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
 
         const activeText = this.getActiveTextObject();
         const showTextControls = this.tool === 'text' || Boolean(activeText);
+        const showDrawControls = this.tool === 'draw';
 
         return (
             <div className='p-3 grid gap-3'>
@@ -616,6 +695,144 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                     >
                         Dessin
                     </button>
+
+                    {showDrawControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <label className='text-xs opacity-70'>
+                                Mode
+                                <select
+                                    className='ml-2 theia-input'
+                                    value={this.drawBrushType}
+                                    onChange={e => {
+                                        this.drawBrushType = e.target.value as any;
+                                        this.applyDrawOptions();
+                                        this.update();
+                                    }}
+                                >
+                                    <option value='pen'>Pinceau</option>
+                                    <option value='highlighter'>Surligneur</option>
+                                    <option value='eraser'>Gomme</option>
+                                </select>
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Taille
+                                <input
+                                    type='number'
+                                    min={1}
+                                    max={200}
+                                    value={this.drawBrushSize}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.drawBrushSize = this.clamp(next, 1, 200);
+                                            this.applyDrawOptions();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Couleur
+                                <input
+                                    type='color'
+                                    value={this.drawColor}
+                                    className='h-7 w-10 bg-transparent'
+                                    disabled={this.drawBrushType === 'eraser'}
+                                    onChange={e => {
+                                        this.drawColor = e.target.value;
+                                        this.applyDrawOptions();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Opacité
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.drawOpacity}
+                                    disabled={this.drawBrushType === 'eraser'}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.drawOpacity = this.clamp(next, 0, 1);
+                                            this.applyDrawOptions();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Cap
+                                <select
+                                    className='ml-2 theia-input'
+                                    value={this.drawLineCap}
+                                    onChange={e => {
+                                        this.drawLineCap = e.target.value as any;
+                                        this.applyDrawOptions();
+                                        this.update();
+                                    }}
+                                >
+                                    <option value='round'>Round</option>
+                                    <option value='butt'>Butt</option>
+                                    <option value='square'>Square</option>
+                                </select>
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Join
+                                <select
+                                    className='ml-2 theia-input'
+                                    value={this.drawLineJoin}
+                                    onChange={e => {
+                                        this.drawLineJoin = e.target.value as any;
+                                        this.applyDrawOptions();
+                                        this.update();
+                                    }}
+                                >
+                                    <option value='round'>Round</option>
+                                    <option value='bevel'>Bevel</option>
+                                    <option value='miter'>Miter</option>
+                                </select>
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Lissage
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.drawDecimate}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.drawDecimate = this.clamp(next, 0, 1);
+                                            this.applyDrawOptions();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.deleteSelection()}
+                            >
+                                Supprimer sélection
+                            </button>
+                        </div>
+                    ) : null}
                     <button
                         type='button'
                         className={`theia-button secondary ${this.tool === 'text' ? 'border border-sky-500' : ''}`}

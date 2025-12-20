@@ -52,6 +52,15 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected undoStack: string[] = [];
     protected redoStack: string[] = [];
 
+    protected textFill = '#ffffff';
+    protected textFontSize = 28;
+    protected textBold = false;
+    protected textItalic = false;
+
+    protected textBackgroundEnabled = true;
+    protected textBackgroundFill = '#000000';
+    protected textBackgroundOpacity = 0.4;
+
     constructor() {
         super();
         this.id = GeocacheImageEditorWidget.ID;
@@ -186,30 +195,14 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 selection: true,
             });
 
-            const updateHistory = (): void => {
-                if (this.isRestoringHistory || !this.fabricCanvas) {
-                    return;
-                }
-                try {
-                    const snapshot = JSON.stringify(this.fabricCanvas.toJSON());
-                    const last = this.undoStack[this.undoStack.length - 1];
-                    if (snapshot !== last) {
-                        this.undoStack.push(snapshot);
-                        if (this.undoStack.length > 30) {
-                            this.undoStack.shift();
-                        }
-                        this.redoStack = [];
-                        this.update();
-                    }
-                } catch (e) {
-                    console.error('[GeocacheImageEditorWidget] history snapshot error', e);
-                }
-            };
+            this.fabricCanvas.on('object:added', this.recordHistorySnapshot);
+            this.fabricCanvas.on('object:modified', this.recordHistorySnapshot);
+            this.fabricCanvas.on('object:removed', this.recordHistorySnapshot);
+            this.fabricCanvas.on('path:created', this.recordHistorySnapshot);
 
-            this.fabricCanvas.on('object:added', updateHistory);
-            this.fabricCanvas.on('object:modified', updateHistory);
-            this.fabricCanvas.on('object:removed', updateHistory);
-            this.fabricCanvas.on('path:created', updateHistory);
+            this.fabricCanvas.on('selection:created', this.onSelectionChanged);
+            this.fabricCanvas.on('selection:updated', this.onSelectionChanged);
+            this.fabricCanvas.on('selection:cleared', this.onSelectionChanged);
 
             this.applyTool('select');
         }
@@ -275,17 +268,164 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         this.update();
     }
 
+    protected readonly recordHistorySnapshot = (): void => {
+        if (this.isRestoringHistory || !this.fabricCanvas) {
+            return;
+        }
+        try {
+            const snapshot = JSON.stringify(this.fabricCanvas.toJSON());
+            const last = this.undoStack[this.undoStack.length - 1];
+            if (snapshot !== last) {
+                this.undoStack.push(snapshot);
+                if (this.undoStack.length > 30) {
+                    this.undoStack.shift();
+                }
+                this.redoStack = [];
+                this.update();
+            }
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] history snapshot error', e);
+        }
+    };
+
+    protected readonly onSelectionChanged = (): void => {
+        const active = this.getActiveTextObject();
+        if (active) {
+            const fill = (active.fill ?? '') as string;
+            if (typeof fill === 'string' && fill.startsWith('#')) {
+                this.textFill = fill;
+            }
+            const fontSize = active.fontSize as number | undefined;
+            if (typeof fontSize === 'number' && Number.isFinite(fontSize) && fontSize > 0) {
+                this.textFontSize = fontSize;
+            }
+            const fontWeight = (active.fontWeight ?? '') as string;
+            this.textBold = String(fontWeight).toLowerCase() === 'bold';
+            const fontStyle = (active.fontStyle ?? '') as string;
+            this.textItalic = String(fontStyle).toLowerCase() === 'italic';
+
+            const bg = (active.backgroundColor ?? '') as string;
+            const parsed = this.parseRgbaBackground(bg);
+            if (parsed) {
+                this.textBackgroundEnabled = true;
+                this.textBackgroundFill = parsed.hex;
+                this.textBackgroundOpacity = parsed.alpha;
+            } else {
+                this.textBackgroundEnabled = false;
+            }
+        }
+        this.update();
+    };
+
+    protected clamp(value: number, min: number, max: number): number {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    protected hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+        const normalized = hex.trim().replace('#', '');
+        if (normalized.length !== 6) {
+            return null;
+        }
+        const r = Number.parseInt(normalized.slice(0, 2), 16);
+        const g = Number.parseInt(normalized.slice(2, 4), 16);
+        const b = Number.parseInt(normalized.slice(4, 6), 16);
+        if ([r, g, b].some(v => Number.isNaN(v))) {
+            return null;
+        }
+        return { r, g, b };
+    }
+
+    protected rgbToHex(r: number, g: number, b: number): string {
+        const toHex = (v: number): string => this.clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
+    protected parseRgbaBackground(value: string): { hex: string; alpha: number } | null {
+        const v = (value || '').trim();
+        if (!v) {
+            return null;
+        }
+        const rgba = v.match(/^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)$/i);
+        if (!rgba) {
+            return null;
+        }
+        const r = Number(rgba[1]);
+        const g = Number(rgba[2]);
+        const b = Number(rgba[3]);
+        const a = Number(rgba[4]);
+        if (![r, g, b, a].every(n => Number.isFinite(n))) {
+            return null;
+        }
+        return {
+            hex: this.rgbToHex(r, g, b),
+            alpha: this.clamp(a, 0, 1),
+        };
+    }
+
+    protected getActiveTextObject(): any | null {
+        if (!this.fabricCanvas) {
+            return null;
+        }
+        const obj = this.fabricCanvas.getActiveObject?.();
+        if (!obj) {
+            return null;
+        }
+        if (obj.type === 'i-text' || obj.type === 'textbox' || obj.type === 'text') {
+            return obj;
+        }
+        return null;
+    }
+
+    protected applyTextOptionsToSelection(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const active = this.getActiveTextObject();
+        if (!active) {
+            return;
+        }
+
+        const bg = this.textBackgroundEnabled
+            ? (() => {
+                const rgb = this.hexToRgb(this.textBackgroundFill);
+                const alpha = this.clamp(this.textBackgroundOpacity, 0, 1);
+                if (!rgb) {
+                    return `rgba(0,0,0,${alpha})`;
+                }
+                return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+            })()
+            : null;
+
+        active.set({
+            fill: this.textFill,
+            fontSize: this.textFontSize,
+            fontWeight: this.textBold ? 'bold' : 'normal',
+            fontStyle: this.textItalic ? 'italic' : 'normal',
+            backgroundColor: bg,
+        });
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
     protected addText(): void {
         if (!this.fabricCanvas) {
             return;
         }
 
+        const rgb = this.hexToRgb(this.textBackgroundFill);
+        const alpha = this.clamp(this.textBackgroundOpacity, 0, 1);
+        const backgroundColor = this.textBackgroundEnabled
+            ? (rgb ? `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})` : `rgba(0,0,0,${alpha})`)
+            : null;
+
         const text = new fabric.IText('Texte', {
             left: 50,
             top: 50,
-            fill: '#ffffff',
-            fontSize: 28,
-            backgroundColor: 'rgba(0,0,0,0.4)',
+            fill: this.textFill,
+            fontSize: this.textFontSize,
+            fontWeight: this.textBold ? 'bold' : 'normal',
+            fontStyle: this.textItalic ? 'italic' : 'normal',
+            backgroundColor,
         });
         this.fabricCanvas.add(text);
         this.fabricCanvas.setActiveObject(text);
@@ -448,6 +588,9 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         const canUndo = this.undoStack.length > 1;
         const canRedo = this.redoStack.length > 0;
 
+        const activeText = this.getActiveTextObject();
+        const showTextControls = this.tool === 'text' || Boolean(activeText);
+
         return (
             <div className='p-3 grid gap-3'>
                 <div className='flex items-start justify-between gap-3'>
@@ -475,11 +618,124 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                     </button>
                     <button
                         type='button'
-                        className='theia-button secondary'
-                        onClick={() => this.addText()}
+                        className={`theia-button secondary ${this.tool === 'text' ? 'border border-sky-500' : ''}`}
+                        onClick={() => {
+                            this.applyTool('text');
+                            this.addText();
+                        }}
                     >
                         Texte
                     </button>
+
+                    {showTextControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <label className='text-xs opacity-70'>
+                                Taille
+                                <input
+                                    type='number'
+                                    min={8}
+                                    max={200}
+                                    value={this.textFontSize}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.textFontSize = next;
+                                            this.applyTextOptionsToSelection();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Couleur
+                                <input
+                                    type='color'
+                                    value={this.textFill}
+                                    className='h-7 w-10 bg-transparent'
+                                    onChange={e => {
+                                        this.textFill = e.target.value;
+                                        this.applyTextOptionsToSelection();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <button
+                                type='button'
+                                className={`theia-button secondary ${this.textBold ? 'border border-sky-500' : ''}`}
+                                onClick={() => {
+                                    this.textBold = !this.textBold;
+                                    this.applyTextOptionsToSelection();
+                                    this.update();
+                                }}
+                            >
+                                Gras
+                            </button>
+
+                            <button
+                                type='button'
+                                className={`theia-button secondary ${this.textItalic ? 'border border-sky-500' : ''}`}
+                                onClick={() => {
+                                    this.textItalic = !this.textItalic;
+                                    this.applyTextOptionsToSelection();
+                                    this.update();
+                                }}
+                            >
+                                Italique
+                            </button>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2 ml-2'>
+                                Fond
+                                <input
+                                    type='checkbox'
+                                    checked={this.textBackgroundEnabled}
+                                    onChange={e => {
+                                        this.textBackgroundEnabled = e.target.checked;
+                                        this.applyTextOptionsToSelection();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Couleur fond
+                                <input
+                                    type='color'
+                                    value={this.textBackgroundFill}
+                                    className='h-7 w-10 bg-transparent'
+                                    disabled={!this.textBackgroundEnabled}
+                                    onChange={e => {
+                                        this.textBackgroundFill = e.target.value;
+                                        this.applyTextOptionsToSelection();
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Opacité
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.textBackgroundOpacity}
+                                    disabled={!this.textBackgroundEnabled}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.textBackgroundOpacity = this.clamp(next, 0, 1);
+                                            this.applyTextOptionsToSelection();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+                        </div>
+                    ) : null}
 
                     <div className='flex-1' />
 

@@ -139,6 +139,20 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     }, [loadImages]);
 
     React.useEffect(() => {
+        const handler = (event: Event): void => {
+            const custom = event as CustomEvent<{ geocacheId?: number }>;
+            const targetGeocacheId = custom.detail?.geocacheId;
+            if (targetGeocacheId && targetGeocacheId === geocacheId) {
+                void loadImages();
+            }
+        };
+        window.addEventListener('geoapp-geocache-images-updated', handler);
+        return () => {
+            window.removeEventListener('geoapp-geocache-images-updated', handler);
+        };
+    }, [geocacheId, loadImages]);
+
+    React.useEffect(() => {
         if (!selected) {
             setDraftTitle('');
             setDraftNote('');

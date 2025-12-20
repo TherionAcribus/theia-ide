@@ -41,6 +41,8 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected isLoading = false;
     protected error: string | null = null;
     protected image: GeocacheImageV2Dto | null = null;
+    protected isSaving = false;
+    protected didApplyRemoteEditorState = false;
 
     protected canvasElement: HTMLCanvasElement | null = null;
     protected fabricCanvas: any | null = null;
@@ -64,6 +66,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         this.backendBaseUrl = context.backendBaseUrl;
         this.geocacheId = context.geocacheId;
         this.imageId = context.imageId;
+        this.didApplyRemoteEditorState = false;
         const label = context.imageTitle ? `Image Editor - ${context.imageTitle}` : `Image Editor - #${context.imageId}`;
         this.title.label = label;
         this.update();
@@ -134,7 +137,36 @@ export class GeocacheImageEditorWidget extends ReactWidget {
 
             if (!this.error && this.image) {
                 this.ensureFabricReady();
+                void this.loadRemoteEditorStateIfAny();
             }
+        }
+    }
+
+    protected async loadRemoteEditorStateIfAny(): Promise<void> {
+        if (!this.imageId || !this.fabricCanvas) {
+            return;
+        }
+        if (this.didApplyRemoteEditorState) {
+            return;
+        }
+
+        this.didApplyRemoteEditorState = true;
+
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocache-images/${this.imageId}/editor-state`, {
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                return;
+            }
+            const data = (await res.json()) as { editor_state_json?: string | null };
+            const json = (data?.editor_state_json || '').trim();
+            if (!json) {
+                return;
+            }
+            this.restoreFromJson(json);
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] load editor state error', e);
         }
     }
 
@@ -183,34 +215,44 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
 
         if (this.fabricCanvas && this.fabricCanvas.getObjects().length === 0) {
-            const src = this.resolveImageUrl(this.image.url);
-            fabric.Image.fromURL(
-                src,
-                (img: any) => {
-                    if (!this.fabricCanvas || !img) {
-                        return;
-                    }
+            this.setBackgroundImageFromCurrentImage();
+        }
+    }
 
-                    const container = this.canvasElement?.parentElement;
-                    const containerWidth = container?.clientWidth ?? 900;
-                    const containerHeight = Math.min(window.innerHeight * 0.7, 700);
-                    this.fabricCanvas.setWidth(Math.max(300, containerWidth - 16));
-                    this.fabricCanvas.setHeight(Math.max(300, containerHeight));
+    protected setBackgroundImageFromCurrentImage(): void {
+        if (!this.fabricCanvas || !this.canvasElement || !this.image) {
+            return;
+        }
 
-                    img.set({ selectable: false, evented: false });
-                    const scaleX = this.fabricCanvas.getWidth() / (img.width || 1);
-                    const scaleY = this.fabricCanvas.getHeight() / (img.height || 1);
-                    const scale = Math.min(scaleX, scaleY);
-                    img.scale(scale);
-                    this.fabricCanvas.setBackgroundImage(img, this.fabricCanvas.renderAll.bind(this.fabricCanvas));
+        const src = this.resolveImageUrl(this.image.url);
+        fabric.Image.fromURL(
+            src,
+            (img: any) => {
+                if (!this.fabricCanvas || !img) {
+                    return;
+                }
 
+                const container = this.canvasElement?.parentElement;
+                const containerWidth = container?.clientWidth ?? 900;
+                const containerHeight = Math.min(window.innerHeight * 0.7, 700);
+                this.fabricCanvas.setWidth(Math.max(300, containerWidth - 16));
+                this.fabricCanvas.setHeight(Math.max(300, containerHeight));
+
+                img.set({ selectable: false, evented: false });
+                const scaleX = this.fabricCanvas.getWidth() / (img.width || 1);
+                const scaleY = this.fabricCanvas.getHeight() / (img.height || 1);
+                const scale = Math.min(scaleX, scaleY);
+                img.scale(scale);
+                this.fabricCanvas.setBackgroundImage(img, this.fabricCanvas.renderAll.bind(this.fabricCanvas));
+
+                if (!this.undoStack.length) {
                     this.undoStack = [JSON.stringify(this.fabricCanvas.toJSON())];
                     this.redoStack = [];
                     this.update();
-                },
-                { crossOrigin: 'anonymous' }
-            );
-        }
+                }
+            },
+            { crossOrigin: 'anonymous' }
+        );
     }
 
     protected applyTool(tool: 'select' | 'draw' | 'text'): void {
@@ -292,9 +334,74 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 return;
             }
             this.fabricCanvas.renderAll();
+            this.setBackgroundImageFromCurrentImage();
             this.isRestoringHistory = false;
             this.update();
         });
+    }
+
+    protected async save(): Promise<void> {
+        if (!this.fabricCanvas || !this.imageId || !this.geocacheId || !this.image) {
+            return;
+        }
+        if (this.isSaving) {
+            return;
+        }
+
+        this.isSaving = true;
+        this.update();
+
+        try {
+            const editorStateJson = JSON.stringify(this.fabricCanvas.toJSON());
+            const dataUrl = this.fabricCanvas.toDataURL({ format: 'png' });
+            const renderedBlob = await fetch(dataUrl).then(r => r.blob());
+
+            const form = new FormData();
+            form.append('rendered_file', renderedBlob, 'edited.png');
+            form.append('editor_state_json', editorStateJson);
+            form.append('mime_type', 'image/png');
+            if (this.image.title) {
+                form.append('title', this.image.title);
+            }
+
+            const isDerived = Boolean(this.image.parent_image_id);
+            const endpoint = isDerived
+                ? `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits`
+                : `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits`;
+            const method = isDerived ? 'PUT' : 'POST';
+
+            const res = await fetch(endpoint, {
+                method,
+                credentials: 'include',
+                body: form,
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const updated = (await res.json()) as GeocacheImageV2Dto;
+
+            this.image = updated;
+            this.imageId = updated.id;
+            this.didApplyRemoteEditorState = false;
+            this.undoStack = [];
+            this.redoStack = [];
+            this.setContext({
+                backendBaseUrl: this.backendBaseUrl,
+                geocacheId: updated.geocache_id,
+                imageId: updated.id,
+                imageTitle: (updated.title || '').trim() || undefined,
+            });
+
+            window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {
+                detail: { geocacheId: updated.geocache_id }
+            }));
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] save error', e);
+            this.error = 'Impossible de sauvegarder l\'image';
+        } finally {
+            this.isSaving = false;
+            this.update();
+        }
     }
 
     protected renderBadges(img: GeocacheImageV2Dto): React.ReactNode {
@@ -375,6 +482,15 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                     </button>
 
                     <div className='flex-1' />
+
+                    <button
+                        type='button'
+                        className='theia-button'
+                        onClick={() => { void this.save(); }}
+                        disabled={this.isSaving}
+                    >
+                        {this.isSaving ? 'Sauvegarde…' : 'Enregistrer'}
+                    </button>
 
                     <button
                         type='button'

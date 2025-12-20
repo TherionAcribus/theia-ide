@@ -274,6 +274,22 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         }
     };
 
+    const openImageEditor = (imageId: number): void => {
+        const img = images.find(i => i.id === imageId);
+        if (!img) {
+            return;
+        }
+
+        window.dispatchEvent(new CustomEvent('open-geocache-image-editor', {
+            detail: {
+                backendBaseUrl,
+                geocacheId,
+                imageId,
+                imageTitle: (img.title || '').trim() || undefined,
+            }
+        }));
+    };
+
     const storeImageById = async (imageId: number): Promise<void> => {
         setIsSaving(true);
         try {
@@ -457,6 +473,14 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const showPreview = detailsMode === 'preview' && Boolean(selectedImage);
 
     const contextMenuItems: ContextMenuItem[] = contextMenu ? [
+        {
+            label: 'Éditer l\'image…',
+            action: () => { openImageEditor(contextMenu.imageId); },
+            disabled: isSaving,
+        },
+        {
+            separator: true,
+        },
         {
             label: 'Décoder QR (plugin)',
             action: () => { void decodeQrFromImage(contextMenu.imageId); },

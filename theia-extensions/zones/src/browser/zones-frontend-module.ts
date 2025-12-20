@@ -14,6 +14,9 @@ import { MapWidgetFactory } from './map/map-widget-factory';
 import { MapManagerWidget } from './map/map-manager-widget';
 import { BatchMapIntegration } from './batch-map-integration';
 import { GeocacheTabsManager } from './geocache-tabs-manager';
+import { GeocacheImageEditorWidget } from './geocache-image-editor-widget';
+import { GeocacheImageEditorTabsManager } from './geocache-image-editor-tabs-manager';
+import { GeocacheImageEditorFrontendContribution } from './geocache-image-editor-frontend-contribution';
 import { ZoneTabsManager } from './zone-tabs-manager';
 import { CheckerToolsManager } from './checker-tools-manager';
 import { GeoAppChatAgent } from './geoapp-chat-agent';
@@ -39,6 +42,13 @@ export default new ContainerModule(bind => {
         id: GeocacheDetailsWidget.ID,
         createWidget: () => ctx.container.get(GeocacheDetailsWidget)
     })).inSingletonScope();
+
+     // GeocacheImageEditorWidget: instances gérées par GeocacheImageEditorTabsManager (plusieurs onglets possibles)
+     bind(GeocacheImageEditorWidget).toSelf();
+     bind(WidgetFactory).toDynamicValue(ctx => ({
+         id: GeocacheImageEditorWidget.ID,
+         createWidget: () => ctx.container.get(GeocacheImageEditorWidget)
+     })).inSingletonScope();
 
     // Widget des logs de géocache (affichable dans right, bottom ou main)
     bind(GeocacheLogsWidget).toSelf().inSingletonScope();
@@ -89,6 +99,12 @@ export default new ContainerModule(bind => {
 
     // Gestionnaire centralisé des onglets de détails de géocaches
     bind(GeocacheTabsManager).toSelf().inSingletonScope();
+
+     // Gestionnaire centralisé des onglets d'éditeur d'images
+     bind(GeocacheImageEditorTabsManager).toSelf().inSingletonScope();
+
+     bind(GeocacheImageEditorFrontendContribution).toSelf().inSingletonScope();
+     bind(FrontendApplicationContribution).toService(GeocacheImageEditorFrontendContribution);
 
     // Gestionnaire centralisé des onglets de tableaux de géocaches par zone
     bind(ZoneTabsManager).toSelf().inSingletonScope();

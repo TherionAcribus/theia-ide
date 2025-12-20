@@ -27,3 +27,7 @@ declare module '*.svg' {
     export default content;
 }
 
+declare module 'fabric' {
+    export const fabric: any;
+}
+

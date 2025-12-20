@@ -69,6 +69,10 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected drawLineJoin: 'round' | 'bevel' | 'miter' = 'round';
     protected drawDecimate = 0.4;
 
+    protected selectionCount = 0;
+    protected selectionOpacity = 1;
+    protected selectionLocked = false;
+
     constructor() {
         super();
         this.id = GeocacheImageEditorWidget.ID;
@@ -343,6 +347,14 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     };
 
     protected readonly onSelectionChanged = (): void => {
+        const selectedObjects = this.getSelectedObjects();
+        this.selectionCount = selectedObjects.length;
+        if (selectedObjects.length) {
+            const opacities = selectedObjects.map(o => (typeof o.opacity === 'number' ? o.opacity : 1));
+            this.selectionOpacity = opacities[0];
+            this.selectionLocked = selectedObjects.every(o => o.selectable === false);
+        }
+
         const active = this.getActiveTextObject();
         if (active) {
             const fill = (active.fill ?? '') as string;
@@ -428,6 +440,245 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             return obj;
         }
         return null;
+    }
+
+    protected getSelectedObjects(): any[] {
+        if (!this.fabricCanvas) {
+            return [];
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (!active) {
+            return [];
+        }
+        if (active.type === 'activeSelection' && typeof active.getObjects === 'function') {
+            return active.getObjects();
+        }
+        return [active];
+    }
+
+    protected setSelectionOpacity(value: number): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const v = this.clamp(value, 0, 1);
+        const objects = this.getSelectedObjects();
+        if (!objects.length) {
+            return;
+        }
+        objects.forEach(obj => {
+            obj.set({ opacity: v });
+        });
+        this.selectionOpacity = v;
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected toggleSelectionLock(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const objects = this.getSelectedObjects();
+        if (!objects.length) {
+            return;
+        }
+        const nextLocked = !this.selectionLocked;
+        objects.forEach(obj => {
+            obj.set({
+                selectable: !nextLocked,
+                evented: !nextLocked,
+                lockMovementX: nextLocked,
+                lockMovementY: nextLocked,
+                lockScalingX: nextLocked,
+                lockScalingY: nextLocked,
+                lockRotation: nextLocked,
+            });
+        });
+        this.selectionLocked = nextLocked;
+        if (nextLocked) {
+            this.fabricCanvas.discardActiveObject?.();
+        }
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected bringToFront(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const objects = this.getSelectedObjects();
+        objects.forEach(obj => {
+            this.fabricCanvas.bringToFront(obj);
+        });
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
+    protected sendToBack(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const objects = this.getSelectedObjects();
+        objects.forEach(obj => {
+            this.fabricCanvas.sendToBack(obj);
+        });
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
+    protected bringForward(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const objects = this.getSelectedObjects();
+        objects.forEach(obj => {
+            this.fabricCanvas.bringForward(obj);
+        });
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
+    protected sendBackwards(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const objects = this.getSelectedObjects();
+        objects.forEach(obj => {
+            this.fabricCanvas.sendBackwards(obj);
+        });
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+    }
+
+    protected async duplicateSelection(): Promise<void> {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const canvas = this.fabricCanvas;
+        const active = canvas.getActiveObject?.();
+        if (!active) {
+            return;
+        }
+
+        const clones: any[] = [];
+        const cloneOne = (obj: any) => new Promise<any>((resolve) => {
+            obj.clone((cloned: any) => resolve(cloned));
+        });
+
+        if (active.type === 'activeSelection') {
+            const objects = active.getObjects?.() ?? [];
+            for (const obj of objects) {
+                const cloned = await cloneOne(obj);
+                cloned.set({ left: (obj.left ?? 0) + 12, top: (obj.top ?? 0) + 12 });
+                canvas.add(cloned);
+                clones.push(cloned);
+            }
+        } else {
+            const cloned = await cloneOne(active);
+            cloned.set({ left: (active.left ?? 0) + 12, top: (active.top ?? 0) + 12 });
+            canvas.add(cloned);
+            clones.push(cloned);
+        }
+
+        if (clones.length > 1 && (fabric as any).ActiveSelection) {
+            const sel = new (fabric as any).ActiveSelection(clones, { canvas });
+            canvas.setActiveObject(sel);
+        } else if (clones.length === 1) {
+            canvas.setActiveObject(clones[0]);
+        }
+
+        canvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.onSelectionChanged();
+    }
+
+    protected groupSelection(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (!active || active.type !== 'activeSelection') {
+            return;
+        }
+        if (typeof active.toGroup === 'function') {
+            const group = active.toGroup();
+            this.fabricCanvas.setActiveObject(group);
+            this.fabricCanvas.requestRenderAll?.();
+            this.recordHistorySnapshot();
+            this.onSelectionChanged();
+        }
+    }
+
+    protected ungroupSelection(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (!active || active.type !== 'group') {
+            return;
+        }
+        if (typeof active.toActiveSelection === 'function') {
+            const sel = active.toActiveSelection();
+            this.fabricCanvas.setActiveObject(sel);
+            this.fabricCanvas.requestRenderAll?.();
+            this.recordHistorySnapshot();
+            this.onSelectionChanged();
+        }
+    }
+
+    protected alignSelection(kind: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (!active || active.type !== 'activeSelection') {
+            return;
+        }
+
+        const objects = active.getObjects?.() ?? [];
+        if (objects.length < 2) {
+            return;
+        }
+
+        active.setCoords?.();
+        const bounds = active.getBoundingRect?.(true, true) ?? { left: 0, top: 0, width: 0, height: 0 };
+        const left = bounds.left;
+        const right = bounds.left + bounds.width;
+        const top = bounds.top;
+        const bottom = bounds.top + bounds.height;
+        const cx = bounds.left + bounds.width / 2;
+        const cy = bounds.top + bounds.height / 2;
+
+        objects.forEach((obj: any) => {
+            obj.setCoords?.();
+            const r = obj.getBoundingRect?.(true, true) ?? { left: obj.left ?? 0, top: obj.top ?? 0, width: 0, height: 0 };
+            switch (kind) {
+                case 'left':
+                    obj.set({ left: (obj.left ?? 0) + (left - r.left) });
+                    break;
+                case 'center':
+                    obj.set({ left: (obj.left ?? 0) + (cx - (r.left + r.width / 2)) });
+                    break;
+                case 'right':
+                    obj.set({ left: (obj.left ?? 0) + (right - (r.left + r.width)) });
+                    break;
+                case 'top':
+                    obj.set({ top: (obj.top ?? 0) + (top - r.top) });
+                    break;
+                case 'middle':
+                    obj.set({ top: (obj.top ?? 0) + (cy - (r.top + r.height / 2)) });
+                    break;
+                case 'bottom':
+                    obj.set({ top: (obj.top ?? 0) + (bottom - (r.top + r.height)) });
+                    break;
+            }
+            obj.setCoords?.();
+        });
+
+        active.setCoords?.();
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
     }
 
     protected applyTextOptionsToSelection(): void {
@@ -669,6 +920,10 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         const activeText = this.getActiveTextObject();
         const showTextControls = this.tool === 'text' || Boolean(activeText);
         const showDrawControls = this.tool === 'draw';
+        const showSelectControls = this.tool === 'select' && this.selectionCount > 0;
+        const activeAny = this.fabricCanvas?.getActiveObject?.();
+        const canGroup = Boolean(activeAny && activeAny.type === 'activeSelection');
+        const canUngroup = Boolean(activeAny && activeAny.type === 'group');
 
         return (
             <div className='p-3 grid gap-3'>
@@ -688,6 +943,136 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                     >
                         Sélection
                     </button>
+
+                    {showSelectControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <span className='text-xs opacity-70'>
+                                {this.selectionCount} sélectionné(s)
+                            </span>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => { void this.duplicateSelection(); }}
+                            >
+                                Dupliquer
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.deleteSelection()}
+                            >
+                                Supprimer
+                            </button>
+
+                            <button
+                                type='button'
+                                className={`theia-button secondary ${this.selectionLocked ? 'border border-sky-500' : ''}`}
+                                onClick={() => this.toggleSelectionLock()}
+                            >
+                                {this.selectionLocked ? 'Déverrouiller' : 'Verrouiller'}
+                            </button>
+
+                            <label className='text-xs opacity-70'>
+                                Opacité
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.selectionOpacity}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.setSelectionOpacity(next);
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <button type='button' className='theia-button secondary' onClick={() => this.bringToFront()}>
+                                Avant
+                            </button>
+                            <button type='button' className='theia-button secondary' onClick={() => this.bringForward()}>
+                                Monter
+                            </button>
+                            <button type='button' className='theia-button secondary' onClick={() => this.sendBackwards()}>
+                                Descendre
+                            </button>
+                            <button type='button' className='theia-button secondary' onClick={() => this.sendToBack()}>
+                                Arrière
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.groupSelection()}
+                                disabled={!canGroup}
+                            >
+                                Grouper
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.ungroupSelection()}
+                                disabled={!canUngroup}
+                            >
+                                Dégrouper
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('left')}
+                                disabled={!canGroup}
+                            >
+                                Aligner gauche
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('center')}
+                                disabled={!canGroup}
+                            >
+                                Centrer H
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('right')}
+                                disabled={!canGroup}
+                            >
+                                Aligner droite
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('top')}
+                                disabled={!canGroup}
+                            >
+                                Aligner haut
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('middle')}
+                                disabled={!canGroup}
+                            >
+                                Centrer V
+                            </button>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.alignSelection('bottom')}
+                                disabled={!canGroup}
+                            >
+                                Aligner bas
+                            </button>
+                        </div>
+                    ) : null}
                     <button
                         type='button'
                         className={`theia-button secondary ${this.tool === 'draw' ? 'border border-sky-500' : ''}`}

@@ -174,7 +174,6 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 const blob = await res.blob();
                 const nextUrl = URL.createObjectURL(blob);
                 if (this.baseImageObjectUrl && this.baseImageObjectUrl !== nextUrl) {
-                    // IMPORTANT: do not revoke immediately, Fabric may still be using it.
                     this.baseImageObjectUrlPendingRevoke = this.baseImageObjectUrl;
                 }
                 this.baseImageObjectUrl = nextUrl;
@@ -406,8 +405,6 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 base.setCoords?.();
                 this.fabricCanvas.sendToBack(base);
                 this.fabricCanvas.requestRenderAll?.();
-
-                // Revoke the previous object URL only after the new source is loaded.
                 if (pendingRevoke) {
                     try {
                         URL.revokeObjectURL(pendingRevoke);
@@ -1134,16 +1131,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     }
 
     protected rotateImage(deg: number): void {
-        const img = this.getActiveImageObject();
-        if (!this.fabricCanvas || !img) {
-            return;
-        }
-        const current = (img.angle ?? 0) as number;
-        img.set({ angle: current + deg });
-        img.setCoords?.();
-        this.fabricCanvas.requestRenderAll?.();
-        this.recordHistorySnapshot();
-        this.update();
+        this.rotateCanvasContent(deg);
     }
 
     protected flipImage(axis: 'x' | 'y'): void {
@@ -1151,15 +1139,138 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         if (!this.fabricCanvas || !img) {
             return;
         }
+        const center = typeof img.getCenterPoint === 'function'
+            ? img.getCenterPoint()
+            : {
+                x: (img.left ?? 0) + (typeof img.getScaledWidth === 'function' ? img.getScaledWidth() / 2 : 0),
+                y: (img.top ?? 0) + (typeof img.getScaledHeight === 'function' ? img.getScaledHeight() / 2 : 0),
+            };
         if (axis === 'x') {
             img.set({ flipX: !img.flipX });
         } else {
             img.set({ flipY: !img.flipY });
         }
+        if (typeof img.setPositionByOrigin === 'function') {
+            img.setPositionByOrigin(center, 'center', 'center');
+        } else if (typeof img.getCenterPoint === 'function') {
+            const nextCenter = img.getCenterPoint();
+            const dx = center.x - nextCenter.x;
+            const dy = center.y - nextCenter.y;
+            img.set({ left: (img.left ?? 0) + dx, top: (img.top ?? 0) + dy });
+        }
         img.setCoords?.();
         this.fabricCanvas.requestRenderAll?.();
         this.recordHistorySnapshot();
         this.update();
+    }
+
+    protected rotateCanvasContent(deg: number): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        const base = this.getBaseImageObject();
+        if (!base) {
+            return;
+        }
+
+        const rad = (deg * Math.PI) / 180;
+        const pivot = typeof base.getCenterPoint === 'function'
+            ? base.getCenterPoint()
+            : {
+                x: (base.left ?? 0) + (typeof base.getScaledWidth === 'function' ? base.getScaledWidth() / 2 : 0),
+                y: (base.top ?? 0) + (typeof base.getScaledHeight === 'function' ? base.getScaledHeight() / 2 : 0),
+            };
+
+        this.fabricCanvas.discardActiveObject?.();
+
+        const objects = this.fabricCanvas.getObjects?.() ?? [];
+        for (const obj of objects) {
+            if (!obj) {
+                continue;
+            }
+
+            const center = typeof obj.getCenterPoint === 'function'
+                ? obj.getCenterPoint()
+                : {
+                    x: (obj.left ?? 0) + (typeof obj.getScaledWidth === 'function' ? obj.getScaledWidth() / 2 : 0),
+                    y: (obj.top ?? 0) + (typeof obj.getScaledHeight === 'function' ? obj.getScaledHeight() / 2 : 0),
+                };
+
+            const dx = center.x - pivot.x;
+            const dy = center.y - pivot.y;
+            const nx = pivot.x + (dx * Math.cos(rad) - dy * Math.sin(rad));
+            const ny = pivot.y + (dx * Math.sin(rad) + dy * Math.cos(rad));
+
+            const currentAngle = (obj.angle ?? 0) as number;
+            obj.set({ angle: currentAngle + deg });
+
+            if (typeof obj.setPositionByOrigin === 'function') {
+                obj.setPositionByOrigin({ x: nx, y: ny }, 'center', 'center');
+            } else {
+                obj.set({ left: nx, top: ny, originX: 'center', originY: 'center' });
+            }
+            obj.setCoords?.();
+        }
+
+        this.fabricCanvas.sendToBack(base);
+        this.normalizeCanvasToBaseImageBounds();
+        this.fabricCanvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.update();
+    }
+
+    protected normalizeCanvasToBaseImageBounds(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+
+        const base = this.getBaseImageObject();
+        if (!base || typeof base.getBoundingRect !== 'function') {
+            return;
+        }
+
+        const objects = this.fabricCanvas.getObjects?.() ?? [];
+        if (!objects.length) {
+            return;
+        }
+
+        const previousVpt = Array.isArray(this.fabricCanvas.viewportTransform)
+            ? [...this.fabricCanvas.viewportTransform]
+            : null;
+
+        if (previousVpt) {
+            this.fabricCanvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        }
+
+        const baseRect = base.getBoundingRect(true, true);
+        if (![baseRect.left, baseRect.top, baseRect.width, baseRect.height].every(v => Number.isFinite(v))) {
+            if (previousVpt) {
+                this.fabricCanvas.setViewportTransform(previousVpt);
+            }
+            return;
+        }
+
+        const shiftX = -baseRect.left;
+        const shiftY = -baseRect.top;
+
+        for (const obj of objects) {
+            if (!obj) {
+                continue;
+            }
+            obj.set({ left: (obj.left ?? 0) + shiftX, top: (obj.top ?? 0) + shiftY });
+            obj.setCoords?.();
+        }
+
+        const nextW = Math.max(100, Math.ceil(baseRect.width));
+        const nextH = Math.max(100, Math.ceil(baseRect.height));
+        this.fabricCanvas.setWidth(nextW);
+        this.fabricCanvas.setHeight(nextH);
+        this.imageCanvasWidth = nextW;
+        this.imageCanvasHeight = nextH;
+
+        if (previousVpt) {
+            this.fabricCanvas.setViewportTransform(previousVpt);
+        }
     }
 
     protected async save(): Promise<void> {
@@ -1236,9 +1347,6 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                 ? `Image Editor - ${(updated.title || '').trim()}`
                 : `Image Editor - #${updated.id}`;
             this.title.label = label;
-
-            // Keep the existing canvas state; only refresh the base image source to match
-            // the new backend-served URL (avoids a temporary blank canvas after save).
             await this.refreshBaseImageSource();
 
             window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {

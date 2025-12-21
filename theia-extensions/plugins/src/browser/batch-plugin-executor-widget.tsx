@@ -717,7 +717,7 @@ const BatchPluginExecutorComponent: React.FC<{
 
     const applyDetectedCoordinatesAsCorrected = async (geocacheId: number, coordinatesRaw: string): Promise<boolean> => {
         try {
-            const sanitized = coordinatesRaw.replace(/'/g, '');
+            const sanitized = coordinatesRaw.replace(/'/g, '').replace(/\s+/g, ' ').trim();
             const response = await fetch(`http://127.0.0.1:8000/api/geocaches/${geocacheId}/coordinates`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -726,14 +726,15 @@ const BatchPluginExecutorComponent: React.FC<{
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP ${response.status}`);
             }
 
             messageService.info('Coordonnées corrigées mises à jour pour cette géocache');
             return true;
         } catch (error) {
             console.error('[BatchPluginExecutor] Erreur lors de la mise à jour des coordonnées corrigées:', error);
-            messageService.error('Erreur lors de la mise à jour des coordonnées de la géocache');
+            messageService.error(`Erreur lors de la mise à jour des coordonnées: ${error}`);
             return false;
         }
     };
@@ -762,7 +763,9 @@ const BatchPluginExecutorComponent: React.FC<{
         let errorCount = 0;
 
         for (const result of targets) {
-            const ok = await applyDetectedCoordinatesAsCorrected(result.geocacheId, result.coordinates!.formatted);
+            const coords = result.coordinates!;
+            const normalizedGcCoords = formatGeocachingCoordinates(coords.latitude, coords.longitude);
+            const ok = await applyDetectedCoordinatesAsCorrected(result.geocacheId, normalizedGcCoords);
             if (ok) {
                 successCount++;
             } else {

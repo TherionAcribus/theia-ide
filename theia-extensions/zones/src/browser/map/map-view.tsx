@@ -419,6 +419,22 @@ export const MapView: React.FC<MapViewProps> = ({
                                     onOpenGeocacheDetails(props.id, props.name || props.gc_code || 'Cache inconnue');
                                 }
                             }
+                        },
+                        {
+                            label: 'Importer autour…',
+                            icon: '📍',
+                            action: () => {
+                                window.dispatchEvent(new CustomEvent('geoapp-import-around', {
+                                    detail: {
+                                        center: {
+                                            type: 'geocache_id',
+                                            geocache_id: props.id,
+                                            gc_code: props.gc_code,
+                                            name: props.name
+                                        }
+                                    }
+                                }));
+                            }
                         }
                     ];
 
@@ -457,6 +473,22 @@ export const MapView: React.FC<MapViewProps> = ({
                         action: () => {
                             navigator.clipboard.writeText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
                             console.log('Coordonnées décimales copiées');
+                        }
+                    },
+                    { separator: true },
+                    {
+                        label: 'Importer autour de ce point…',
+                        icon: '📍',
+                        action: () => {
+                            window.dispatchEvent(new CustomEvent('geoapp-import-around', {
+                                detail: {
+                                    center: {
+                                        type: 'point',
+                                        lat,
+                                        lon
+                                    }
+                                }
+                            }));
                         }
                     }
                 ];

@@ -3,6 +3,8 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { ApplicationShell, StatefulWidget, WidgetManager, ConfirmDialog, Dialog } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core';
+import { QuickInputService, QuickPickValue } from '@theia/core/lib/common/quick-pick-service';
+import { ProgressService } from '@theia/core/lib/common/progress-service';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
@@ -15,6 +17,13 @@ interface SerializedZoneGeocachesState {
     zoneId: number;
     zoneName?: string;
 }
+
+type ImportAroundCenter =
+    | { type: 'point'; lat: number; lon: number }
+    | { type: 'gc_code'; gc_code: string }
+    | { type: 'geocache_id'; geocache_id: number; gc_code?: string; name?: string };
+
+type WizardPick<T> = QuickPickValue<T>;
 
 @injectable()
 export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
@@ -41,6 +50,8 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         @inject(MapWidgetFactory) protected readonly mapWidgetFactory: MapWidgetFactory,
         @inject(GeocacheTabsManager) protected readonly geocacheTabsManager: GeocacheTabsManager,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
+        @inject(QuickInputService) protected readonly quickInputService: QuickInputService,
+        @inject(ProgressService) protected readonly progressService: ProgressService,
     ) {
         super();
         this.id = ZoneGeocachesWidget.ID;
@@ -168,6 +179,324 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
 
         // Écouter les événements d'ouverture de détails de géocache depuis les cartes
         window.addEventListener('geoapp-open-geocache-details', this.handleOpenGeocacheDetailsFromMap.bind(this));
+
+        // Écouter les événements "importer autour" depuis la carte
+        window.addEventListener('geoapp-import-around', ((event: any) => {
+            const detail = event?.detail;
+            const center = detail?.center as ImportAroundCenter | undefined;
+            if (!center) {
+                return;
+            }
+            this.startImportAroundWizard(center);
+        }) as any);
+    }
+
+    private async pickCenterType(): Promise<'point' | 'geocache' | 'gc_code' | undefined> {
+        const picks: WizardPick<'point' | 'geocache' | 'gc_code'>[] = [
+            {
+                label: 'Autour d’un point (lat/lon)',
+                value: 'point',
+            },
+            {
+                label: 'Autour d’une géocache de la zone',
+                value: 'geocache',
+            },
+            {
+                label: 'Autour d’un GC code (geocaching.com)',
+                value: 'gc_code',
+            },
+        ];
+
+        const picked = await this.quickInputService.pick(
+            picks,
+            {
+                title: 'Importer des géocaches autour…',
+                placeHolder: 'Choisir le centre',
+            }
+        );
+        return picked?.value;
+    }
+
+    private async promptNumber(label: string, options: { placeholder: string; defaultValue?: string; integer?: boolean; allowEmpty?: boolean }): Promise<string | undefined> {
+        const validate = async (input: string): Promise<string | undefined> => {
+            const value = (input ?? '').trim();
+            if (!value) {
+                return options.allowEmpty ? undefined : 'Valeur requise';
+            }
+            const parsed = options.integer ? parseInt(value, 10) : Number(value);
+            if (!Number.isFinite(parsed)) {
+                return 'Nombre invalide';
+            }
+            if (parsed <= 0) {
+                return 'La valeur doit être > 0';
+            }
+            return undefined;
+        };
+
+        return this.quickInputService.input({
+            title: 'Importer des géocaches autour…',
+            prompt: label,
+            placeHolder: options.placeholder,
+            value: options.defaultValue,
+            ignoreFocusLost: true,
+            validateInput: validate,
+        });
+    }
+
+    private async promptText(label: string, options: { placeholder: string; defaultValue?: string; allowEmpty?: boolean }): Promise<string | undefined> {
+        const validate = async (input: string): Promise<string | undefined> => {
+            const value = (input ?? '').trim();
+            if (!value && !options.allowEmpty) {
+                return 'Valeur requise';
+            }
+            return undefined;
+        };
+
+        return this.quickInputService.input({
+            title: 'Importer des géocaches autour…',
+            prompt: label,
+            placeHolder: options.placeholder,
+            value: options.defaultValue,
+            ignoreFocusLost: true,
+            validateInput: validate,
+        });
+    }
+
+    private async pickGeocacheFromZone(): Promise<ImportAroundCenter | undefined> {
+        const rows = (this.rows || []).slice();
+        if (rows.length === 0) {
+            this.messages.warn('Aucune géocache dans la zone pour servir de centre');
+            return undefined;
+        }
+
+        const picks: WizardPick<Geocache>[] = rows.map(gc => ({
+            label: `${gc.gc_code} - ${gc.name}`,
+            value: gc,
+        }));
+
+        const picked = await this.quickInputService.pick(
+            picks,
+            {
+                title: 'Importer des géocaches autour…',
+                placeHolder: 'Choisir la géocache centre',
+                matchOnDescription: true,
+                matchOnDetail: true,
+            }
+        );
+
+        if (!picked) {
+            return undefined;
+        }
+
+        return {
+            type: 'geocache_id',
+            geocache_id: picked.value.id,
+            gc_code: picked.value.gc_code,
+            name: picked.value.name,
+        };
+    }
+
+    private async buildImportAroundRequest(initialCenter?: ImportAroundCenter): Promise<{ center: ImportAroundCenter; limit: number; radius_km?: number } | undefined> {
+        let center: ImportAroundCenter | undefined = initialCenter;
+        if (!center) {
+            const centerType = await this.pickCenterType();
+            if (!centerType) {
+                return undefined;
+            }
+
+            if (centerType === 'point') {
+                const latRaw = await this.promptText('Latitude', { placeholder: '48.8566' });
+                if (latRaw === undefined) {
+                    return undefined;
+                }
+                const lonRaw = await this.promptText('Longitude', { placeholder: '2.3522' });
+                if (lonRaw === undefined) {
+                    return undefined;
+                }
+                const lat = Number((latRaw ?? '').trim());
+                const lon = Number((lonRaw ?? '').trim());
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                    this.messages.error('Latitude/Longitude invalides');
+                    return undefined;
+                }
+                center = { type: 'point', lat, lon };
+            } else if (centerType === 'geocache') {
+                center = await this.pickGeocacheFromZone();
+                if (!center) {
+                    return undefined;
+                }
+            } else {
+                const codeRaw = await this.promptText('GC code', { placeholder: 'GC12345' });
+                if (codeRaw === undefined) {
+                    return undefined;
+                }
+                const gc_code = codeRaw.trim().toUpperCase();
+                center = { type: 'gc_code', gc_code };
+            }
+        }
+
+        const limitRaw = await this.promptNumber('Limite (nombre max de géocaches)', {
+            placeholder: '50',
+            defaultValue: '50',
+            integer: true,
+        });
+        if (limitRaw === undefined) {
+            return undefined;
+        }
+        const limit = parseInt(limitRaw.trim(), 10);
+
+        const radiusPicks: WizardPick<'none' | 'radius'>[] = [
+            { label: 'Sans rayon (limite uniquement)', value: 'none' },
+            { label: 'Avec rayon (km)', value: 'radius' },
+        ];
+
+        const radiusMode = await this.quickInputService.pick(
+            radiusPicks,
+            {
+                title: 'Importer des géocaches autour…',
+                placeHolder: 'Limiter la recherche par rayon ?'
+            }
+        );
+
+        if (!radiusMode) {
+            return undefined;
+        }
+
+        if (radiusMode.value === 'radius') {
+            const radiusRaw = await this.promptNumber('Rayon (km)', {
+                placeholder: '5',
+                allowEmpty: false,
+                integer: false,
+            });
+            if (radiusRaw === undefined) {
+                return undefined;
+            }
+            const radius_km = Number(radiusRaw.trim());
+            return { center, limit, radius_km };
+        }
+
+        return { center, limit };
+    }
+
+    private async runImportAround(request: { center: ImportAroundCenter; limit: number; radius_km?: number }): Promise<void> {
+        if (!this.zoneId) {
+            this.messages.warn('Zone active manquante');
+            return;
+        }
+
+        const controller = new AbortController();
+        const progress = await this.progressService.showProgress(
+            {
+                text: 'Import autour…',
+                options: { cancelable: true, location: 'notification' },
+            },
+            () => controller.abort()
+        );
+
+        try {
+            progress.report({ message: 'Démarrage…', work: { done: 0, total: 100 } });
+            const response = await fetch(`${this.backendBaseUrl}/api/geocaches/import-around`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    zone_id: this.zoneId,
+                    center: request.center,
+                    limit: request.limit,
+                    ...(request.radius_km !== undefined ? { radius_km: request.radius_km } : {}),
+                }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                let errorMsg = `HTTP ${response.status}`;
+                try {
+                    const data = await response.json();
+                    errorMsg = data.error || errorMsg;
+                } catch {
+                    const txt = await response.text();
+                    errorMsg += `: ${txt}`;
+                }
+                throw new Error(errorMsg);
+            }
+
+            if (!response.body) {
+                throw new Error('Réponse streaming non supportée');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            let buffer = '';
+            let lastMessage = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+                buffer += decoder.decode(value, { stream: true });
+
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmed = (line || '').trim();
+                    if (!trimmed) {
+                        continue;
+                    }
+                    try {
+                        const data = JSON.parse(trimmed);
+                        if (data.error) {
+                            const msg = data.message || 'Erreur lors de l\'import';
+                            progress.report({ message: msg, work: { done: 0, total: 100 } });
+                            this.messages.error(msg);
+                            continue;
+                        }
+
+                        const pct = typeof data.progress === 'number' ? data.progress : undefined;
+                        const msg = data.message || '';
+
+                        if (pct !== undefined) {
+                            progress.report({ message: msg, work: { done: pct, total: 100 } });
+                        } else if (msg) {
+                            progress.report({ message: msg });
+                        }
+
+                        if (data.final_summary) {
+                            lastMessage = msg;
+                        }
+                    } catch (e) {
+                        console.error('Error parsing import-around progress data:', e);
+                    }
+                }
+            }
+
+            if (lastMessage) {
+                this.messages.info(lastMessage);
+            } else {
+                this.messages.info('Import terminé');
+            }
+
+            await this.load();
+        } catch (e) {
+            if ((e as any)?.name === 'AbortError') {
+                this.messages.warn('Import annulé');
+                return;
+            }
+            console.error('Import around error', e);
+            this.messages.error('Erreur lors de l\'import autour');
+        } finally {
+            progress.cancel();
+        }
+    }
+
+    private async startImportAroundWizard(initialCenter?: ImportAroundCenter): Promise<void> {
+        const request = await this.buildImportAroundRequest(initialCenter);
+        if (!request) {
+            return;
+        }
+        await this.runImportAround(request);
     }
 
     private async handleOpenZoneGeocaches(zoneId: number, zoneName?: string): Promise<void> {
@@ -1051,6 +1380,14 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                             <span>📁</span>
                             <span>Importer GPX</span>
                         </button>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => {
+                                this.startImportAroundWizard();
+                            }}
+                        >
+                            📍 Importer autour…
+                        </button>
                     </div>
                 </div>
 
@@ -1079,6 +1416,14 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                         onRefresh={(id) => this.handleRefresh(id)}
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}
                         onCopy={(geocache, targetZoneId) => this.handleCopy(geocache, targetZoneId)}
+                        onImportAround={(geocache: Geocache) => {
+                            this.startImportAroundWizard({
+                                type: 'geocache_id',
+                                geocache_id: geocache.id,
+                                gc_code: geocache.gc_code,
+                                name: geocache.name,
+                            });
+                        }}
                         zones={this.zones}
                         currentZoneId={this.zoneId}
                     />

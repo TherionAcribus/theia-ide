@@ -62,6 +62,7 @@ interface GeocachesTableProps {
     onRefresh?: (id: number) => void;
     onMove?: (geocache: Geocache, targetZoneId: number) => void;
     onCopy?: (geocache: Geocache, targetZoneId: number) => void;
+    onImportAround?: (geocache: Geocache) => void;
     zones?: Array<{ id: number; name: string }>;
     currentZoneId?: number;
 }
@@ -78,6 +79,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onRefresh,
     onMove,
     onCopy,
+    onImportAround,
     zones = [],
     currentZoneId
 }) => {
@@ -285,6 +287,14 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                 label: 'Copier vers...',
                 icon: '📋',
                 action: () => setCopyDialog(geocache)
+            });
+        }
+
+        if (onImportAround) {
+            items.push({
+                label: 'Importer autour…',
+                icon: '📍',
+                action: () => onImportAround(geocache)
             });
         }
 

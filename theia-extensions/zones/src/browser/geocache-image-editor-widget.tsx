@@ -235,6 +235,65 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
     }
 
+    protected async saveAsNew(): Promise<void> {
+        if (!this.fabricCanvas || !this.imageId || !this.geocacheId || !this.image) {
+            return;
+        }
+        if (this.isSaving) {
+            return;
+        }
+
+        this.isSaving = true;
+        this.update();
+
+        try {
+            const editorStateJson = JSON.stringify(this.fabricCanvas.toJSON());
+            const dataUrl = this.fabricCanvas.toDataURL({ format: 'png' });
+            const renderedBlob = await fetch(dataUrl).then(r => r.blob());
+
+            const form = new FormData();
+            form.append('rendered_file', renderedBlob, 'edited.png');
+            form.append('editor_state_json', editorStateJson);
+            form.append('mime_type', 'image/png');
+            if (this.image.title) {
+                form.append('title', this.image.title);
+            }
+
+            const endpoint = `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/edits/new`;
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                credentials: 'include',
+                body: form,
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const created = (await res.json()) as GeocacheImageV2Dto;
+            this.image = created;
+            this.imageId = created.id;
+            this.geocacheId = created.geocache_id;
+            this.didApplyRemoteEditorState = true;
+
+            const label = (created.title || '').trim()
+                ? `Image Editor - ${(created.title || '').trim()}`
+                : `Image Editor - #${created.id}`;
+            this.title.label = label;
+
+            await this.refreshBaseImageSource();
+
+            window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {
+                detail: { geocacheId: created.geocache_id }
+            }));
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] saveAsNew error', e);
+            this.error = 'Impossible de sauvegarder l\'image';
+        } finally {
+            this.isSaving = false;
+            this.update();
+        }
+    }
+
     protected async loadRemoteEditorStateIfAny(): Promise<void> {
         if (!this.imageId || !this.fabricCanvas) {
             return;
@@ -2454,6 +2513,15 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                         disabled={this.isSaving}
                     >
                         {this.isSaving ? 'Sauvegarde…' : 'Enregistrer'}
+                    </button>
+
+                    <button
+                        type='button'
+                        className='theia-button secondary'
+                        onClick={() => { void this.saveAsNew(); }}
+                        disabled={this.isSaving}
+                    >
+                        Enregistrer sous…
                     </button>
 
                     <button

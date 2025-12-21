@@ -196,6 +196,29 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         });
     };
 
+    const duplicateImageById = async (imageId: number): Promise<void> => {
+        setIsSaving(true);
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}/duplicate`, {
+                method: 'POST',
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const created = (await res.json()) as GeocacheImageV2Dto;
+            window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {
+                detail: { geocacheId }
+            }));
+            setSelectedId(created.id);
+            setDetailsMode('fields');
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] duplicate image error', e);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const patchImage = async (imageId: number, payload: Partial<GeocacheImageV2Dto>): Promise<GeocacheImageV2Dto | null> => {
         try {
             const res = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}`, {
@@ -490,6 +513,11 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Éditer l\'image…',
             action: () => { openImageEditor(contextMenu.imageId); },
+            disabled: isSaving,
+        },
+        {
+            label: 'Dupliquer l\'image',
+            action: () => { void duplicateImageById(contextMenu.imageId); },
             disabled: isSaving,
         },
         {

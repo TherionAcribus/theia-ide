@@ -194,7 +194,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
     private async pickCenterType(): Promise<'point' | 'geocache' | 'gc_code' | undefined> {
         const picks: WizardPick<'point' | 'geocache' | 'gc_code'>[] = [
             {
-                label: 'Autour d’un point (lat/lon)',
+                label: 'Autour d’un point (latitude/longitude)',
                 value: 'point',
             },
             {
@@ -215,6 +215,40 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
             }
         );
         return picked?.value;
+    }
+
+    private async pickLimit(defaultLimit: number = 50): Promise<number | undefined> {
+        const picks: WizardPick<number | 'custom'>[] = [
+            { label: '20', value: 20 },
+            { label: '50', value: 50 },
+            { label: '100', value: 100 },
+            { label: '200', value: 200 },
+            { label: '500', value: 500 },
+            { label: 'Personnalisé…', value: 'custom' },
+        ];
+
+        const picked = await this.quickInputService.pick(picks, {
+            title: 'Importer des géocaches autour…',
+            placeHolder: 'Limite (nombre max de géocaches)',
+        });
+
+        if (!picked) {
+            return undefined;
+        }
+
+        if (picked.value === 'custom') {
+            const raw = await this.promptNumber('Limite (nombre max de géocaches)', {
+                placeholder: String(defaultLimit),
+                defaultValue: String(defaultLimit),
+                integer: true,
+            });
+            if (raw === undefined) {
+                return undefined;
+            }
+            return parseInt(raw.trim(), 10);
+        }
+
+        return picked.value;
     }
 
     private async promptNumber(label: string, options: { placeholder: string; defaultValue?: string; integer?: boolean; allowEmpty?: boolean }): Promise<string | undefined> {
@@ -335,15 +369,10 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
             }
         }
 
-        const limitRaw = await this.promptNumber('Limite (nombre max de géocaches)', {
-            placeholder: '50',
-            defaultValue: '50',
-            integer: true,
-        });
-        if (limitRaw === undefined) {
+        const limit = await this.pickLimit(50);
+        if (limit === undefined) {
             return undefined;
         }
-        const limit = parseInt(limitRaw.trim(), 10);
 
         const radiusPicks: WizardPick<'none' | 'radius'>[] = [
             { label: 'Sans rayon (limite uniquement)', value: 'none' },

@@ -50,7 +50,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected baseImageObjectUrl: string | null = null;
     protected baseImageObjectUrlPendingRevoke: string | null = null;
 
-    protected tool: 'select' | 'draw' | 'text' | 'image' = 'select';
+    protected tool: 'select' | 'draw' | 'text' | 'image' | 'shapes' = 'select';
     protected isRestoringHistory = false;
     protected undoStack: string[] = [];
     protected redoStack: string[] = [];
@@ -91,6 +91,16 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected imageGrayscale = false;
     protected imageSepia = false;
     protected imageInvert = false;
+
+    protected shapeType: 'rect' | 'circle' | 'triangle' | 'line' | 'arrow' = 'rect';
+    protected shapeWidth = 220;
+    protected shapeHeight = 140;
+    protected shapeCornerRadius = 12;
+    protected shapeFill = '#22c55e';
+    protected shapeFillOpacity = 0.25;
+    protected shapeStroke = '#22c55e';
+    protected shapeStrokeWidth = 4;
+    protected shapeOpacity = 1;
 
     constructor() {
         super();
@@ -286,7 +296,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
     }
 
-    protected applyTool(tool: 'select' | 'draw' | 'text' | 'image'): void {
+    protected applyTool(tool: 'select' | 'draw' | 'text' | 'image' | 'shapes'): void {
         this.tool = tool;
         if (!this.fabricCanvas) {
             this.update();
@@ -300,6 +310,146 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             this.fabricCanvas.isDrawingMode = false;
         }
 
+        this.update();
+    }
+
+    protected getViewportCenterPoint(): { x: number; y: number } {
+        if (!this.fabricCanvas) {
+            return { x: 0, y: 0 };
+        }
+        const canvas = this.fabricCanvas;
+        const w = canvas.getWidth?.() ?? 0;
+        const h = canvas.getHeight?.() ?? 0;
+        const vpt = Array.isArray(canvas.viewportTransform) ? canvas.viewportTransform : [1, 0, 0, 1, 0, 0];
+
+        const util: any = (fabric as any).util;
+        if (util?.transformPoint && util?.invertTransform && (fabric as any).Point) {
+            const pt = new (fabric as any).Point(w / 2, h / 2);
+            const inv = util.invertTransform(vpt);
+            const world = util.transformPoint(pt, inv);
+            return { x: world.x, y: world.y };
+        }
+
+        return { x: w / 2, y: h / 2 };
+    }
+
+    protected addShape(): void {
+        if (!this.fabricCanvas) {
+            return;
+        }
+
+        const canvas = this.fabricCanvas;
+        const center = this.getViewportCenterPoint();
+
+        const w = Math.max(10, Math.floor(this.shapeWidth));
+        const h = Math.max(10, Math.floor(this.shapeHeight));
+        const rx = Math.max(0, Math.floor(this.shapeCornerRadius));
+        const strokeW = Math.max(0, Math.floor(this.shapeStrokeWidth));
+        const opacity = this.clamp(this.shapeOpacity, 0, 1);
+        const fillOpacity = this.clamp(this.shapeFillOpacity, 0, 1);
+
+        const fill = this.rgbaFromHex(this.shapeFill, fillOpacity);
+        const stroke = this.shapeStroke;
+
+        let obj: any = null;
+
+        if (this.shapeType === 'rect') {
+            obj = new fabric.Rect({
+                left: center.x,
+                top: center.y,
+                originX: 'center',
+                originY: 'center',
+                width: w,
+                height: h,
+                rx,
+                ry: rx,
+                fill,
+                stroke,
+                strokeWidth: strokeW,
+                opacity,
+            });
+        } else if (this.shapeType === 'circle') {
+            const r = Math.max(5, Math.floor(Math.min(w, h) / 2));
+            obj = new fabric.Circle({
+                left: center.x,
+                top: center.y,
+                originX: 'center',
+                originY: 'center',
+                radius: r,
+                fill,
+                stroke,
+                strokeWidth: strokeW,
+                opacity,
+            });
+        } else if (this.shapeType === 'triangle') {
+            obj = new fabric.Triangle({
+                left: center.x,
+                top: center.y,
+                originX: 'center',
+                originY: 'center',
+                width: w,
+                height: h,
+                fill,
+                stroke,
+                strokeWidth: strokeW,
+                opacity,
+            });
+        } else if (this.shapeType === 'line') {
+            obj = new fabric.Line([-w / 2, 0, w / 2, 0], {
+                left: center.x,
+                top: center.y,
+                originX: 'center',
+                originY: 'center',
+                stroke,
+                strokeWidth: Math.max(1, strokeW),
+                opacity,
+            });
+        } else if (this.shapeType === 'arrow') {
+            const lineLen = w;
+            const headLen = Math.max(10, Math.min(28, Math.floor(lineLen * 0.18)));
+            const headW = Math.max(10, Math.floor(headLen * 0.9));
+            const arrowStrokeW = Math.max(1, strokeW);
+
+            const line = new fabric.Line([-(lineLen / 2), 0, (lineLen / 2) - headLen, 0], {
+                left: 0,
+                top: 0,
+                originX: 'center',
+                originY: 'center',
+                stroke,
+                strokeWidth: arrowStrokeW,
+            });
+
+            const head = new fabric.Triangle({
+                left: (lineLen / 2) - (headLen / 2),
+                top: 0,
+                originX: 'center',
+                originY: 'center',
+                width: headLen,
+                height: headW,
+                angle: 90,
+                fill: stroke,
+                stroke: stroke,
+                strokeWidth: 0,
+            });
+
+            obj = new fabric.Group([line, head], {
+                left: center.x,
+                top: center.y,
+                originX: 'center',
+                originY: 'center',
+                opacity,
+            });
+        }
+
+        if (!obj) {
+            return;
+        }
+
+        canvas.add(obj);
+        canvas.setActiveObject?.(obj);
+        canvas.requestRenderAll?.();
+        this.recordHistorySnapshot();
+        this.onSelectionChanged();
         this.update();
     }
 
@@ -1410,6 +1560,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         const showDrawControls = this.tool === 'draw';
         const showSelectControls = this.tool === 'select' && this.selectionCount > 0;
         const showImageControls = this.tool === 'image';
+        const showShapesControls = this.tool === 'shapes';
         const activeAny = this.fabricCanvas?.getActiveObject?.();
         const canGroup = Boolean(activeAny && activeAny.type === 'activeSelection');
         const canUngroup = Boolean(activeAny && activeAny.type === 'group');
@@ -1565,12 +1716,188 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                             </button>
                         </div>
                     ) : null}
+
+                    {showShapesControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <label className='text-xs opacity-70'>
+                                Type
+                                <select
+                                    className='ml-2 theia-input'
+                                    value={this.shapeType}
+                                    onChange={e => {
+                                        this.shapeType = e.target.value as any;
+                                        this.update();
+                                    }}
+                                >
+                                    <option value='rect'>Rectangle</option>
+                                    <option value='circle'>Cercle</option>
+                                    <option value='triangle'>Triangle</option>
+                                    <option value='line'>Ligne</option>
+                                    <option value='arrow'>Flèche</option>
+                                </select>
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Largeur
+                                <input
+                                    type='number'
+                                    min={10}
+                                    max={4000}
+                                    value={this.shapeWidth}
+                                    className='ml-2 w-24 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.shapeWidth = Math.floor(next);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Hauteur
+                                <input
+                                    type='number'
+                                    min={10}
+                                    max={4000}
+                                    value={this.shapeHeight}
+                                    className='ml-2 w-24 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next > 0) {
+                                            this.shapeHeight = Math.floor(next);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            {this.shapeType === 'rect' ? (
+                                <label className='text-xs opacity-70'>
+                                    Rayon
+                                    <input
+                                        type='number'
+                                        min={0}
+                                        max={500}
+                                        value={this.shapeCornerRadius}
+                                        className='ml-2 w-20 theia-input'
+                                        onChange={e => {
+                                            const next = Number(e.target.value);
+                                            if (Number.isFinite(next) && next >= 0) {
+                                                this.shapeCornerRadius = Math.floor(next);
+                                                this.update();
+                                            }
+                                        }}
+                                    />
+                                </label>
+                            ) : null}
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Remplissage
+                                <input
+                                    type='color'
+                                    value={this.shapeFill}
+                                    className='h-7 w-10 bg-transparent'
+                                    onChange={e => {
+                                        this.shapeFill = e.target.value;
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Opacité rempl.
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.shapeFillOpacity}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.shapeFillOpacity = this.clamp(next, 0, 1);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70 flex items-center gap-2'>
+                                Contour
+                                <input
+                                    type='color'
+                                    value={this.shapeStroke}
+                                    className='h-7 w-10 bg-transparent'
+                                    onChange={e => {
+                                        this.shapeStroke = e.target.value;
+                                        this.update();
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Épaisseur
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={200}
+                                    value={this.shapeStrokeWidth}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next) && next >= 0) {
+                                            this.shapeStrokeWidth = Math.floor(next);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Opacité
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={1}
+                                    step={0.05}
+                                    value={this.shapeOpacity}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.shapeOpacity = this.clamp(next, 0, 1);
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.addShape()}
+                            >
+                                Ajouter
+                            </button>
+                        </div>
+                    ) : null}
                     <button
                         type='button'
                         className={`theia-button secondary ${this.tool === 'draw' ? 'border border-sky-500' : ''}`}
                         onClick={() => this.applyTool('draw')}
                     >
                         Dessin
+                    </button>
+
+                    <button
+                        type='button'
+                        className={`theia-button secondary ${this.tool === 'shapes' ? 'border border-sky-500' : ''}`}
+                        onClick={() => this.applyTool('shapes')}
+                    >
+                        Formes
                     </button>
 
                     <button

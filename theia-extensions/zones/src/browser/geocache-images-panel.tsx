@@ -434,6 +434,10 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
+        if (!img.stored) {
+            return;
+        }
+
         const downloadUrl = resolveImageUrl(img.url);
         const filename = guessDownloadFilename(img);
 
@@ -677,7 +681,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Télécharger l\'image',
             action: () => { void downloadImageById(contextMenu.imageId); },
-            disabled: isSaving,
+            disabled: isSaving || !Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
         },
         {
             separator: true,

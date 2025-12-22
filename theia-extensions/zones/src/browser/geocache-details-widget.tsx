@@ -934,6 +934,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
     private readonly imagesGalleryThumbnailSizePreferenceKey = 'geoApp.images.gallery.thumbnailSize';
     private readonly imagesGalleryHiddenDomainsPreferenceKey = 'geoApp.images.gallery.hiddenDomains';
+    private readonly ocrDefaultEnginePreferenceKey = 'geoApp.ocr.defaultEngine';
+    private readonly ocrDefaultLanguagePreferenceKey = 'geoApp.ocr.defaultLanguage';
+    private readonly ocrLmstudioBaseUrlPreferenceKey = 'geoApp.ocr.lmstudio.baseUrl';
+    private readonly ocrLmstudioModelPreferenceKey = 'geoApp.ocr.lmstudio.model';
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -2040,6 +2044,29 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.update();
     }
 
+    private getOcrDefaultEngine(): 'easyocr_ocr' | 'vision_ocr' {
+        const raw = this.preferenceService.get(this.ocrDefaultEnginePreferenceKey, 'easyocr_ocr') as string;
+        if (raw === 'vision_ocr' || raw === 'easyocr_ocr') {
+            return raw;
+        }
+        return 'easyocr_ocr';
+    }
+
+    private getOcrDefaultLanguage(): string {
+        const raw = this.preferenceService.get(this.ocrDefaultLanguagePreferenceKey, 'auto') as string;
+        return (raw || 'auto').toString();
+    }
+
+    private getOcrLmstudioBaseUrl(): string {
+        const raw = this.preferenceService.get(this.ocrLmstudioBaseUrlPreferenceKey, 'http://localhost:1234') as string;
+        return (raw || 'http://localhost:1234').toString();
+    }
+
+    private getOcrLmstudioModel(): string {
+        const raw = this.preferenceService.get(this.ocrLmstudioModelPreferenceKey, '') as string;
+        return (raw || '').toString();
+    }
+
     private getImagesGalleryHiddenDomains(): string[] {
         const raw = this.preferenceService.get(this.imagesGalleryHiddenDomainsPreferenceKey, '') as unknown;
         if (Array.isArray(raw)) {
@@ -2267,6 +2294,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 hiddenDomains={this.getImagesGalleryHiddenDomains()}
                                 hiddenDomainsText={this.getImagesGalleryHiddenDomainsText()}
                                 onHiddenDomainsTextChange={async (value: string) => this.setImagesGalleryHiddenDomainsText(value)}
+                                ocrDefaultEngine={this.getOcrDefaultEngine()}
+                                ocrDefaultLanguage={this.getOcrDefaultLanguage()}
+                                ocrLmstudioBaseUrl={this.getOcrLmstudioBaseUrl()}
+                                ocrLmstudioModel={this.getOcrLmstudioModel()}
                             />
                         ) : undefined}
 

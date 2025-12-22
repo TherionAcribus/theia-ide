@@ -39,6 +39,10 @@ export interface GeocacheImagesPanelProps {
     hiddenDomains?: string[];
     hiddenDomainsText?: string;
     onHiddenDomainsTextChange?: (value: string) => Promise<void> | void;
+    ocrDefaultEngine?: 'easyocr_ocr' | 'vision_ocr';
+    ocrDefaultLanguage?: string;
+    ocrLmstudioBaseUrl?: string;
+    ocrLmstudioModel?: string;
 }
 
 export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
@@ -51,6 +55,10 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     hiddenDomains = [],
     hiddenDomainsText,
     onHiddenDomainsTextChange,
+    ocrDefaultEngine = 'easyocr_ocr',
+    ocrDefaultLanguage = 'auto',
+    ocrLmstudioBaseUrl = 'http://localhost:1234',
+    ocrLmstudioModel = '',
 }) => {
     const [images, setImages] = React.useState<GeocacheImageV2Dto[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
@@ -299,6 +307,112 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const extractTextFromPluginResult = (result: any): string => {
+        if (!result) {
+            return '';
+        }
+        const items = Array.isArray(result.results) ? result.results : [];
+        const texts = items
+            .map((item: any) => (item?.text_output ?? '').toString())
+            .map((t: string) => t.trim())
+            .filter((t: string) => Boolean(t));
+
+        if (texts.length > 0) {
+            return texts.join('\n\n');
+        }
+
+        const legacy = (result.text_output ?? '').toString().trim();
+        return legacy;
+    };
+
+    const runOcrPluginForImage = async (imageId: number, pluginName: 'easyocr_ocr' | 'vision_ocr'): Promise<void> => {
+        const img = visibleImages.find(i => i.id === imageId);
+        if (!img) {
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            let imageUrlForPlugin = resolveImageUrl(img.url);
+
+            // If the image isn't stored, /content returns 404 JSON and OCR receives non-image bytes.
+            // We store the image first so the backend can serve a proper binary.
+            if (!img.stored) {
+                try {
+                    const storeRes = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}/store`, {
+                        method: 'POST',
+                        credentials: 'include',
+                    });
+                    if (storeRes.ok) {
+                        const storedImage = (await storeRes.json()) as GeocacheImageV2Dto;
+                        imageUrlForPlugin = resolveImageUrl(storedImage.url);
+                    } else {
+                        // Fallback to source_url if storage fails
+                        imageUrlForPlugin = resolveImageUrl((img.source_url || img.url) as string);
+                    }
+                } catch {
+                    imageUrlForPlugin = resolveImageUrl((img.source_url || img.url) as string);
+                }
+            }
+
+            const inputs: Record<string, any> = {
+                geocache_id: geocacheId,
+                images: [{ url: imageUrlForPlugin }],
+                language: (ocrDefaultLanguage || 'auto').toString(),
+            };
+
+            if (pluginName === 'vision_ocr') {
+                inputs.base_url = (ocrLmstudioBaseUrl || 'http://localhost:1234').toString();
+                inputs.model = (ocrLmstudioModel || '').toString();
+            }
+
+            const res = await fetch(`${backendBaseUrl}/api/plugins/${pluginName}/execute`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ inputs }),
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const result = await res.json() as any;
+            const text = extractTextFromPluginResult(result);
+            if (!text.trim()) {
+                console.warn('[GeocacheImagesPanel] OCR returned empty text', {
+                    pluginName,
+                    imageId,
+                    status: result?.status,
+                    summary: result?.summary,
+                    images_analyzed: result?.images_analyzed,
+                    results_count: Array.isArray(result?.results) ? result.results.length : 0,
+                });
+                setSelectedId(imageId);
+                setDetailsMode('fields');
+                return;
+            }
+
+            setSelectedId(imageId);
+            setDetailsMode('fields');
+            const updated = await patchImage(imageId, {
+                ocr_text: text,
+                ocr_language: (ocrDefaultLanguage || 'auto').toString(),
+            });
+            if (updated) {
+                setDraftOcr(updated.ocr_text ?? text);
+            }
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] ocr error', e);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const runDefaultOcrForImage = async (imageId: number): Promise<void> => {
+        const engine = ocrDefaultEngine === 'vision_ocr' ? 'vision_ocr' : 'easyocr_ocr';
+        await runOcrPluginForImage(imageId, engine);
     };
 
     const patchImage = async (imageId: number, payload: Partial<GeocacheImageV2Dto>): Promise<GeocacheImageV2Dto | null> => {
@@ -689,6 +803,21 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Décoder QR (plugin)',
             action: () => { void decodeQrFromImage(contextMenu.imageId); },
+            disabled: isSaving,
+        },
+        {
+            label: `OCR (défaut: ${ocrDefaultEngine === 'vision_ocr' ? 'IA' : 'EasyOCR'})`,
+            action: () => { void runDefaultOcrForImage(contextMenu.imageId); },
+            disabled: isSaving,
+        },
+        {
+            label: 'OCR (EasyOCR)',
+            action: () => { void runOcrPluginForImage(contextMenu.imageId, 'easyocr_ocr'); },
+            disabled: isSaving,
+        },
+        {
+            label: 'OCR (IA - LMStudio)',
+            action: () => { void runOcrPluginForImage(contextMenu.imageId, 'vision_ocr'); },
             disabled: isSaving,
         },
         {

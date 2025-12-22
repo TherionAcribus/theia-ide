@@ -611,8 +611,9 @@ const BatchPluginExecutorComponent: React.FC<{
         const errors = state.results.filter(r => r.status === 'error').length;
         const pending = state.results.filter(r => r.status === 'pending').length;
         const executing = state.results.filter(r => r.status === 'executing').length;
+        const rateLimited = state.results.filter(r => !!(r as any)?.result?.metadata?.site_rate_limited).length;
         
-        return { completed, errors, pending, executing };
+        return { completed, errors, pending, executing, rateLimited };
     }, [state.results]);
 
     const formatGeocachingCoordinates = (lat: number, lon: number): string => {
@@ -974,8 +975,21 @@ const BatchPluginExecutorComponent: React.FC<{
 
                 <div style={{ marginLeft: 'auto', fontSize: '13px', opacity: 0.8 }}>
                     {stats.completed} ✅ • {stats.errors} ❌ • {stats.pending} ⏳
+                    {stats.rateLimited > 0 ? ` • ${stats.rateLimited} ⚠️ limitée(s)` : ''}
                 </div>
             </div>
+
+            {stats.rateLimited > 0 && (
+                <div style={{
+                    fontSize: '12px',
+                    padding: '8px 10px',
+                    borderRadius: '4px',
+                    border: '1px solid rgba(241, 196, 15, 0.35)',
+                    background: 'rgba(241, 196, 15, 0.08)'
+                }}>
+                    ⚠️ <strong>solvedjigidi.com semble saturé</strong> pour {stats.rateLimited} géocache(s). Essaie plus tard ou relance en mode séquentiel.
+                </div>
+            )}
 
             {/* Barre de progression */}
             {state.isExecuting && (
@@ -1081,6 +1095,9 @@ const BatchPluginExecutorComponent: React.FC<{
                         const originalGeocache = originalGeocacheById.get(result.geocacheId);
                         const originalCoordsRaw = originalGeocache?.original_coordinates_raw
                             || originalGeocache?.coordinates?.coordinates_raw;
+                        const pluginSummary = (result as any)?.result?.summary as string | undefined;
+                        const siteRateLimited = !!(result as any)?.result?.metadata?.site_rate_limited;
+                        const siteRetryAfterSeconds = (result as any)?.result?.metadata?.site_retry_after_seconds as number | undefined;
 
                         return (
                             <div 
@@ -1116,6 +1133,26 @@ const BatchPluginExecutorComponent: React.FC<{
                                         {originalCoordsRaw && (
                                             <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px', padding: '4px 8px', background: 'rgba(52, 152, 219, 0.06)', borderRadius: '3px', border: '1px solid rgba(52, 152, 219, 0.3)' }}>
                                                 📌 <strong>Coordonnées d'origine:</strong> {originalCoordsRaw}
+                                            </div>
+                                        )}
+
+                                        {siteRateLimited && (
+                                            <div style={{
+                                                fontSize: '12px',
+                                                marginTop: '6px',
+                                                padding: '6px 8px',
+                                                background: 'rgba(241, 196, 15, 0.08)',
+                                                borderRadius: '3px',
+                                                border: '1px solid rgba(241, 196, 15, 0.35)'
+                                            }}>
+                                                ⚠️ <strong>Site saturé</strong> — réessayer plus tard
+                                                {typeof siteRetryAfterSeconds === 'number' && siteRetryAfterSeconds > 0 ? ` (~${siteRetryAfterSeconds}s)` : ''}.
+                                            </div>
+                                        )}
+
+                                        {!siteRateLimited && pluginSummary && (
+                                            <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '6px' }}>
+                                                {pluginSummary}
                                             </div>
                                         )}
 

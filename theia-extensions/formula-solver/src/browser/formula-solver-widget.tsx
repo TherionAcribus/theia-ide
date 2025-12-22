@@ -62,6 +62,8 @@ export class FormulaSolverWidget extends ReactWidget {
         coordinates?: any;
     }> = [];
 
+    protected detectionRequestId: number = 0;
+
     @postConstruct()
     protected init(): void {
         this.id = FormulaSolverWidget.ID;
@@ -116,7 +118,24 @@ export class FormulaSolverWidget extends ReactWidget {
         console.log(`[FORMULA-SOLVER] Chargement depuis geocache ${geocacheId}`);
         
         try {
-            this.updateState({ loading: true, error: undefined });
+            this.detectionRequestId++;
+            this.updateState({
+                loading: true,
+                error: undefined,
+                currentStep: 'detect',
+                geocacheId: undefined,
+                gcCode: undefined,
+                text: '',
+                originLat: undefined,
+                originLon: undefined,
+                formulas: [],
+                selectedFormula: undefined,
+                questions: [],
+                values: new Map<string, LetterValue>(),
+                result: undefined
+            });
+            this.bruteForceMode = false;
+            this.bruteForceResults = [];
             
             // Récupérer les données de la geocache
             const geocache = await this.formulaSolverService.getGeocache(geocacheId);
@@ -135,6 +154,8 @@ export class FormulaSolverWidget extends ReactWidget {
             // Détecter automatiquement les formules
             if (geocache.description) {
                 await this.detectFormulasFromText(geocache.description);
+            } else {
+                this.updateState({ loading: false });
             }
             
             this.messageService.info(`Formula Solver chargé pour ${geocache.gc_code} - ${geocache.name}`);
@@ -379,30 +400,54 @@ export class FormulaSolverWidget extends ReactWidget {
             return;
         }
 
+        const requestId = ++this.detectionRequestId;
+        this.bruteForceMode = false;
+        this.bruteForceResults = [];
+
         // Router vers la bonne méthode selon le toggle
         console.log(`[FORMULA-SOLVER] 🎯 Méthode de résolution sélectionnée: ${this.resolutionMethod.toUpperCase()}`);
 
         if (this.resolutionMethod === 'ai') {
             console.log('[FORMULA-SOLVER] 🤖 Appel de la résolution IA');
-            await this.solveWithAI(text);
+            await this.solveWithAI(text, requestId);
         } else {
             console.log('[FORMULA-SOLVER] ⚙️ Appel de la résolution algorithmique');
-            await this.detectFormulasWithAlgorithm(text);
+            await this.detectFormulasWithAlgorithm(text, requestId);
         }
     }
 
     /**
      * Détecte les formules avec l'algorithme (méthode par défaut)
      */
-    protected async detectFormulasWithAlgorithm(text: string): Promise<void> {
-        this.updateState({ loading: true, error: undefined });
+    protected async detectFormulasWithAlgorithm(text: string, requestId: number): Promise<void> {
+        this.updateState({
+            loading: true,
+            error: undefined,
+            formulas: [],
+            selectedFormula: undefined,
+            questions: [],
+            values: new Map<string, LetterValue>(),
+            result: undefined
+        });
 
         try {
             const formulas = await this.formulaSolverService.detectFormulas({ text });
+
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
             
             if (formulas.length === 0) {
                 this.messageService.info('Aucune formule détectée dans le texte');
-                this.updateState({ loading: false, formulas: [] });
+                this.updateState({
+                    loading: false,
+                    formulas: [],
+                    selectedFormula: undefined,
+                    currentStep: 'detect',
+                    questions: [],
+                    values: new Map<string, LetterValue>(),
+                    result: undefined
+                });
             } else {
                 const enrichedFormulas = this.annotateFormulas(formulas);
                 this.messageService.info(`${formulas.length} formule(s) détectée(s)`);
@@ -410,10 +455,16 @@ export class FormulaSolverWidget extends ReactWidget {
                     loading: false,
                     formulas: enrichedFormulas,
                     selectedFormula: enrichedFormulas[0],
-                    currentStep: 'questions'
+                    currentStep: 'questions',
+                    questions: [],
+                    values: new Map<string, LetterValue>(),
+                    result: undefined
                 });
             }
         } catch (error) {
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur : ${message}`);
             this.updateState({ loading: false, error: message });
@@ -423,7 +474,7 @@ export class FormulaSolverWidget extends ReactWidget {
     /**
      * Résout une formule avec l'IA
      */
-    protected async solveWithAI(text: string): Promise<void> {
+    protected async solveWithAI(text: string, requestId: number): Promise<void> {
         if (!this.formulaSolverAIService) {
             this.messageService.error('Service IA non disponible. Vérifiez la configuration.');
             this.resolutionMethod = 'algorithm';
@@ -431,7 +482,15 @@ export class FormulaSolverWidget extends ReactWidget {
             return;
         }
 
-        this.updateState({ loading: true, error: undefined });
+        this.updateState({
+            loading: true,
+            error: undefined,
+            formulas: [],
+            selectedFormula: undefined,
+            questions: [],
+            values: new Map<string, LetterValue>(),
+            result: undefined
+        });
         this.messageService.info('🤖 Résolution par IA en cours...');
 
         try {
@@ -443,6 +502,10 @@ export class FormulaSolverWidget extends ReactWidget {
 
             // Appeler l'agent IA
             const result = await this.formulaSolverAIService.solveWithAI(text, this.state.geocacheId);
+
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
 
             console.log('[FORMULA-SOLVER] Résultat IA:', result);
 
@@ -457,7 +520,10 @@ export class FormulaSolverWidget extends ReactWidget {
                 this.updateState({
                     formulas: enrichedFormulas,
                     selectedFormula: enrichedFormulas[0],
-                    currentStep: 'questions'
+                    currentStep: 'questions',
+                    questions: [],
+                    values: new Map<string, LetterValue>(),
+                    result: undefined
                 });
             }
 
@@ -522,6 +588,9 @@ export class FormulaSolverWidget extends ReactWidget {
             this.updateState({ loading: false });
 
         } catch (error) {
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             console.error('[FORMULA-SOLVER] Erreur résolution IA:', error);
             this.messageService.error(`Erreur IA : ${message}`);

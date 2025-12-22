@@ -31,7 +31,7 @@ export default new ContainerModule(bind => {
     bind(FormulaSolverLLMService).toSelf().inSingletonScope();
     
     // Widget
-    bind(FormulaSolverWidget).toSelf();
+    bind(FormulaSolverWidget).toSelf().inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: FormulaSolverWidget.ID,
         createWidget: () => ctx.container.get<FormulaSolverWidget>(FormulaSolverWidget)

@@ -816,7 +816,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         try {
             const res = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}/unstore`, {
                 method: 'POST',
-                credentials: 'include'
+                credentials: 'include',
             });
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}`);
@@ -825,6 +825,29 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             setImages(prev => prev.map(i => (i.id === updated.id ? updated : i)));
         } catch (e) {
             console.error('[GeocacheImagesPanel] unstore image error', e);
+            messages.error(`Impossible de supprimer le stockage local : ${String(e)}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const deleteImageById = async (imageId: number): Promise<void> => {
+        setIsSaving(true);
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}`, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            setImages(prev => prev.filter(i => i.id !== imageId));
+            setSelectedId(prev => (prev === imageId ? null : prev));
+            await loadImages();
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] delete image error', e);
+            messages.error(`Impossible de supprimer l'image : ${String(e)}`);
         } finally {
             setIsSaving(false);
         }
@@ -834,22 +857,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         if (!selected) {
             return;
         }
-        setIsSaving(true);
-        try {
-            const res = await fetch(`${backendBaseUrl}/api/geocache-images/${selected.id}/store`, {
-                method: 'POST',
-                credentials: 'include'
-            });
-            if (!res.ok) {
-                throw new Error(`HTTP ${res.status}`);
-            }
-            const updated = (await res.json()) as GeocacheImageV2Dto;
-            setImages(prev => prev.map(i => (i.id === updated.id ? updated : i)));
-        } catch (e) {
-            console.error('[GeocacheImagesPanel] store image error', e);
-        } finally {
-            setIsSaving(false);
-        }
+        await storeImageById(selected.id);
     };
 
     const storeAll = async () => {
@@ -984,6 +992,8 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const showDetails = detailsMode !== 'hidden' && Boolean(selectedImage);
     const showPreview = detailsMode === 'preview' && Boolean(selectedImage);
     const isContextMenuOcrBusy = contextMenu ? Boolean(ocrInProgressById[contextMenu.imageId]) : false;
+    const contextMenuImage = contextMenu ? (visibleImages.find(i => i.id === contextMenu.imageId) ?? null) : null;
+    const isContextMenuUploadedImage = Boolean((contextMenuImage?.source_url || '').startsWith('geoapp-upload://'));
 
     const contextMenuItems: ContextMenuItem[] = contextMenu ? [
         {
@@ -999,7 +1009,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Télécharger l\'image',
             action: () => { void downloadImageById(contextMenu.imageId); },
-            disabled: isSaving || !Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
+            disabled: isSaving || !Boolean(contextMenuImage?.stored),
         },
         {
             separator: true,
@@ -1035,21 +1045,27 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Stocker localement',
             action: () => { void storeImageById(contextMenu.imageId); },
-            disabled: isSaving || Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
+            disabled: isSaving || Boolean(contextMenuImage?.stored),
         },
-        {
+        ...(!isContextMenuUploadedImage ? [{
             label: 'Supprimer stockage local',
             action: () => { void unstoreImageById(contextMenu.imageId); },
-            disabled: isSaving || !Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
+            disabled: isSaving || !Boolean(contextMenuImage?.stored),
             danger: true,
-        },
+        }] : []),
+        ...(isContextMenuUploadedImage ? [{
+            label: 'Supprimer l\'image',
+            action: () => { void deleteImageById(contextMenu.imageId); },
+            disabled: isSaving,
+            danger: true,
+        }] : []),
         {
             separator: true,
         },
         {
             label: 'Copier QR payload',
             action: () => { void copyQrPayload(contextMenu.imageId); },
-            disabled: !Boolean((visibleImages.find(i => i.id === contextMenu.imageId)?.qr_payload || '').trim()),
+            disabled: !Boolean((contextMenuImage?.qr_payload || '').trim()),
         },
     ] : [];
 
@@ -1059,7 +1075,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 ref={uploadInputRef}
                 type='file'
                 accept='image/png,image/jpeg,image/webp'
-                className='hidden'
+                hidden
                 onChange={(e) => {
                     const file = e.currentTarget.files?.[0];
                     e.currentTarget.value = '';

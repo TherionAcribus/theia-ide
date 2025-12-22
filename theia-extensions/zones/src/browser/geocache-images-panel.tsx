@@ -73,6 +73,20 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const [selectedId, setSelectedId] = React.useState<number | null>(null);
     const [isSaving, setIsSaving] = React.useState(false);
 
+    const [ocrInProgressById, setOcrInProgressById] = React.useState<Record<number, true>>({});
+
+    const setOcrInProgress = React.useCallback((imageId: number, inProgress: boolean): void => {
+        setOcrInProgressById(prev => {
+            const next = { ...prev };
+            if (inProgress) {
+                next[imageId] = true;
+            } else {
+                delete next[imageId];
+            }
+            return next;
+        });
+    }, []);
+
     const [hiddenDomainsDraft, setHiddenDomainsDraft] = React.useState(hiddenDomainsText ?? '');
     const [isSavingHiddenDomains, setIsSavingHiddenDomains] = React.useState(false);
 
@@ -371,6 +385,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
+        setOcrInProgress(imageId, true);
         setIsSaving(true);
         try {
             let imageUrlForFetch = resolveImageUrl(img.url);
@@ -457,6 +472,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             console.error('[GeocacheImagesPanel] cloud ocr error', e);
             messages.error(`OCR IA: erreur (${String(e)})`);
         } finally {
+            setOcrInProgress(imageId, false);
             setIsSaving(false);
         }
     };
@@ -467,6 +483,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
+        setOcrInProgress(imageId, true);
         setIsSaving(true);
         try {
             let imageUrlForPlugin = resolveImageUrl(img.url);
@@ -540,6 +557,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         } catch (e) {
             console.error('[GeocacheImagesPanel] ocr error', e);
         } finally {
+            setOcrInProgress(imageId, false);
             setIsSaving(false);
         }
     };
@@ -914,6 +932,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const selectedImage = selected;
     const showDetails = detailsMode !== 'hidden' && Boolean(selectedImage);
     const showPreview = detailsMode === 'preview' && Boolean(selectedImage);
+    const isContextMenuOcrBusy = contextMenu ? Boolean(ocrInProgressById[contextMenu.imageId]) : false;
 
     const contextMenuItems: ContextMenuItem[] = contextMenu ? [
         {
@@ -942,22 +961,22 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: `OCR (défaut: ${ocrDefaultEngine === 'vision_ocr' ? 'IA' : 'EasyOCR'})`,
             action: () => { void runDefaultOcrForImage(contextMenu.imageId); },
-            disabled: isSaving,
+            disabled: isSaving || isContextMenuOcrBusy,
         },
         {
             label: 'OCR (EasyOCR)',
             action: () => { void runOcrPluginForImage(contextMenu.imageId, 'easyocr_ocr'); },
-            disabled: isSaving,
+            disabled: isSaving || isContextMenuOcrBusy,
         },
         {
             label: 'OCR (IA - LMStudio)',
             action: () => { void runOcrPluginForImage(contextMenu.imageId, 'vision_ocr'); },
-            disabled: isSaving,
+            disabled: isSaving || isContextMenuOcrBusy,
         },
         {
             label: 'OCR (IA - Cloud)',
             action: () => { void runCloudOcrForImage(contextMenu.imageId); },
-            disabled: isSaving,
+            disabled: isSaving || isContextMenuOcrBusy,
         },
         {
             separator: true,
@@ -1072,13 +1091,18 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 <div className={showDetails ? 'w-64 shrink-0' : 'min-w-0 flex-1'}>
                     <div className='flex gap-2 overflow-x-auto pb-2'>
                         {visibleImages.map(img => (
+                            (() => {
+                                const isOcrBusy = Boolean(ocrInProgressById[img.id]);
+                                return (
                             <button
                                 key={img.id}
                                 type='button'
-                                className={`shrink-0 rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
+                                className={`relative shrink-0 rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
                                 onClick={() => handleThumbnailClick(img.id)}
                                 onContextMenu={(e) => openThumbnailContextMenu(e, img.id)}
                                 title={img.source_url}
+                                disabled={isSaving || isOcrBusy}
+                                aria-busy={isOcrBusy}
                             >
                                 <img
                                     className={thumbnailImageClassName}
@@ -1087,8 +1111,20 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                                     width={thumbnailDimensions.width}
                                     height={thumbnailDimensions.height}
                                 />
+
+                                {isOcrBusy && (
+                                    <div className='absolute inset-0 flex items-center justify-center rounded bg-black/40'>
+                                        <div className='flex flex-col items-center gap-1'>
+                                            <div className='h-6 w-6 animate-spin rounded-full border-2 border-white/70 border-t-transparent' />
+                                            <div className='text-[10px] font-medium text-white/90'>OCR…</div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {renderBadges(img)}
                             </button>
+                                );
+                            })()
                         ))}
                     </div>
                 </div>

@@ -6,6 +6,7 @@ import { ApplicationShell, ConfirmDialog, StatefulWidget } from '@theia/core/lib
 import { CommandService } from '@theia/core';
 import { ChatAgent, ChatAgentLocation, ChatAgentService, ChatService, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
 import { DEFAULT_CHAT_AGENT_PREF } from '@theia/ai-chat/lib/common/ai-chat-preferences';
+import { LanguageModelRegistry, LanguageModelService } from '@theia/ai-core';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
@@ -957,7 +958,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         @inject(CommandService) protected readonly commandService: CommandService,
         @inject(ChatService) protected readonly chatService: ChatService,
         @inject(ChatAgentService) protected readonly chatAgentService: ChatAgentService,
-        @inject(PreferenceService) protected readonly preferenceService: PreferenceService
+        @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
+        @inject(LanguageModelRegistry) protected readonly languageModelRegistry: LanguageModelRegistry,
+        @inject(LanguageModelService) protected readonly languageModelService: LanguageModelService
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
@@ -2298,6 +2301,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 ocrDefaultLanguage={this.getOcrDefaultLanguage()}
                                 ocrLmstudioBaseUrl={this.getOcrLmstudioBaseUrl()}
                                 ocrLmstudioModel={this.getOcrLmstudioModel()}
+                                messages={this.messages}
+                                languageModelRegistry={this.languageModelRegistry}
+                                languageModelService={this.languageModelService}
                             />
                         ) : undefined}
 

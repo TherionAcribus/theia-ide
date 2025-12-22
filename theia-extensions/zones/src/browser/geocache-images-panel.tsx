@@ -3,6 +3,8 @@
  */
 
 import * as React from 'react';
+import { MessageService } from '@theia/core';
+import { LanguageModelRegistry, LanguageModelService, UserRequest, getJsonOfResponse, getTextOfResponse, isLanguageModelParsedResponse } from '@theia/ai-core';
 import { ContextMenu, ContextMenuItem } from './context-menu';
 
 export type GeocacheImageV2Dto = {
@@ -32,6 +34,9 @@ type ThumbnailContextMenuState = {
 export interface GeocacheImagesPanelProps {
     backendBaseUrl: string;
     geocacheId: number;
+    messages: MessageService;
+    languageModelRegistry: LanguageModelRegistry;
+    languageModelService: LanguageModelService;
     storageDefaultMode?: 'never' | 'prompt' | 'always';
     onConfirmStoreAll?: (options: { geocacheId: number; pendingCount: number }) => Promise<boolean>;
     thumbnailSize?: GalleryThumbnailSize;
@@ -48,6 +53,9 @@ export interface GeocacheImagesPanelProps {
 export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     backendBaseUrl,
     geocacheId,
+    messages,
+    languageModelRegistry,
+    languageModelService,
     storageDefaultMode = 'prompt',
     onConfirmStoreAll,
     thumbnailSize = 'small',
@@ -327,6 +335,132 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         return legacy;
     };
 
+    const stripThinkingBlocks = (value: string): string => {
+        const raw = (value ?? '').toString();
+        if (!raw.trim()) {
+            return '';
+        }
+        return raw
+            .replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '')
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            .replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]/gi, '')
+            .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
+            .trim();
+    };
+
+    const blobToBase64 = async (blob: Blob): Promise<string> => {
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(new Error('Failed to read image blob'));
+            reader.onload = () => {
+                const val = (reader.result ?? '').toString();
+                const commaIdx = val.indexOf(',');
+                if (commaIdx >= 0) {
+                    resolve(val.slice(commaIdx + 1));
+                } else {
+                    resolve(val);
+                }
+            };
+            reader.readAsDataURL(blob);
+        });
+    };
+
+    const runCloudOcrForImage = async (imageId: number): Promise<void> => {
+        const img = visibleImages.find(i => i.id === imageId);
+        if (!img) {
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            let imageUrlForFetch = resolveImageUrl(img.url);
+
+            if (!img.stored) {
+                try {
+                    const storeRes = await fetch(`${backendBaseUrl}/api/geocache-images/${imageId}/store`, {
+                        method: 'POST',
+                        credentials: 'include',
+                    });
+                    if (storeRes.ok) {
+                        const storedImage = (await storeRes.json()) as GeocacheImageV2Dto;
+                        imageUrlForFetch = resolveImageUrl(storedImage.url);
+                    } else {
+                        imageUrlForFetch = resolveImageUrl((img.source_url || img.url) as string);
+                    }
+                } catch {
+                    imageUrlForFetch = resolveImageUrl((img.source_url || img.url) as string);
+                }
+            }
+
+            const imageRes = await fetch(imageUrlForFetch, { credentials: 'include' });
+            if (!imageRes.ok) {
+                throw new Error(`HTTP ${imageRes.status}`);
+            }
+
+            const blob = await imageRes.blob();
+            const mimeType = blob.type || (imageRes.headers.get('content-type') || '').split(';')[0].trim() || 'image/png';
+            const base64data = await blobToBase64(blob);
+
+            const languageModel = await languageModelRegistry.selectLanguageModel({
+                agent: 'geoapp-ocr',
+                purpose: 'vision-ocr',
+                identifier: 'default/universal'
+            });
+
+            if (!languageModel) {
+                messages.error('Aucun modèle IA n\'est configuré pour l\'OCR (vérifie la configuration IA de Theia)');
+                return;
+            }
+
+            const prompt = 'Transcris précisément le texte visible sur cette image sans interprétation ni correction orthographique. Respecte les retours à la ligne.';
+            const request: UserRequest = {
+                messages: [
+                    { actor: 'user', type: 'image', image: { base64data, mimeType } },
+                    { actor: 'user', type: 'text', text: prompt },
+                ],
+                agentId: 'geoapp-ocr',
+                requestId: `geoapp-ocr-${Date.now()}`,
+                sessionId: `geoapp-ocr-session-${Date.now()}`,
+            };
+
+            const response = await languageModelService.sendRequest(languageModel, request);
+            let text = '';
+            if (isLanguageModelParsedResponse(response)) {
+                text = JSON.stringify(response.parsed);
+            } else {
+                try {
+                    text = await getTextOfResponse(response);
+                } catch {
+                    const jsonResponse = await getJsonOfResponse(response) as any;
+                    text = typeof jsonResponse === 'string' ? jsonResponse : String(jsonResponse);
+                }
+            }
+
+            text = stripThinkingBlocks((text || '').toString());
+            if (!text) {
+                messages.warn('OCR IA: réponse vide');
+                setSelectedId(imageId);
+                setDetailsMode('fields');
+                return;
+            }
+
+            setSelectedId(imageId);
+            setDetailsMode('fields');
+            const updated = await patchImage(imageId, {
+                ocr_text: text,
+                ocr_language: (ocrDefaultLanguage || 'auto').toString(),
+            });
+            if (updated) {
+                setDraftOcr(updated.ocr_text ?? text);
+            }
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] cloud ocr error', e);
+            messages.error(`OCR IA: erreur (${String(e)})`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const runOcrPluginForImage = async (imageId: number, pluginName: 'easyocr_ocr' | 'vision_ocr'): Promise<void> => {
         const img = visibleImages.find(i => i.id === imageId);
         if (!img) {
@@ -379,7 +513,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             }
 
             const result = await res.json() as any;
-            const text = extractTextFromPluginResult(result);
+            const text = stripThinkingBlocks(extractTextFromPluginResult(result));
             if (!text.trim()) {
                 console.warn('[GeocacheImagesPanel] OCR returned empty text', {
                     pluginName,
@@ -818,6 +952,11 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'OCR (IA - LMStudio)',
             action: () => { void runOcrPluginForImage(contextMenu.imageId, 'vision_ocr'); },
+            disabled: isSaving,
+        },
+        {
+            label: 'OCR (IA - Cloud)',
+            action: () => { void runCloudOcrForImage(contextMenu.imageId); },
             disabled: isSaving,
         },
         {

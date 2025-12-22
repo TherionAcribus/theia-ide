@@ -94,6 +94,8 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
 
     const [contextMenu, setContextMenu] = React.useState<ThumbnailContextMenuState | null>(null);
 
+    const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
+
     const [effectiveThumbnailSize, setEffectiveThumbnailSize] = React.useState<GalleryThumbnailSize>(thumbnailSize);
 
     const didApplyDefaultStorageRef = React.useRef<Record<number, boolean>>({});
@@ -306,6 +308,59 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             y: e.clientY,
             imageId,
         });
+    };
+
+    const uploadNewImage = async (file: File): Promise<void> => {
+        if (!file) {
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            const formData = new FormData();
+            formData.append('image_file', file);
+
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/images/upload`, {
+                method: 'POST',
+                credentials: 'include',
+                body: formData,
+            });
+
+            if (!res.ok) {
+                let errorMsg = `HTTP ${res.status}`;
+                try {
+                    const errorData = await res.json() as any;
+                    if (errorData?.error) {
+                        errorMsg = String(errorData.error);
+                    }
+                } catch {
+                    try {
+                        const txt = await res.text();
+                        if (txt) {
+                            errorMsg = txt;
+                        }
+                    } catch {
+                    }
+                }
+                throw new Error(errorMsg);
+            }
+
+            const created = (await res.json()) as GeocacheImageV2Dto;
+
+            setSelectedId(created.id);
+            setDetailsMode('fields');
+            await loadImages();
+            messages.info('Image ajoutée');
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] upload image error', e);
+            messages.error(`Impossible d'ajouter l'image (${String(e)})`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const triggerUploadDialog = (): void => {
+        uploadInputRef.current?.click();
     };
 
     const duplicateImageById = async (imageId: number): Promise<void> => {
@@ -925,10 +980,6 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         return <div className='opacity-70'>Chargement des images…</div>;
     }
 
-    if (!visibleImages.length) {
-        return <div className='opacity-70 italic'>Aucune image</div>;
-    }
-
     const selectedImage = selected;
     const showDetails = detailsMode !== 'hidden' && Boolean(selectedImage);
     const showPreview = detailsMode === 'preview' && Boolean(selectedImage);
@@ -1004,9 +1055,27 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
 
     return (
         <div className='grid gap-3 relative'>
+            <input
+                ref={uploadInputRef}
+                type='file'
+                accept='image/png,image/jpeg,image/webp'
+                className='hidden'
+                onChange={(e) => {
+                    const file = e.currentTarget.files?.[0];
+                    e.currentTarget.value = '';
+                    if (file) {
+                        void uploadNewImage(file);
+                    }
+                }}
+            />
+
             <div className='flex items-center justify-between'>
                 <div className='font-semibold'>Images</div>
                 <div className='flex items-center gap-2'>
+                    <button className='theia-button secondary' onClick={triggerUploadDialog} disabled={isSaving} type='button'>
+                        + Ajouter image…
+                    </button>
+
                     <div className='flex items-center gap-1'>
                         <button
                             className={sizeButtonClassName('small')}
@@ -1037,7 +1106,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                         </button>
                     </div>
 
-                    <button className='theia-button secondary' onClick={storeAll} disabled={isSaving}>
+                    <button className='theia-button secondary' onClick={storeAll} disabled={isSaving} type='button'>
                         Stocker tout
                     </button>
                 </div>
@@ -1087,64 +1156,67 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 />
             )}
 
-            <div className='flex gap-3'>
-                <div className={showDetails ? 'w-64 shrink-0' : 'min-w-0 flex-1'}>
-                    <div className='flex gap-2 overflow-x-auto pb-2'>
-                        {visibleImages.map(img => (
-                            (() => {
-                                const isOcrBusy = Boolean(ocrInProgressById[img.id]);
-                                return (
-                            <button
-                                key={img.id}
-                                type='button'
-                                className={`relative shrink-0 rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
-                                onClick={() => handleThumbnailClick(img.id)}
-                                onContextMenu={(e) => openThumbnailContextMenu(e, img.id)}
-                                title={img.source_url}
-                                disabled={isSaving || isOcrBusy}
-                                aria-busy={isOcrBusy}
-                            >
-                                <img
-                                    className={thumbnailImageClassName}
-                                    src={resolveImageUrl(img.url)}
-                                    alt=''
-                                    width={thumbnailDimensions.width}
-                                    height={thumbnailDimensions.height}
-                                />
+            {!visibleImages.length ? (
+                <div className='opacity-70 italic'>Aucune image</div>
+            ) : (
+                <div className='flex gap-3'>
+                    <div className={showDetails ? 'w-64 shrink-0' : 'min-w-0 flex-1'}>
+                        <div className='flex gap-2 overflow-x-auto pb-2'>
+                            {visibleImages.map(img => (
+                                (() => {
+                                    const isOcrBusy = Boolean(ocrInProgressById[img.id]);
+                                    return (
+                                        <button
+                                            key={img.id}
+                                            type='button'
+                                            className={`relative shrink-0 rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
+                                            onClick={() => handleThumbnailClick(img.id)}
+                                            onContextMenu={(e) => openThumbnailContextMenu(e, img.id)}
+                                            title={img.source_url}
+                                            disabled={isSaving || isOcrBusy}
+                                            aria-busy={isOcrBusy}
+                                        >
+                                            <img
+                                                className={thumbnailImageClassName}
+                                                src={resolveImageUrl(img.url)}
+                                                alt=''
+                                                width={thumbnailDimensions.width}
+                                                height={thumbnailDimensions.height}
+                                            />
 
-                                {isOcrBusy && (
-                                    <div className='absolute inset-0 flex items-center justify-center rounded bg-black/40'>
-                                        <div className='flex flex-col items-center gap-1'>
-                                            <div className='h-6 w-6 animate-spin rounded-full border-2 border-white/70 border-t-transparent' />
-                                            <div className='text-[10px] font-medium text-white/90'>OCR…</div>
-                                        </div>
-                                    </div>
-                                )}
+                                            {isOcrBusy && (
+                                                <div className='absolute inset-0 flex items-center justify-center rounded bg-black/40'>
+                                                    <div className='flex flex-col items-center gap-1'>
+                                                        <div className='h-6 w-6 animate-spin rounded-full border-2 border-white/70 border-t-transparent' />
+                                                        <div className='text-[10px] font-medium text-white/90'>OCR…</div>
+                                                    </div>
+                                                </div>
+                                            )}
 
-                                {renderBadges(img)}
-                            </button>
-                                );
-                            })()
-                        ))}
-                    </div>
-                </div>
-
-                {showDetails && selectedImage && (
-                    <div className='min-w-0 flex-1'>
-                        <div className='grid gap-3 rounded border border-[var(--theia-panel-border)] bg-[var(--theia-editor-background)] p-3'>
-                            <div className='flex items-start justify-between gap-3'>
-                                <div className='min-w-0'>
-                                    <div className='truncate font-semibold'>Image #{selectedImage.id}</div>
-                                    <div className='truncate text-xs opacity-70'>{selectedImage.source_url}</div>
-                                </div>
-                                <div className='flex gap-2'>
-                                    {!selectedImage.stored && (
-                                        <button className='theia-button secondary' onClick={storeSelected} disabled={isSaving}>
-                                            Stocker
+                                            {renderBadges(img)}
                                         </button>
-                                    )}
+                                    );
+                                })()
+                            ))}
+                        </div>
+                    </div>
+
+                    {showDetails && selectedImage && (
+                        <div className='min-w-0 flex-1'>
+                            <div className='grid gap-3 rounded border border-[var(--theia-panel-border)] bg-[var(--theia-editor-background)] p-3'>
+                                <div className='flex items-start justify-between gap-3'>
+                                    <div className='min-w-0'>
+                                        <div className='truncate font-semibold'>Image #{selectedImage.id}</div>
+                                        <div className='truncate text-xs opacity-70'>{selectedImage.source_url}</div>
+                                    </div>
+                                    <div className='flex gap-2'>
+                                        {!selectedImage.stored && (
+                                            <button className='theia-button secondary' onClick={storeSelected} disabled={isSaving} type='button'>
+                                                Stocker
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
 
                             {showPreview && (
                                 <img className='max-h-72 w-full rounded object-contain bg-black/20' src={resolveImageUrl(selectedImage.url)} alt='' />
@@ -1191,15 +1263,16 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                                 )}
                             </div>
 
-                            <div className='flex justify-end'>
-                                <button className='theia-button' onClick={saveMetadata} disabled={isSaving}>
-                                    Sauvegarder
-                                </button>
+                                <div className='flex justify-end'>
+                                    <button className='theia-button' onClick={saveMetadata} disabled={isSaving} type='button'>
+                                        Sauvegarder
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

@@ -50,10 +50,15 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected baseImageObjectUrl: string | null = null;
     protected baseImageObjectUrlPendingRevoke: string | null = null;
 
-    protected tool: 'select' | 'draw' | 'text' | 'image' | 'shapes' = 'select';
+    protected tool: 'select' | 'draw' | 'text' | 'image' | 'shapes' | 'snippet' = 'select';
     protected isRestoringHistory = false;
     protected undoStack: string[] = [];
     protected redoStack: string[] = [];
+
+    protected snippetSelectionRect: any | null = null;
+    protected snippetIsDragging = false;
+    protected snippetStartX = 0;
+    protected snippetStartY = 0;
 
     protected textFill = '#ffffff';
     protected textFontSize = 28;
@@ -347,6 +352,10 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             this.fabricCanvas.on('selection:updated', this.onSelectionChanged);
             this.fabricCanvas.on('selection:cleared', this.onSelectionChanged);
 
+            this.fabricCanvas.on('mouse:down', this.onCanvasMouseDown);
+            this.fabricCanvas.on('mouse:move', this.onCanvasMouseMove);
+            this.fabricCanvas.on('mouse:up', this.onCanvasMouseUp);
+
             this.applyTool('select');
         }
 
@@ -355,7 +364,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
     }
 
-    protected applyTool(tool: 'select' | 'draw' | 'text' | 'image' | 'shapes'): void {
+    protected applyTool(tool: 'select' | 'draw' | 'text' | 'image' | 'shapes' | 'snippet'): void {
         this.tool = tool;
         if (!this.fabricCanvas) {
             this.update();
@@ -370,6 +379,202 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
 
         this.update();
+    }
+
+    protected clearSnippetSelection(): void {
+        if (!this.fabricCanvas) {
+            this.snippetSelectionRect = null;
+            this.update();
+            return;
+        }
+        if (this.snippetSelectionRect) {
+            try {
+                this.fabricCanvas.remove(this.snippetSelectionRect);
+            } catch {
+                // ignore
+            }
+        }
+        this.snippetSelectionRect = null;
+        this.fabricCanvas.discardActiveObject?.();
+        this.fabricCanvas.requestRenderAll?.();
+        this.update();
+    }
+
+    protected readonly onCanvasMouseDown = (opt: any): void => {
+        if (!this.fabricCanvas) {
+            return;
+        }
+        if (this.tool !== 'snippet') {
+            return;
+        }
+
+        const target = opt?.target;
+        if (target && target === this.snippetSelectionRect) {
+            return;
+        }
+
+        const p = this.fabricCanvas.getPointer(opt.e);
+        this.snippetIsDragging = true;
+        this.snippetStartX = p.x;
+        this.snippetStartY = p.y;
+
+        if (this.snippetSelectionRect) {
+            try {
+                this.fabricCanvas.remove(this.snippetSelectionRect);
+            } catch {
+                // ignore
+            }
+            this.snippetSelectionRect = null;
+        }
+
+        const rect = new fabric.Rect({
+            left: p.x,
+            top: p.y,
+            originX: 'left',
+            originY: 'top',
+            width: 1,
+            height: 1,
+            fill: 'rgba(0,0,0,0.05)',
+            stroke: '#f97316',
+            strokeWidth: 2,
+            strokeDashArray: [6, 4],
+            selectable: true,
+            evented: true,
+            hasRotatingPoint: false,
+            lockRotation: true,
+            transparentCorners: false,
+        } as any);
+        (rect as any).excludeFromExport = true;
+
+        this.snippetSelectionRect = rect;
+        this.fabricCanvas.add(rect);
+        this.fabricCanvas.setActiveObject?.(rect);
+        this.fabricCanvas.requestRenderAll?.();
+        this.update();
+    };
+
+    protected readonly onCanvasMouseMove = (opt: any): void => {
+        if (!this.fabricCanvas || !this.snippetIsDragging || this.tool !== 'snippet' || !this.snippetSelectionRect) {
+            return;
+        }
+        const p = this.fabricCanvas.getPointer(opt.e);
+
+        const left = Math.min(this.snippetStartX, p.x);
+        const top = Math.min(this.snippetStartY, p.y);
+        const width = Math.max(1, Math.abs(p.x - this.snippetStartX));
+        const height = Math.max(1, Math.abs(p.y - this.snippetStartY));
+
+        this.snippetSelectionRect.set({ left, top, width, height });
+        this.snippetSelectionRect.setCoords?.();
+        this.fabricCanvas.requestRenderAll?.();
+    };
+
+    protected readonly onCanvasMouseUp = (): void => {
+        if (this.tool !== 'snippet') {
+            return;
+        }
+        this.snippetIsDragging = false;
+    };
+
+    protected getSelectionRectForSnippet(): any | null {
+        if (!this.fabricCanvas) {
+            return null;
+        }
+        const active = this.fabricCanvas.getActiveObject?.();
+        if (active && active === this.snippetSelectionRect) {
+            return active;
+        }
+        return this.snippetSelectionRect;
+    }
+
+    protected getBoundingRectWithoutViewport(obj: any): { left: number; top: number; width: number; height: number } | null {
+        if (!this.fabricCanvas || !obj || typeof obj.getBoundingRect !== 'function') {
+            return null;
+        }
+        const canvas = this.fabricCanvas;
+        const prevVpt = Array.isArray(canvas.viewportTransform) ? [...canvas.viewportTransform] : null;
+        try {
+            canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+            const r = obj.getBoundingRect(true, true);
+            return {
+                left: Number(r.left) || 0,
+                top: Number(r.top) || 0,
+                width: Number(r.width) || 0,
+                height: Number(r.height) || 0,
+            };
+        } finally {
+            if (prevVpt) {
+                canvas.viewportTransform = prevVpt;
+            }
+        }
+    }
+
+    protected async createSnippetFromSelection(): Promise<void> {
+        if (!this.fabricCanvas || !this.imageId || !this.image) {
+            return;
+        }
+        if (this.isSaving) {
+            return;
+        }
+
+        const rect = this.getSelectionRectForSnippet();
+        if (!rect) {
+            return;
+        }
+
+        const bounds = this.getBoundingRectWithoutViewport(rect);
+        if (!bounds || bounds.width < 2 || bounds.height < 2) {
+            return;
+        }
+
+        this.isSaving = true;
+        this.update();
+
+        try {
+            const left = Math.max(0, Math.floor(bounds.left));
+            const top = Math.max(0, Math.floor(bounds.top));
+            const width = Math.max(1, Math.floor(bounds.width));
+            const height = Math.max(1, Math.floor(bounds.height));
+
+            const dataUrl = this.fabricCanvas.toDataURL({
+                format: 'png',
+                left,
+                top,
+                width,
+                height,
+                multiplier: 1,
+                withoutTransform: true,
+                withoutShadow: true,
+            });
+            const renderedBlob = await fetch(dataUrl).then(r => r.blob());
+
+            const form = new FormData();
+            form.append('rendered_file', renderedBlob, 'snippet.png');
+            form.append('mime_type', 'image/png');
+            form.append('crop_rect_json', JSON.stringify({ left, top, width, height }));
+
+            const endpoint = `${this.backendBaseUrl}/api/geocache-images/${this.imageId}/snippets/new`;
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                credentials: 'include',
+                body: form,
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const created = (await res.json()) as GeocacheImageV2Dto;
+
+            window.dispatchEvent(new CustomEvent('geoapp-geocache-images-updated', {
+                detail: { geocacheId: created.geocache_id }
+            }));
+        } catch (e) {
+            console.error('[GeocacheImageEditorWidget] create snippet error', e);
+            this.error = 'Impossible de créer la sous-image';
+        } finally {
+            this.isSaving = false;
+            this.update();
+        }
     }
 
     protected getViewportCenterPoint(): { x: number; y: number } {
@@ -1620,6 +1825,7 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         const showSelectControls = this.tool === 'select' && this.selectionCount > 0;
         const showImageControls = this.tool === 'image';
         const showShapesControls = this.tool === 'shapes';
+        const showSnippetControls = this.tool === 'snippet';
         const activeAny = this.fabricCanvas?.getActiveObject?.();
         const canGroup = Boolean(activeAny && activeAny.type === 'activeSelection');
         const canUngroup = Boolean(activeAny && activeAny.type === 'group');
@@ -1644,6 +1850,14 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                         onClick={() => this.applyTool('select')}
                     >
                         Sélection
+                    </button>
+
+                    <button
+                        type='button'
+                        className={`theia-button secondary ${this.tool === 'snippet' ? 'border border-sky-500' : ''}`}
+                        onClick={() => this.applyTool('snippet')}
+                    >
+                        Découper
                     </button>
 
                     {showSelectControls ? (
@@ -1772,6 +1986,28 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                                 disabled={!canGroup}
                             >
                                 Aligner bas
+                            </button>
+                        </div>
+                    ) : null}
+
+                    {showSnippetControls ? (
+                        <div className='flex flex-wrap items-center gap-2 ml-2'>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => this.clearSnippetSelection()}
+                                disabled={!this.snippetSelectionRect}
+                            >
+                                Effacer sélection
+                            </button>
+
+                            <button
+                                type='button'
+                                className='theia-button'
+                                onClick={() => { void this.createSnippetFromSelection(); }}
+                                disabled={this.isSaving || !this.snippetSelectionRect}
+                            >
+                                Créer sous-image
                             </button>
                         </div>
                     ) : null}

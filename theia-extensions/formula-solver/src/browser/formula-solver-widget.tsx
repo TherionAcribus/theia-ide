@@ -64,6 +64,8 @@ export class FormulaSolverWidget extends ReactWidget {
 
     protected detectionRequestId: number = 0;
 
+    protected questionsRequestId: number = 0;
+
     @postConstruct()
     protected init(): void {
         this.id = FormulaSolverWidget.ID;
@@ -460,6 +462,9 @@ export class FormulaSolverWidget extends ReactWidget {
                     values: new Map<string, LetterValue>(),
                     result: undefined
                 });
+
+                console.log('[FORMULA-SOLVER] Extraction automatique des questions (algorithm)');
+                await this.extractQuestions(enrichedFormulas[0]);
             }
         } catch (error) {
             if (requestId !== this.detectionRequestId) {
@@ -638,7 +643,21 @@ export class FormulaSolverWidget extends ReactWidget {
      * Extrait les questions pour une formule
      */
     protected async extractQuestions(formula: Formula): Promise<void> {
-        this.updateState({ loading: true, error: undefined });
+        const requestId = ++this.questionsRequestId;
+        console.log('[FORMULA-SOLVER] extractQuestions (regex) start', {
+            requestId,
+            letters: this.extractLettersFromFormula(formula),
+            geocacheId: this.state.geocacheId,
+            gcCode: this.state.gcCode
+        });
+
+        this.updateState({
+            loading: true,
+            error: undefined,
+            questions: [],
+            values: new Map<string, LetterValue>(),
+            result: undefined
+        });
 
         try {
             // Extraire les lettres de la formule
@@ -657,6 +676,10 @@ export class FormulaSolverWidget extends ReactWidget {
                 method: 'regex'
             });
 
+            if (requestId !== this.questionsRequestId) {
+                return;
+            }
+
             // Convertir en tableau de Questions
             const questions: Question[] = letters.map(letter => ({
                 letter,
@@ -670,6 +693,9 @@ export class FormulaSolverWidget extends ReactWidget {
                 currentStep: 'values'
             });
         } catch (error) {
+            if (requestId !== this.questionsRequestId) {
+                return;
+            }
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur : ${message}`);
             this.updateState({ loading: false, error: message });
@@ -1249,7 +1275,16 @@ export class FormulaSolverWidget extends ReactWidget {
                     <DetectedFormulasComponent
                         formulas={this.state.formulas}
                         selectedFormula={this.state.selectedFormula}
-                        onSelect={(formula) => this.updateState({ selectedFormula: formula })}
+                        onSelect={(formula) => {
+                            this.updateState({
+                                selectedFormula: formula,
+                                questions: [],
+                                values: new Map<string, LetterValue>(),
+                                result: undefined,
+                                currentStep: 'questions'
+                            });
+                            void this.extractQuestions(formula);
+                        }}
                         onEditFormula={(formula, north, east) => this.handleEditFormula(formula, north, east)}
                         loading={this.state.loading}
                     />

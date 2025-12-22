@@ -20,6 +20,7 @@ import { GeocacheImageEditorFrontendContribution } from './geocache-image-editor
 import { ZoneTabsManager } from './zone-tabs-manager';
 import { CheckerToolsManager } from './checker-tools-manager';
 import { GeoAppChatAgent } from './geoapp-chat-agent';
+import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 
 export default new ContainerModule(bind => {
@@ -122,6 +123,9 @@ export default new ContainerModule(bind => {
 
     bind(CheckerToolsManager).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(CheckerToolsManager);
+
+    bind(GeoAppOcrAgentContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppOcrAgentContribution);
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);

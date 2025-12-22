@@ -409,6 +409,64 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         }));
     };
 
+    const guessDownloadFilename = (img: GeocacheImageV2Dto): string => {
+        const baseName = `image-${img.id}`;
+        const tryExt = (value: string): string | null => {
+            try {
+                const url = new URL(value);
+                const pathname = url.pathname || '';
+                const match = pathname.match(/\.([a-zA-Z0-9]{2,5})$/);
+                if (match && match[1]) {
+                    return `.${match[1].toLowerCase()}`;
+                }
+            } catch {
+            }
+            return null;
+        };
+
+        const ext = tryExt(img.source_url) || tryExt(img.url) || '.jpg';
+        return `${baseName}${ext}`;
+    };
+
+    const downloadImageById = async (imageId: number): Promise<void> => {
+        const img = visibleImages.find(i => i.id === imageId);
+        if (!img) {
+            return;
+        }
+
+        const downloadUrl = resolveImageUrl(img.url);
+        const filename = guessDownloadFilename(img);
+
+        try {
+            const res = await fetch(downloadUrl, {
+                method: 'GET',
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            try {
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = filename;
+                a.rel = 'noopener';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] download image error', e);
+            try {
+                window.open(downloadUrl, '_blank', 'noopener,noreferrer');
+            } catch {
+            }
+        }
+    };
+
     const storeImageById = async (imageId: number): Promise<void> => {
         setIsSaving(true);
         try {
@@ -614,6 +672,11 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Dupliquer l\'image',
             action: () => { void duplicateImageById(contextMenu.imageId); },
+            disabled: isSaving,
+        },
+        {
+            label: 'Télécharger l\'image',
+            action: () => { void downloadImageById(contextMenu.imageId); },
             disabled: isSaving,
         },
         {

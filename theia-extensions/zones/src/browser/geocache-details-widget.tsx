@@ -933,6 +933,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
     private readonly imagesGalleryThumbnailSizePreferenceKey = 'geoApp.images.gallery.thumbnailSize';
+    private readonly imagesGalleryHiddenDomainsPreferenceKey = 'geoApp.images.gallery.hiddenDomains';
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -2023,6 +2024,41 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.update();
     }
 
+    private getImagesGalleryHiddenDomainsText(): string {
+        const raw = this.preferenceService.get(this.imagesGalleryHiddenDomainsPreferenceKey, '') as unknown;
+        if (typeof raw === 'string') {
+            return raw;
+        }
+        if (Array.isArray(raw)) {
+            return raw.filter((v): v is string => typeof v === 'string').join('\n');
+        }
+        return '';
+    }
+
+    private async setImagesGalleryHiddenDomainsText(value: string): Promise<void> {
+        await this.preferenceService.set(this.imagesGalleryHiddenDomainsPreferenceKey, value ?? '', PreferenceScope.User);
+        this.update();
+    }
+
+    private getImagesGalleryHiddenDomains(): string[] {
+        const raw = this.preferenceService.get(this.imagesGalleryHiddenDomainsPreferenceKey, '') as unknown;
+        if (Array.isArray(raw)) {
+            return raw
+                .filter((v): v is string => typeof v === 'string')
+                .map(v => v.trim().toLowerCase())
+                .filter(v => Boolean(v));
+        }
+
+        if (typeof raw !== 'string') {
+            return [];
+        }
+
+        return raw
+            .split(/[\n\r,;]+/g)
+            .map(v => v.trim().toLowerCase())
+            .filter(v => Boolean(v));
+    }
+
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -2228,6 +2264,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 onConfirmStoreAll={async (opts) => this.confirmStoreAllImages(opts)}
                                 thumbnailSize={this.getImagesGalleryThumbnailSize()}
                                 onThumbnailSizeChange={async (size) => this.setImagesGalleryThumbnailSize(size)}
+                                hiddenDomains={this.getImagesGalleryHiddenDomains()}
+                                hiddenDomainsText={this.getImagesGalleryHiddenDomainsText()}
+                                onHiddenDomainsTextChange={async (value: string) => this.setImagesGalleryHiddenDomainsText(value)}
                             />
                         ) : undefined}
 

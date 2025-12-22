@@ -36,6 +36,9 @@ export interface GeocacheImagesPanelProps {
     onConfirmStoreAll?: (options: { geocacheId: number; pendingCount: number }) => Promise<boolean>;
     thumbnailSize?: GalleryThumbnailSize;
     onThumbnailSizeChange?: (size: GalleryThumbnailSize) => Promise<void> | void;
+    hiddenDomains?: string[];
+    hiddenDomainsText?: string;
+    onHiddenDomainsTextChange?: (value: string) => Promise<void> | void;
 }
 
 export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
@@ -45,11 +48,17 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     onConfirmStoreAll,
     thumbnailSize = 'small',
     onThumbnailSizeChange,
+    hiddenDomains = [],
+    hiddenDomainsText,
+    onHiddenDomainsTextChange,
 }) => {
     const [images, setImages] = React.useState<GeocacheImageV2Dto[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
     const [selectedId, setSelectedId] = React.useState<number | null>(null);
     const [isSaving, setIsSaving] = React.useState(false);
+
+    const [hiddenDomainsDraft, setHiddenDomainsDraft] = React.useState(hiddenDomainsText ?? '');
+    const [isSavingHiddenDomains, setIsSavingHiddenDomains] = React.useState(false);
 
     const [detailsMode, setDetailsMode] = React.useState<'hidden' | 'fields' | 'preview'>('hidden');
 
@@ -62,6 +71,10 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     React.useEffect(() => {
         setEffectiveThumbnailSize(thumbnailSize);
     }, [thumbnailSize]);
+
+    React.useEffect(() => {
+        setHiddenDomainsDraft(hiddenDomainsText ?? '');
+    }, [hiddenDomainsText]);
 
     const thumbnailImageClassName = React.useMemo(() => {
         switch (effectiveThumbnailSize) {
@@ -95,7 +108,76 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         void Promise.resolve(onThumbnailSizeChange?.(size));
     };
 
-    const selected = React.useMemo(() => images.find(i => i.id === selectedId) ?? null, [images, selectedId]);
+    const normalizeDomainEntry = React.useCallback((entry: string): string | null => {
+        const raw = (entry || '').trim();
+        if (!raw) {
+            return null;
+        }
+
+        const normalizeHost = (host: string): string | null => {
+            const cleaned = (host || '').trim().toLowerCase().replace(/^www\./, '');
+            if (!cleaned) {
+                return null;
+            }
+            if (cleaned.includes('/')) {
+                return cleaned.split('/')[0] || null;
+            }
+            return cleaned;
+        };
+
+        try {
+            const url = new URL(raw);
+            return normalizeHost(url.hostname);
+        } catch {
+        }
+
+        const withoutProtocol = raw.replace(/^https?:\/\//i, '');
+        const base = withoutProtocol.split(/[/?#]/)[0] || '';
+        return normalizeHost(base);
+    }, []);
+
+    const normalizedHiddenDomains = React.useMemo(() => {
+        return (hiddenDomains || [])
+            .filter((d): d is string => typeof d === 'string')
+            .map(d => normalizeDomainEntry(d))
+            .filter((d): d is string => Boolean(d));
+    }, [hiddenDomains, normalizeDomainEntry]);
+
+    const isHiddenByDomain = React.useCallback((sourceUrl: string): boolean => {
+        const trimmed = (sourceUrl || '').trim();
+        if (!trimmed) {
+            return false;
+        }
+        try {
+            const host = new URL(trimmed).hostname.toLowerCase().replace(/^www\./, '');
+            if (!host) {
+                return false;
+            }
+            return normalizedHiddenDomains.some(domain => host === domain || host.endsWith(`.${domain}`));
+        } catch {
+            return false;
+        }
+    }, [normalizedHiddenDomains]);
+
+    const visibleImages = React.useMemo(() => {
+        if (!normalizedHiddenDomains.length) {
+            return images;
+        }
+        return images.filter(img => !isHiddenByDomain(img.source_url));
+    }, [images, isHiddenByDomain, normalizedHiddenDomains.length]);
+
+    const selected = React.useMemo(() => visibleImages.find(i => i.id === selectedId) ?? null, [visibleImages, selectedId]);
+
+    React.useEffect(() => {
+        if (selectedId === null) {
+            return;
+        }
+        const stillVisible = visibleImages.some(img => img.id === selectedId);
+        if (!stillVisible) {
+            setSelectedId(null);
+            setDetailsMode('hidden');
+        }
+    }, [selectedId, visibleImages]);
 
     const [draftTitle, setDraftTitle] = React.useState('');
     const [draftNote, setDraftNote] = React.useState('');
@@ -260,7 +342,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     };
 
     const decodeQrFromImage = async (imageId: number): Promise<void> => {
-        const img = images.find(i => i.id === imageId);
+        const img = visibleImages.find(i => i.id === imageId);
         if (!img) {
             return;
         }
@@ -299,7 +381,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     };
 
     const copyQrPayload = async (imageId: number): Promise<void> => {
-        const img = images.find(i => i.id === imageId);
+        const img = visibleImages.find(i => i.id === imageId);
         const payload = (img?.qr_payload || '').trim();
         if (!payload) {
             return;
@@ -312,7 +394,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     };
 
     const openImageEditor = (imageId: number): void => {
-        const img = images.find(i => i.id === imageId);
+        const img = visibleImages.find(i => i.id === imageId);
         if (!img) {
             return;
         }
@@ -414,11 +496,11 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
-        if (!images.length) {
+        if (!visibleImages.length) {
             return;
         }
 
-        const pendingCount = images.filter(i => !i.stored).length;
+        const pendingCount = visibleImages.filter(i => !i.stored).length;
         if (pendingCount <= 0) {
             didApplyDefaultStorageRef.current[geocacheId] = true;
             return;
@@ -450,7 +532,21 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         } catch (e) {
             console.error('[GeocacheImagesPanel] confirm store all error', e);
         }
-    }, [geocacheId, images, onConfirmStoreAll, storageDefaultMode]);
+    }, [geocacheId, onConfirmStoreAll, storageDefaultMode, visibleImages]);
+
+    const saveHiddenDomains = async (): Promise<void> => {
+        if (!onHiddenDomainsTextChange) {
+            return;
+        }
+        setIsSavingHiddenDomains(true);
+        try {
+            await Promise.resolve(onHiddenDomainsTextChange(hiddenDomainsDraft));
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] save hidden domains error', e);
+        } finally {
+            setIsSavingHiddenDomains(false);
+        }
+    };
 
     React.useEffect(() => {
         if (isLoading || isSaving) {
@@ -501,7 +597,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         return <div className='opacity-70'>Chargement des images…</div>;
     }
 
-    if (!images.length) {
+    if (!visibleImages.length) {
         return <div className='opacity-70 italic'>Aucune image</div>;
     }
 
@@ -534,12 +630,12 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Stocker localement',
             action: () => { void storeImageById(contextMenu.imageId); },
-            disabled: isSaving || Boolean(images.find(i => i.id === contextMenu.imageId)?.stored),
+            disabled: isSaving || Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
         },
         {
             label: 'Supprimer stockage local',
             action: () => { void unstoreImageById(contextMenu.imageId); },
-            disabled: isSaving || !Boolean(images.find(i => i.id === contextMenu.imageId)?.stored),
+            disabled: isSaving || !Boolean(visibleImages.find(i => i.id === contextMenu.imageId)?.stored),
             danger: true,
         },
         {
@@ -548,7 +644,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         {
             label: 'Copier QR payload',
             action: () => { void copyQrPayload(contextMenu.imageId); },
-            disabled: !Boolean((images.find(i => i.id === contextMenu.imageId)?.qr_payload || '').trim()),
+            disabled: !Boolean((visibleImages.find(i => i.id === contextMenu.imageId)?.qr_payload || '').trim()),
         },
     ] : [];
 
@@ -593,6 +689,41 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 </div>
             </div>
 
+            {onHiddenDomainsTextChange && (
+                <details className='rounded border border-[var(--theia-panel-border)] bg-[var(--theia-editor-background)] p-2'>
+                    <summary className='cursor-pointer select-none text-sm opacity-80'>
+                        Domaines masqués (1 par ligne)
+                    </summary>
+                    <div className='mt-2 grid gap-2'>
+                        <textarea
+                            className='theia-input w-full resize-y'
+                            rows={3}
+                            value={hiddenDomainsDraft}
+                            onChange={e => setHiddenDomainsDraft(e.target.value)}
+                            placeholder={'geocheck.org\ncertitudes.org'}
+                        />
+                        <div className='flex items-center justify-end gap-2'>
+                            <button
+                                className='theia-button secondary'
+                                type='button'
+                                onClick={() => setHiddenDomainsDraft(hiddenDomainsText ?? '')}
+                                disabled={isSavingHiddenDomains || isSaving}
+                            >
+                                Annuler
+                            </button>
+                            <button
+                                className='theia-button'
+                                type='button'
+                                onClick={() => { void saveHiddenDomains(); }}
+                                disabled={isSavingHiddenDomains || isSaving}
+                            >
+                                Enregistrer
+                            </button>
+                        </div>
+                    </div>
+                </details>
+            )}
+
             {contextMenu && (
                 <ContextMenu
                     items={contextMenuItems}
@@ -605,7 +736,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             <div className='flex gap-3'>
                 <div className={showDetails ? 'w-64 shrink-0' : 'min-w-0 flex-1'}>
                     <div className='flex gap-2 overflow-x-auto pb-2'>
-                        {images.map(img => (
+                        {visibleImages.map(img => (
                             <button
                                 key={img.id}
                                 type='button'

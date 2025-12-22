@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
+import { CommandService } from '@theia/core';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 
@@ -16,6 +17,7 @@ export class GeoPreferencesWidget extends ReactWidget {
 
     constructor(
         @inject(GeoPreferenceStore) private readonly store: GeoPreferenceStore,
+        @inject(CommandService) private readonly commandService: CommandService,
     ) {
         super();
         this.id = GeoPreferencesWidget.ID;
@@ -37,6 +39,14 @@ export class GeoPreferencesWidget extends ReactWidget {
         this.update();
     }
 
+    private openAiConfiguration = async (): Promise<void> => {
+        try {
+            await this.commandService.executeCommand('aiConfiguration:open');
+        } catch (error) {
+            console.error('[GeoPreferencesWidget] Failed to open AI Configuration view', error);
+        }
+    };
+
     protected render(): React.ReactNode {
         const sections = Array.from(this.store.definitionsByCategory.entries())
             .sort(([a], [b]) => a.localeCompare(b));
@@ -50,7 +60,19 @@ export class GeoPreferencesWidget extends ReactWidget {
             {sections.map(([category, entries]) => (
                 <section key={category} className='geo-preferences-section'>
                     <header>
-                        <h2>{this.toCategoryLabel(category)}</h2>
+                        <div className='flex items-center justify-between gap-2'>
+                            <h2>{this.toCategoryLabel(category)}</h2>
+                            {category === 'ocr' && (
+                                <button
+                                    className='theia-button secondary'
+                                    type='button'
+                                    onClick={() => { void this.openAiConfiguration(); }}
+                                    title='Ouvrir la configuration IA pour choisir le modèle utilisé par GeoApp OCR (Cloud)'
+                                >
+                                    Configurer OCR (IA)
+                                </button>
+                            )}
+                        </div>
                     </header>
                     <div className='geo-preferences-items'>
                         {entries.map(({ key, definition }) => this.renderPreference(key, definition))}

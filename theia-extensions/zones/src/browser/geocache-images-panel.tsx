@@ -359,6 +359,40 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
         }
     };
 
+    const canSearchImageOnGoogle = React.useCallback((img: GeocacheImageV2Dto | null): boolean => {
+        if (!img) {
+            return false;
+        }
+
+        // Simplification: recherche Internet uniquement pour les images "en ligne".
+        // Les images dérivées (snippets/edits/crops) ne sont pas en ligne -> pas de recherche.
+        if (img.parent_image_id) {
+            return false;
+        }
+
+        const url = (img.source_url || '').trim();
+        return Boolean(url) && /^https?:\/\//i.test(url);
+    }, []);
+
+    const searchImageOnGoogleById = async (imageId: number): Promise<void> => {
+        const img = visibleImages.find(i => i.id === imageId);
+        if (!img || !canSearchImageOnGoogle(img)) {
+            return;
+        }
+
+        const rawUrl = (img.source_url || '').trim();
+        if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) {
+            return;
+        }
+
+        const lensUrl = `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(rawUrl)}`;
+        try {
+            window.open(lensUrl, '_blank', 'noopener,noreferrer');
+        } catch (e) {
+            console.error('[GeocacheImagesPanel] google lens open error', e);
+        }
+    };
+
     const triggerUploadDialog = (): void => {
         uploadInputRef.current?.click();
     };
@@ -994,6 +1028,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const isContextMenuOcrBusy = contextMenu ? Boolean(ocrInProgressById[contextMenu.imageId]) : false;
     const contextMenuImage = contextMenu ? (visibleImages.find(i => i.id === contextMenu.imageId) ?? null) : null;
     const isContextMenuUploadedImage = Boolean((contextMenuImage?.source_url || '').startsWith('geoapp-upload://'));
+    const isContextMenuGoogleSearchEnabled = canSearchImageOnGoogle(contextMenuImage);
 
     const contextMenuItems: ContextMenuItem[] = contextMenu ? [
         {
@@ -1010,6 +1045,11 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             label: 'Télécharger l\'image',
             action: () => { void downloadImageById(contextMenu.imageId); },
             disabled: isSaving || !Boolean(contextMenuImage?.stored),
+        },
+        {
+            label: 'Rechercher sur Google (Lens)',
+            action: () => { void searchImageOnGoogleById(contextMenu.imageId); },
+            disabled: isSaving || !isContextMenuGoogleSearchEnabled,
         },
         {
             separator: true,

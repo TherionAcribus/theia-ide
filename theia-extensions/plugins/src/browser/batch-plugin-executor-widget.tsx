@@ -443,13 +443,23 @@ const BatchPluginExecutorComponent: React.FC<{
         }
 
         const modeValue = typeof inputs.mode === 'string' ? inputs.mode.toLowerCase() : undefined;
-        if (modeValue !== undefined && modeValue !== 'encode') {
-            return { normalizedInputs: inputs, warnings: [] };
-        }
+        const shouldNormalizeTextField = modeValue === undefined || modeValue === 'encode';
 
         const fields: string[] = Array.isArray(textHandling.fields) && textHandling.fields.length
             ? textHandling.fields
             : ['text'];
+
+        const fieldsToNormalize = shouldNormalizeTextField ? [...fields] : fields.filter(f => f !== 'text');
+        if (
+            typeof inputs.key === 'string' &&
+            !fieldsToNormalize.includes('key') &&
+            (((details.metadata as any)?.input_types?.key?.type === 'string') || (details.input_schema as any)?.properties?.key?.type === 'string')
+        ) {
+            fieldsToNormalize.push('key');
+        }
+        if (fieldsToNormalize.length === 0) {
+            return { normalizedInputs: inputs, warnings: [] };
+        }
 
         const allowedCharacters = typeof textHandling.allowed_characters === 'string' ? textHandling.allowed_characters : '';
         const allowedCharactersSet = new Set<string>([...allowedCharacters]);
@@ -547,7 +557,7 @@ const BatchPluginExecutorComponent: React.FC<{
         const warnings: string[] = [];
         const out: Record<string, any> = { ...inputs };
 
-        for (const field of fields) {
+        for (const field of fieldsToNormalize) {
             const value = out[field];
             if (typeof value !== 'string') {
                 continue;

@@ -790,6 +790,130 @@ const PluginExecutorComponent: React.FC<{
         }
     };
 
+    const normalizeInputsForPlugin = (inputs: Record<string, any>, details: PluginDetails): { normalizedInputs: Record<string, any>; warnings: string[] } => {
+        const textHandling = (details.metadata as any)?.text_handling;
+        if (!textHandling) {
+            return { normalizedInputs: inputs, warnings: [] };
+        }
+
+        const modeValue = typeof inputs.mode === 'string' ? inputs.mode.toLowerCase() : undefined;
+        if (modeValue !== undefined && modeValue !== 'encode') {
+            return { normalizedInputs: inputs, warnings: [] };
+        }
+
+        const fields: string[] = Array.isArray(textHandling.fields) && textHandling.fields.length
+            ? textHandling.fields
+            : ['text'];
+
+        const allowedCharacters = typeof textHandling.allowed_characters === 'string' ? textHandling.allowed_characters : '';
+        const allowedCharactersSet = new Set<string>([...allowedCharacters]);
+
+        const allowedRanges: Array<{ start: number; end: number }> = [];
+        if (Array.isArray(textHandling.allowed_ranges)) {
+            for (const range of textHandling.allowed_ranges) {
+                if (typeof range !== 'string') {
+                    continue;
+                }
+                const parts = range.split('-');
+                if (parts.length !== 2) {
+                    continue;
+                }
+                const start = parseInt(parts[0], 16);
+                const end = parseInt(parts[1], 16);
+                if (Number.isFinite(start) && Number.isFinite(end)) {
+                    allowedRanges.push({ start, end });
+                }
+            }
+        }
+
+        const unknownPolicy = typeof textHandling.unknown_char_policy === 'string' ? textHandling.unknown_char_policy : 'warn_keep';
+        const normalizeConfig = (textHandling.normalize && typeof textHandling.normalize === 'object') ? textHandling.normalize : {};
+        const removeDiacritics = !!normalizeConfig.remove_diacritics;
+        const caseMode = typeof normalizeConfig.case === 'string' ? normalizeConfig.case : 'preserve';
+        const mapCharacters = (normalizeConfig.map_characters && typeof normalizeConfig.map_characters === 'object') ? normalizeConfig.map_characters : {};
+
+        const isCharAllowed = (ch: string): boolean => {
+            if (allowedCharactersSet.has(ch)) {
+                return true;
+            }
+            if (allowedRanges.length === 0) {
+                return true;
+            }
+            const code = ch.codePointAt(0);
+            if (code === undefined) {
+                return false;
+            }
+            return allowedRanges.some(r => code >= r.start && code <= r.end);
+        };
+
+        const normalizeText = (value: string): { text: string; warnings: string[] } => {
+            const localWarnings: string[] = [];
+
+            let mapped = '';
+            for (const ch of value) {
+                const replacement = (mapCharacters as any)[ch];
+                mapped += typeof replacement === 'string' ? replacement : ch;
+            }
+
+            let normalized = mapped;
+            if (removeDiacritics) {
+                const before = normalized;
+                normalized = normalized.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                if (before !== normalized) {
+                    localWarnings.push('Certains caractères accentués ont été normalisés (ex: é → e).');
+                }
+            }
+
+            if (caseMode === 'upper') {
+                normalized = normalized.toUpperCase();
+            } else if (caseMode === 'lower') {
+                normalized = normalized.toLowerCase();
+            }
+
+            const unsupported = new Set<string>();
+            let output = '';
+            for (const ch of normalized) {
+                if (isCharAllowed(ch)) {
+                    output += ch;
+                    continue;
+                }
+
+                unsupported.add(ch);
+                if (unknownPolicy === 'strip') {
+                    continue;
+                }
+                output += ch;
+            }
+
+            const unsupportedList = [...unsupported].sort();
+            if (unsupportedList.length > 0) {
+                if (unknownPolicy === 'error') {
+                    throw new Error(`Caractères non supportés par le plugin: ${unsupportedList.join('')}`);
+                }
+                if (unknownPolicy === 'warn_keep' || unknownPolicy === 'strip') {
+                    localWarnings.push(`Caractères non supportés par le plugin: ${unsupportedList.join('')}`);
+                }
+            }
+
+            return { text: output, warnings: localWarnings };
+        };
+
+        const warnings: string[] = [];
+        const out: Record<string, any> = { ...inputs };
+
+        for (const field of fields) {
+            const value = out[field];
+            if (typeof value !== 'string') {
+                continue;
+            }
+            const result = normalizeText(value);
+            out[field] = result.text;
+            warnings.push(...result.warnings.map(w => `[${field}] ${w}`));
+        }
+
+        return { normalizedInputs: out, warnings };
+    };
+
     const handleExecute = async () => {
         if (!state.selectedPlugin || !state.pluginDetails) {
             messageService.warn('Veuillez sélectionner un plugin');
@@ -836,6 +960,18 @@ const PluginExecutorComponent: React.FC<{
             };
         }
 
+        try {
+            const normalization = normalizeInputsForPlugin(inputsToSend, state.pluginDetails);
+            inputsToSend = normalization.normalizedInputs;
+            for (const warning of normalization.warnings) {
+                messageService.warn(warning);
+            }
+        } catch (error: any) {
+            const errorMsg = error?.message || String(error);
+            messageService.error(errorMsg);
+            return;
+        }
+
         console.log('=== DEBUG Plugin Executor ===');
         console.log('Plugin sélectionné:', state.selectedPlugin);
         console.log('Plugin details name:', state.pluginDetails.name);
@@ -868,7 +1004,7 @@ const PluginExecutorComponent: React.FC<{
                 messageService.info('Plugin exécuté avec succès');
             } else {
                 console.log('Création de tâche asynchrone avec inputs:', state.formInputs);
-                const task = await tasksService.createTask(state.selectedPlugin, state.formInputs);
+                const task = await tasksService.createTask(state.selectedPlugin, inputsToSend);
                 console.log('Tâche créée:', task);
                 setState(prev => ({ ...prev, task, isExecuting: false }));
                 messageService.info(`Tâche créée: ${task.task_id}`);

@@ -53,6 +53,10 @@ export class FormulaSolverWidget extends ReactWidget {
     // Type de calcul global pour les valeurs
     protected globalValueType: 'value' | 'checksum' | 'reduced' | 'length' | 'custom' = 'value';
 
+    protected manualNorth: string = '';
+    protected manualEast: string = '';
+    protected manualFormulaOpen: boolean = false;
+
     // État brute force
     protected bruteForceMode: boolean = false;
     protected bruteForceResults: Array<{
@@ -76,6 +80,88 @@ export class FormulaSolverWidget extends ReactWidget {
 
         // Les préférences seront chargées de manière asynchrone dans onAfterAttach
         this.update();
+    }
+
+    protected parseManualFormulaInputs(): { north: string; east: string } | undefined {
+        const northRaw = (this.manualNorth || '').trim();
+        const eastRaw = (this.manualEast || '').trim();
+
+        if (!northRaw && !eastRaw) {
+            return undefined;
+        }
+
+        if (northRaw && eastRaw) {
+            return {
+                north: northRaw,
+                east: eastRaw
+            };
+        }
+
+        const combined = northRaw || eastRaw;
+        const lines = combined
+            .split(/\r?\n/)
+            .map(l => l.trim())
+            .filter(Boolean);
+
+        if (lines.length >= 2) {
+            return {
+                north: lines[0],
+                east: lines[1]
+            };
+        }
+
+        const northMatch = combined.match(/([NS]\s*\d{1,2}[^\n]*?)(?=\s*[EW]\s*\d{1,3}|$)/i);
+        const eastMatch = combined.match(/([EW]\s*\d{1,3}[^\n]*)/i);
+
+        if (northMatch && eastMatch) {
+            return {
+                north: northMatch[1].trim(),
+                east: eastMatch[1].trim()
+            };
+        }
+
+        return undefined;
+    }
+
+    protected async addManualFormula(): Promise<void> {
+        const parsed = this.parseManualFormulaInputs();
+        if (!parsed) {
+            this.messageService.warn('Veuillez saisir une formule Nord et Est (ou coller 2 lignes).');
+            return;
+        }
+
+        if (!/^\s*[NS]/i.test(parsed.north) || !/^\s*[EW]/i.test(parsed.east)) {
+            this.messageService.warn('Format invalide. Le Nord doit commencer par N/S et l\'Est par E/W.');
+            return;
+        }
+
+        const rawFormula: Formula = {
+            id: `manual_${Date.now()}`,
+            north: parsed.north,
+            east: parsed.east,
+            source: 'manual',
+            text_output: `${parsed.north} ${parsed.east}`,
+            confidence: 1
+        };
+
+        const [enriched] = this.annotateFormulas([rawFormula]);
+        const nextFormulas = [enriched, ...this.state.formulas];
+
+        this.updateState({
+            formulas: nextFormulas,
+            selectedFormula: enriched,
+            currentStep: 'questions',
+            questions: [],
+            values: new Map<string, LetterValue>(),
+            result: undefined,
+            error: undefined
+        });
+
+        this.manualNorth = '';
+        this.manualEast = '';
+        this.update();
+
+        await this.extractQuestions(enriched);
     }
 
     protected onAfterAttach(msg: unknown): void {
@@ -121,6 +207,9 @@ export class FormulaSolverWidget extends ReactWidget {
         
         try {
             this.detectionRequestId++;
+            this.manualNorth = '';
+            this.manualEast = '';
+            this.manualFormulaOpen = false;
             this.updateState({
                 loading: true,
                 error: undefined,
@@ -1269,6 +1358,95 @@ export class FormulaSolverWidget extends ReactWidget {
                 >
                     Détecter la formule
                 </button>
+
+                <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '4px'
+                }}>
+                    <button
+                        style={{
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: 0,
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--theia-foreground)',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                        }}
+                        onClick={() => {
+                            this.manualFormulaOpen = !this.manualFormulaOpen;
+                            this.update();
+                        }}
+                        title={this.manualFormulaOpen ? 'Replier' : 'Déplier'}
+                    >
+                        <span>Formule manuelle</span>
+                        <span className={`codicon ${this.manualFormulaOpen ? 'codicon-chevron-down' : 'codicon-chevron-right'}`} />
+                    </button>
+
+                    {this.manualFormulaOpen && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                            <input
+                                type="text"
+                                placeholder="Nord (ex: N48°45.B(A+E)(D+C)) ou collez 2 lignes N... puis E..."
+                                value={this.manualNorth}
+                                onChange={e => {
+                                    this.manualNorth = e.target.value;
+                                    this.update();
+                                }}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 10px',
+                                    fontFamily: 'monospace',
+                                    backgroundColor: 'var(--theia-input-background)',
+                                    color: 'var(--theia-input-foreground)',
+                                    border: '1px solid var(--theia-input-border)',
+                                    borderRadius: '4px'
+                                }}
+                            />
+                            <input
+                                type="text"
+                                placeholder="Est (ex: E002°43.C(F+C)D)"
+                                value={this.manualEast}
+                                onChange={e => {
+                                    this.manualEast = e.target.value;
+                                    this.update();
+                                }}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 10px',
+                                    fontFamily: 'monospace',
+                                    backgroundColor: 'var(--theia-input-background)',
+                                    color: 'var(--theia-input-foreground)',
+                                    border: '1px solid var(--theia-input-border)',
+                                    borderRadius: '4px'
+                                }}
+                            />
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: 'var(--theia-button-background)',
+                                        color: 'var(--theia-button-foreground)',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer'
+                                    }}
+                                    onClick={() => void this.addManualFormula()}
+                                    disabled={this.state.loading}
+                                    title="Ajoute la formule à la liste et passe à l'étape Questions"
+                                >
+                                    Ajouter la formule
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
                 
                 {/* Formules détectées avec le nouveau composant */}
                 {this.state.formulas.length > 0 && (

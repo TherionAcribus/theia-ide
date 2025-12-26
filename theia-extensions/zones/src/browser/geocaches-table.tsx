@@ -58,6 +58,7 @@ interface GeocachesTableProps {
     onCopySelected?: (ids: number[]) => void;
     onMoveSelected?: (ids: number[]) => void;
     onApplyPluginSelected?: (ids: number[]) => void;
+    onExportGpxSelected?: (ids: number[]) => void;
     onDelete?: (geocache: Geocache) => void;
     onRefresh?: (id: number) => void;
     onMove?: (geocache: Geocache, targetZoneId: number) => void;
@@ -75,6 +76,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onCopySelected,
     onMoveSelected,
     onApplyPluginSelected,
+    onExportGpxSelected,
     onDelete,
     onRefresh,
     onMove,
@@ -349,6 +351,15 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                                 title="Appliquer un plugin aux géocaches sélectionnées"
                             >
                                 🔧 Appliquer un plugin
+                            </button>
+                        )}
+                        {onExportGpxSelected && (
+                            <button
+                                onClick={() => onExportGpxSelected(selectedIds)}
+                                className="theia-button secondary"
+                                title="Exporter les géocaches sélectionnées au format GPX"
+                            >
+                                ⬇️ Exporter GPX
                             </button>
                         )}
                         {onRefreshSelected && (

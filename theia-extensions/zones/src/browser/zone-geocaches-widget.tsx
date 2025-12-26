@@ -148,6 +148,63 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         }
     }
 
+    protected async handleExportGpxSelected(geocacheIds: number[]): Promise<void> {
+        try {
+            if (!geocacheIds || geocacheIds.length === 0) {
+                this.messages.warn('Aucune géocache sélectionnée');
+                return;
+            }
+
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const safeZoneName = (this.zoneName || '')
+                .replace(/[^A-Za-z0-9._-]+/g, '_')
+                .replace(/^[_\-.]+|[_\-.]+$/g, '');
+            const zoneSuffix = safeZoneName ? `_${safeZoneName}` : '';
+            const filename = `geoapp${zoneSuffix}_geocaches_${timestamp}.gpx`;
+
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/export-gpx`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    geocache_ids: geocacheIds,
+                    filename,
+                })
+            });
+
+            if (!res.ok) {
+                let errorMsg = `HTTP ${res.status}`;
+                try {
+                    const data = await res.json();
+                    errorMsg = data.error || errorMsg;
+                } catch {
+                    const txt = await res.text();
+                    errorMsg += `: ${txt}`;
+                }
+                throw new Error(errorMsg);
+            }
+
+            const contentDisposition = res.headers.get('Content-Disposition') || '';
+            const filenameMatch = /filename\s*=\s*"?([^";]+)"?/i.exec(contentDisposition);
+            const downloadName = (filenameMatch?.[1] || '').trim() || filename;
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = downloadName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+
+            this.messages.info('Export GPX généré');
+        } catch (e) {
+            console.error('Export GPX error', e);
+            this.messages.error('Erreur lors de l\'export GPX');
+        }
+    }
+
     storeState(): object | undefined {
         if (!this.zoneId) {
             return undefined;
@@ -1441,6 +1498,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                         onCopySelected={(ids) => this.handleCopySelected(ids)}
                         onMoveSelected={(ids) => this.handleMoveSelected(ids)}
                         onApplyPluginSelected={(ids) => this.handleApplyPluginSelected(ids)}
+                        onExportGpxSelected={(ids) => this.handleExportGpxSelected(ids)}
                         onDelete={(geocache) => this.handleDelete(geocache.id, geocache.gc_code)}
                         onRefresh={(id) => this.handleRefresh(id)}
                         onMove={(geocache, targetZoneId) => this.handleMove(geocache, targetZoneId)}

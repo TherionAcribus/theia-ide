@@ -1787,6 +1787,28 @@ const PluginResultDisplay: React.FC<{
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
     };
+
+    const toPercent = (value: any): number => {
+        const v = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(v)) {
+            return 0;
+        }
+        return Math.max(0, Math.min(100, Math.round(v * 100)));
+    };
+
+    const getScoreColor = (score: any): string => {
+        const v = typeof score === 'number' ? score : Number(score);
+        if (!Number.isFinite(v)) {
+            return 'var(--theia-editor-background)';
+        }
+        if (v >= 0.8) {
+            return 'var(--theia-button-background)';
+        }
+        if (v >= 0.5) {
+            return 'var(--theia-list-hoverBackground)';
+        }
+        return 'var(--theia-editor-background)';
+    };
     
     // Trier les résultats par confiance (décroissante) si disponible
     let sortedResults: any[] = [];
@@ -1916,18 +1938,39 @@ const PluginResultDisplay: React.FC<{
                                     }}
                                 >
                                     {/* Badge de confiance en haut à droite */}
-                                    {item.confidence !== undefined && (
-                                        <div style={{ 
-                                            position: 'absolute', 
-                                            top: '8px', 
+                                    {(item.confidence !== undefined || (item.metadata as any)?.plugin_confidence !== undefined) && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '8px',
                                             right: '8px',
-                                            padding: '4px 8px',
-                                            background: item.confidence > 0.7 ? 'var(--theia-button-background)' : 'var(--theia-editor-background)',
-                                            borderRadius: '3px',
-                                            fontSize: '11px',
-                                            fontWeight: 'bold'
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '4px',
+                                            alignItems: 'flex-end'
                                         }}>
-                                            🎯 {Math.round(item.confidence * 100)}%
+                                            {item.confidence !== undefined && (
+                                                <div style={{
+                                                    padding: '4px 8px',
+                                                    background: getScoreColor(item.confidence),
+                                                    borderRadius: '3px',
+                                                    fontSize: '11px',
+                                                    fontWeight: 'bold'
+                                                }}>
+                                                    🎯 Score {toPercent(item.confidence)}%
+                                                </div>
+                                            )}
+                                            {(item.metadata as any)?.plugin_confidence !== undefined && (
+                                                <div style={{
+                                                    padding: '3px 8px',
+                                                    background: 'var(--theia-editor-background)',
+                                                    border: '1px solid var(--theia-panel-border)',
+                                                    borderRadius: '3px',
+                                                    fontSize: '10px',
+                                                    opacity: 0.9
+                                                }}>
+                                                    🔎 Plugin {toPercent((item.metadata as any).plugin_confidence)}%
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     
@@ -2096,11 +2139,86 @@ const PluginResultDisplay: React.FC<{
                                         </div>
                                     )}
 
+                                    {(() => {
+                                        const scoring = (item.metadata as any)?.scoring;
+                                        if (!scoring || typeof scoring !== 'object') {
+                                            return null;
+                                        }
+
+                                        const features = scoring.features || {};
+                                        return (
+                                            <div style={{ marginTop: '10px' }}>
+                                                <details>
+                                                    <summary style={{ cursor: 'pointer', fontSize: '12px', opacity: 0.85 }}>
+                                                        🧠 Détails scoring
+                                                    </summary>
+                                                    <div style={{
+                                                        marginTop: '8px',
+                                                        padding: '10px',
+                                                        background: 'var(--theia-editor-background)',
+                                                        border: '1px solid var(--theia-panel-border)',
+                                                        borderRadius: '4px',
+                                                        fontSize: '12px'
+                                                    }}>
+                                                        {scoring.explanation && (
+                                                            <div style={{ marginBottom: '6px', opacity: 0.9 }}>
+                                                                <strong>Explication:</strong> {String(scoring.explanation)}
+                                                            </div>
+                                                        )}
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', opacity: 0.85 }}>
+                                                            {scoring.language_detected && (
+                                                                <div>
+                                                                    <strong>Langue:</strong> {String(scoring.language_detected)}
+                                                                    {scoring.language_confidence !== undefined && (
+                                                                        <> ({toPercent(scoring.language_confidence)}%)</>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {scoring.early_exit && (
+                                                                <div>
+                                                                    <strong>Early-exit:</strong> {String(scoring.early_exit)}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px 12px' }}>
+                                                            {features.gps_confidence !== undefined && (
+                                                                <div><strong>GPS</strong>: {toPercent(features.gps_confidence)}%</div>
+                                                            )}
+                                                            {features.coord_words !== undefined && (
+                                                                <div><strong>Mots coords</strong>: {toPercent(features.coord_words)}%</div>
+                                                            )}
+                                                            {features.lexical_coverage !== undefined && (
+                                                                <div><strong>Lexical</strong>: {toPercent(features.lexical_coverage)}%</div>
+                                                            )}
+                                                            {features.ngram_fitness !== undefined && (
+                                                                <div><strong>N-grams</strong>: {toPercent(features.ngram_fitness)}%</div>
+                                                            )}
+                                                            {features.quadgram_fitness !== undefined && (
+                                                                <div><strong>Quadgrams</strong>: {toPercent(features.quadgram_fitness)}%</div>
+                                                            )}
+                                                            {features.repetition_quality !== undefined && (
+                                                                <div><strong>Répétitions</strong>: {toPercent(features.repetition_quality)}%</div>
+                                                            )}
+                                                            {features.ic !== undefined && (
+                                                                <div><strong>IC</strong>: {Number(features.ic).toFixed ? Number(features.ic).toFixed(3) : String(features.ic)}</div>
+                                                            )}
+                                                            {features.entropy !== undefined && (
+                                                                <div><strong>Entropie</strong>: {Number(features.entropy).toFixed ? Number(features.entropy).toFixed(2) : String(features.entropy)}</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        );
+                                    })()}
+
                                     {item.metadata && Object.keys(item.metadata).length > 0 && (
                                         <div className='result-metadata'>
                                             <strong>Métadonnées:</strong>
                                             <ul>
-                                                {Object.entries(item.metadata).map(([k, v]) => (
+                                                {Object.entries(item.metadata)
+                                                    .filter(([k]) => k !== 'scoring')
+                                                    .map(([k, v]) => (
                                                     <li key={k}>
                                                         <strong>{k}:</strong>{' '}
                                                         {v !== null && typeof v === 'object'

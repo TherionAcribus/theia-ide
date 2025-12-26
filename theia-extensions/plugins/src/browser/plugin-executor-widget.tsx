@@ -731,8 +731,21 @@ const PluginExecutorComponent: React.FC<{
             if (item.text_output) {
                 try {
                     console.log('[Coordinates Detection] Analyse du texte:', item.text_output.substring(0, 50), '...');
+
+                    const writtenMode = state.formInputs.detect_written_coordinates === true;
+                    const writtenLangMode = String(state.formInputs.written_coordinates_language || 'auto');
+                    const writtenLanguages =
+                        writtenLangMode === 'fr,en' ? ['fr', 'en'] :
+                        writtenLangMode === 'fr' ? ['fr'] :
+                        writtenLangMode === 'en' ? ['en'] :
+                        ['auto'];
+
                     const coords = await pluginsService.detectCoordinates(item.text_output, {
                         includeNumericOnly: false,
+                        includeWritten: writtenMode,
+                        writtenLanguages,
+                        writtenMaxCandidates: 20,
+                        writtenIncludeDeconcat: true,
                         originCoords
                     });
                     
@@ -1541,6 +1554,40 @@ const PluginExecutorComponent: React.FC<{
                         <div className='field-description' style={{ marginLeft: '24px', fontSize: '12px', opacity: 0.7 }}>
                             Recherche automatique de coordonnées dans les résultats (peut ralentir l'affichage)
                         </div>
+
+                        {state.formInputs.detect_coordinates && (
+                            <div style={{ marginLeft: '24px', marginTop: '8px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                    <input
+                                        type='checkbox'
+                                        checked={state.formInputs.detect_written_coordinates || false}
+                                        onChange={(e) => handleInputChange('detect_written_coordinates', e.target.checked)}
+                                        disabled={state.isExecuting}
+                                        style={{ marginRight: '8px' }}
+                                    />
+                                    <span>📝 Inclure coordonnées écrites (mots)</span>
+                                </label>
+
+                                {state.formInputs.detect_written_coordinates && (
+                                    <div style={{ marginTop: '6px' }}>
+                                        <label style={{ fontSize: '12px', opacity: 0.8, display: 'block', marginBottom: '4px' }}>
+                                            Langue (simple)
+                                        </label>
+                                        <select
+                                            value={String(state.formInputs.written_coordinates_language || 'auto')}
+                                            onChange={(e) => handleInputChange('written_coordinates_language', e.target.value)}
+                                            disabled={state.isExecuting}
+                                            style={{ width: '220px' }}
+                                        >
+                                            <option value='auto'>Auto</option>
+                                            <option value='fr'>FR</option>
+                                            <option value='en'>EN</option>
+                                            <option value='fr,en'>FR + EN</option>
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

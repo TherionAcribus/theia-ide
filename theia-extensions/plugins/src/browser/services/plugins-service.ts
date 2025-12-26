@@ -157,6 +157,10 @@ export class PluginsServiceImpl implements IPluginsService {
      */
     async detectCoordinates(text: string, options?: {
         includeNumericOnly?: boolean;
+        includeWritten?: boolean;
+        writtenLanguages?: string[];
+        writtenMaxCandidates?: number;
+        writtenIncludeDeconcat?: boolean;
         originCoords?: { ddm_lat: string; ddm_lon: string };
     }): Promise<{
         exist: boolean;
@@ -165,11 +169,16 @@ export class PluginsServiceImpl implements IPluginsService {
         ddm?: string;
         decimal_latitude?: number;
         decimal_longitude?: number;
+        written?: any;
     }> {
         try {
             const response = await this.client.post('/api/detect_coordinates', {
                 text,
                 include_numeric_only: options?.includeNumericOnly || false,
+                include_written: options?.includeWritten || false,
+                written_languages: options?.writtenLanguages,
+                written_max_candidates: options?.writtenMaxCandidates,
+                written_include_deconcat: options?.writtenIncludeDeconcat,
                 origin_coords: options?.originCoords
             });
             

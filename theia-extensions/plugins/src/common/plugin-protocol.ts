@@ -305,11 +305,18 @@ export interface PluginsService {
      */
     detectCoordinates(text: string, options?: {
         includeNumericOnly?: boolean;
+        includeWritten?: boolean;
+        writtenLanguages?: string[];
+        writtenMaxCandidates?: number;
+        writtenIncludeDeconcat?: boolean;
         originCoords?: { ddm_lat: string; ddm_lon: string };
     }): Promise<{
         exist: boolean;
         ddm_lat?: string;
         ddm_lon?: string;
         ddm?: string;
+        decimal_latitude?: number;
+        decimal_longitude?: number;
+        written?: any;
     }>;
 }

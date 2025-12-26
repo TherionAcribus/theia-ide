@@ -1636,6 +1636,7 @@ const PluginExecutorComponent: React.FC<{
                         configMode={config.mode}
                         geocacheContext={config.geocacheContext}
                         pluginName={state.pluginDetails?.name || state.selectedPlugin}
+                        pluginsService={pluginsService}
                         onRequestAddWaypoint={handleRequestAddWaypoint}
                         onVerifyCoordinates={handleVerifyCoordinates}
                         messageService={messageService}
@@ -1812,10 +1813,11 @@ const PluginResultDisplay: React.FC<{
     configMode: PluginExecutorMode;
     geocacheContext?: GeocacheContext;
     pluginName?: string | null;
+    pluginsService: PluginsService;
     onRequestAddWaypoint?: (detail: AddWaypointEventDetail) => void;
     onVerifyCoordinates?: (coords?: { formatted?: string; latitude?: string; longitude?: string }) => Promise<{ status?: 'success' | 'failure' | 'unknown'; message?: string }>;
     messageService: MessageService;
-}> = ({ result, configMode, geocacheContext, pluginName, onRequestAddWaypoint, onVerifyCoordinates, messageService }) => {
+}> = ({ result, configMode, geocacheContext, pluginName, pluginsService, onRequestAddWaypoint, onVerifyCoordinates, messageService }) => {
     console.log('=== PluginResultDisplay RENDER ===');
     console.log('Received result:', result);
     console.log('result.results:', result.results);
@@ -1823,6 +1825,8 @@ const PluginResultDisplay: React.FC<{
 
     const [verifiedCoordinates, setVerifiedCoordinates] = React.useState<Record<string, { status?: string; message?: string }>>({});
     const [verifyingCoordinates, setVerifyingCoordinates] = React.useState<Record<string, boolean>>({});
+    const [detectingCoordinates, setDetectingCoordinates] = React.useState<Record<string, boolean>>({});
+    const [manualDetectedCoordinates, setManualDetectedCoordinates] = React.useState<Record<string, { latitude?: string; longitude?: string; formatted?: string }>>({});
 
     // Vérifications de sécurité
     if (!result) {
@@ -1886,6 +1890,25 @@ const PluginResultDisplay: React.FC<{
         const lat = (coords.latitude || '').toString().trim();
         const lon = (coords.longitude || '').toString().trim();
         return `${lat} ${lon}`.trim();
+    };
+
+    const getItemKey = (item: any, index: number): string => {
+        const id = (item && (item.id || item._id)) ? String(item.id || item._id) : '';
+        if (id) {
+            return id;
+        }
+        const text = (item && item.text_output) ? String(item.text_output).slice(0, 40) : '';
+        return `${pluginName || 'result'}_${index}_${text}`;
+    };
+
+    const buildOriginCoords = (): { ddm_lat: string; ddm_lon: string } | undefined => {
+        if (!geocacheContext?.coordinates?.latitude || !geocacheContext?.coordinates?.longitude) {
+            return undefined;
+        }
+        return {
+            ddm_lat: `N ${geocacheContext.coordinates.latitude}`,
+            ddm_lon: `E ${geocacheContext.coordinates.longitude}`
+        };
     };
 
     const buildGcCoords = (coords?: {
@@ -1963,7 +1986,10 @@ const PluginResultDisplay: React.FC<{
                         console.log(`Rendering result ${index}:`, item);
                         try {
                             const gpsCoordinates = (item.metadata as any)?.gps_coordinates;
+                            const itemKey = getItemKey(item, index);
+                            const manualCoords = manualDetectedCoordinates[itemKey];
                             const resolvedCoordinates =
+                                manualCoords ||
                                 item.coordinates ||
                                 (gpsCoordinates && gpsCoordinates.exist
                                     ? {
@@ -2037,6 +2063,50 @@ const PluginResultDisplay: React.FC<{
                                                     fontFamily: 'monospace',
                                                     fontSize: '13px'
                                                 }}>{item.text_output}</pre>
+                                                <button
+                                                    className='theia-button secondary'
+                                                    onClick={async () => {
+                                                        const text = item.text_output ? String(item.text_output) : '';
+                                                        if (!text.trim()) {
+                                                            return;
+                                                        }
+
+                                                        setDetectingCoordinates(prev => ({ ...prev, [itemKey]: true }));
+                                                        try {
+                                                            const coords = await pluginsService.detectCoordinates(text, {
+                                                                includeNumericOnly: false,
+                                                                includeWritten: true,
+                                                                writtenLanguages: ['fr', 'en'],
+                                                                writtenMaxCandidates: 50,
+                                                                writtenIncludeDeconcat: true,
+                                                                originCoords: buildOriginCoords(),
+                                                            });
+
+                                                            if (coords && coords.exist) {
+                                                                setManualDetectedCoordinates(prev => ({
+                                                                    ...prev,
+                                                                    [itemKey]: {
+                                                                        latitude: coords.ddm_lat || '',
+                                                                        longitude: coords.ddm_lon || '',
+                                                                        formatted: coords.ddm || '',
+                                                                    }
+                                                                }));
+                                                                messageService.info('Coordonnées détectées et ajoutées au résultat.');
+                                                            } else {
+                                                                messageService.info('Aucune coordonnée détectée sur ce résultat.');
+                                                            }
+                                                        } catch (e) {
+                                                            messageService.error(`Erreur détection coordonnées: ${String(e)}`);
+                                                        } finally {
+                                                            setDetectingCoordinates(prev => ({ ...prev, [itemKey]: false }));
+                                                        }
+                                                    }}
+                                                    title='Détecter coordonnées (texte, toutes langues)'
+                                                    disabled={!!detectingCoordinates[itemKey]}
+                                                    style={{ position: 'absolute', top: '5px', right: '45px', padding: '4px 8px' }}
+                                                >
+                                                    {detectingCoordinates[itemKey] ? '⏳' : '📍'}
+                                                </button>
                                                 <button
                                                     className='theia-button secondary'
                                                     onClick={() => copyToClipboard(item.text_output!)}

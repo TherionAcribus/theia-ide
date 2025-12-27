@@ -149,6 +149,23 @@ function rot13(value: string): string {
     });
 }
 
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function rawTextToHtml(value?: string): string {
+    if (!value) {
+        return '';
+    }
+    const escaped = escapeHtml(value);
+    return escaped.replace(/\r\n|\n|\r/g, '<br/>');
+}
+
 /**
  * Wrapper pour WaypointsEditor qui expose le callback startEdit
  */
@@ -636,6 +653,173 @@ interface CoordinatesEditorProps {
     messages: MessageService;
 }
 
+type DescriptionVariant = 'original' | 'modified';
+
+interface DescriptionEditorProps {
+    geocacheData: GeocacheDto;
+    geocacheId: number;
+    backendBaseUrl: string;
+    onUpdate: () => Promise<void>;
+    messages: MessageService;
+    defaultVariant: DescriptionVariant;
+    onVariantChange: (variant: DescriptionVariant) => void;
+    getEffectiveDescriptionHtml: (data: GeocacheDto, variant: DescriptionVariant) => string;
+}
+
+const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
+    geocacheData,
+    geocacheId,
+    backendBaseUrl,
+    onUpdate,
+    messages,
+    defaultVariant,
+    onVariantChange,
+    getEffectiveDescriptionHtml
+}) => {
+    const [variant, setVariant] = React.useState<DescriptionVariant>(defaultVariant);
+    const [isEditing, setIsEditing] = React.useState(false);
+    const [editedRaw, setEditedRaw] = React.useState('');
+
+    const hasModified = Boolean(geocacheData.description_override_raw) || Boolean(geocacheData.description_override_html);
+
+    React.useEffect(() => {
+        setVariant(defaultVariant);
+        setIsEditing(false);
+        setEditedRaw('');
+    }, [geocacheId, defaultVariant]);
+
+    const switchVariant = (next: DescriptionVariant) => {
+        setVariant(next);
+        onVariantChange(next);
+    };
+
+    const startEdit = () => {
+        const currentRaw = geocacheData.description_override_raw ?? geocacheData.description_raw ?? '';
+        setEditedRaw(currentRaw);
+        setIsEditing(true);
+        switchVariant('modified');
+    };
+
+    const cancelEdit = () => {
+        setIsEditing(false);
+        setEditedRaw('');
+    };
+
+    const saveDescription = async () => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/description`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    description_override_raw: editedRaw,
+                    description_override_html: rawTextToHtml(editedRaw)
+                })
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            await onUpdate();
+            setIsEditing(false);
+            messages.info('Description mise à jour');
+        } catch (e) {
+            console.error('Save description error', e);
+            messages.error('Erreur lors de la mise à jour de la description');
+        }
+    };
+
+    const resetDescription = async () => {
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/reset-description`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            await onUpdate();
+            setIsEditing(false);
+            setEditedRaw('');
+            switchVariant('original');
+            messages.info('Description réinitialisée');
+        } catch (e) {
+            console.error('Reset description error', e);
+            messages.error('Erreur lors de la réinitialisation de la description');
+        }
+    };
+
+    const displayLabel = variant === 'modified' ? 'Modifiée' : 'Originale';
+    const effectiveHtml = getEffectiveDescriptionHtml(geocacheData, variant);
+
+    return (
+        <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <strong>Description</strong>
+                    <span style={{ opacity: 0.75, fontSize: 12 }}>(version: {displayLabel})</span>
+                    {hasModified ? (
+                        <span style={{ opacity: 0.75, fontSize: 12 }}>(modif. présente)</span>
+                    ) : (
+                        <span style={{ opacity: 0.75, fontSize: 12 }}>(pas de modif.)</span>
+                    )}
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                        className='theia-button secondary'
+                        onClick={() => switchVariant('original')}
+                        disabled={isEditing || variant === 'original'}
+                    >
+                        Originale
+                    </button>
+                    <button
+                        className='theia-button secondary'
+                        onClick={() => switchVariant('modified')}
+                        disabled={isEditing || (!hasModified && variant === 'modified')}
+                        title={hasModified ? undefined : 'Aucune description modifiée'}
+                    >
+                        Modifiée
+                    </button>
+                    {!isEditing ? (
+                        <button className='theia-button' onClick={startEdit}>Éditer</button>
+                    ) : undefined}
+                </div>
+            </div>
+
+            {!isEditing ? (
+                <div
+                    style={{ border: '1px solid var(--theia-foreground)', borderRadius: 4, padding: 8, maxWidth: 900 }}
+                    dangerouslySetInnerHTML={{ __html: effectiveHtml }}
+                />
+            ) : (
+                <div style={{ display: 'grid', gap: 8, maxWidth: 900 }}>
+                    <textarea
+                        className='theia-input'
+                        value={editedRaw}
+                        onChange={e => setEditedRaw(e.target.value)}
+                        rows={10}
+                        style={{ width: '100%', resize: 'vertical' }}
+                    />
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+                        <button
+                            className='theia-button secondary'
+                            onClick={resetDescription}
+                            disabled={!hasModified}
+                            title={!hasModified ? 'Aucune description modifiée' : undefined}
+                        >
+                            Revenir à l'originale
+                        </button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
+                            <button className='theia-button' onClick={saveDescription}>Sauvegarder</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 /**
  * Composant pour afficher et éditer les coordonnées d'une géocache
  */
@@ -905,6 +1089,10 @@ type GeocacheDto = {
     status?: string;
     zone_id?: number;
     description_html?: string;
+    description_raw?: string;
+    description_override_html?: string;
+    description_override_raw?: string;
+    description_override_updated_at?: string;
     hints?: string;
     hints_decoded?: string;
     attributes?: GeocacheAttribute[];
@@ -930,8 +1118,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected waypointEditorCallback?: (prefill?: WaypointPrefillPayload) => void;
     protected isSavingWaypoint = false;
     protected interactionTimerId: number | undefined;
+    protected descriptionVariant: DescriptionVariant = 'original';
+    protected descriptionVariantGeocacheId: number | undefined;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
+    private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
     private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
     private readonly imagesGalleryThumbnailSizePreferenceKey = 'geoApp.images.gallery.thumbnailSize';
     private readonly imagesGalleryHiddenDomainsPreferenceKey = 'geoApp.images.gallery.hiddenDomains';
@@ -1237,7 +1428,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         console.log('[GeocacheDetailsWidget] Raw description_html length:', this.data.description_html?.length);
         
         // Comme demandé, on passe le HTML brut pour analyse (commentaires, attributs cachés, etc.)
-        const descriptionHtml = this.data.description_html || '';
+        const descriptionHtml = this.getEffectiveDescriptionHtml(this.data, this.descriptionVariant);
 
         const coordinatesRaw = this.data.coordinates_raw || this.data.original_coordinates_raw;
         let contextCoordinates: GeocacheContext['coordinates'] = undefined;
@@ -1295,7 +1486,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
 
-        const descriptionHtml = this.data.description_html || '';
+        const descriptionHtml = this.getEffectiveDescriptionHtml(this.data, this.descriptionVariant);
 
         const coordinatesRaw = this.data.coordinates_raw || this.data.original_coordinates_raw;
         let contextCoordinates: GeocacheContext['coordinates'] = undefined;
@@ -1402,6 +1593,38 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return raw;
         }
         return 'manual';
+    }
+
+    protected getDefaultDescriptionVariant(data: GeocacheDto): DescriptionVariant {
+        const raw = this.preferenceService.get(this.descriptionDefaultVariantPreferenceKey, 'auto') as string;
+        const hasModified = Boolean(data.description_override_raw) || Boolean(data.description_override_html);
+        if (raw === 'original') {
+            return 'original';
+        }
+        if (raw === 'modified') {
+            return hasModified ? 'modified' : 'original';
+        }
+        return hasModified ? 'modified' : 'original';
+    }
+
+    protected getEffectiveDescriptionHtml(data: GeocacheDto, variant: DescriptionVariant): string {
+        if (variant === 'modified') {
+            if (data.description_override_html) {
+                return data.description_override_html;
+            }
+            if (data.description_override_raw) {
+                return rawTextToHtml(data.description_override_raw);
+            }
+            return '';
+        }
+
+        if (data.description_html) {
+            return data.description_html;
+        }
+        if (data.description_raw) {
+            return rawTextToHtml(data.description_raw);
+        }
+        return '';
     }
 
     protected async autoSyncGcPersonalNoteFromDetailsIfEnabled(): Promise<void> {
@@ -1534,6 +1757,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}`, { credentials: 'include' });
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             this.data = await res.json();
+            if (this.data && this.descriptionVariantGeocacheId !== this.geocacheId) {
+                this.descriptionVariant = this.getDefaultDescriptionVariant(this.data);
+                this.descriptionVariantGeocacheId = this.geocacheId;
+            }
             this.title.label = `Géocache - ${this.data?.name ?? this.data?.gc_code ?? this.geocacheId}`;
             
             // Rafraîchir la carte associée avec les données à jour
@@ -2264,11 +2491,19 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             </table>
                         </details>
 
-                        <div>
-                            <h4 style={{ margin: '8px 0' }}>Description</h4>
-                            <div style={{ border: '1px solid var(--theia-foreground)', borderRadius: 4, padding: 8, maxWidth: 900 }}
-                                dangerouslySetInnerHTML={{ __html: d.description_html || '' }} />
-                        </div>
+                        <DescriptionEditor
+                            geocacheData={d}
+                            geocacheId={this.geocacheId!}
+                            backendBaseUrl={this.backendBaseUrl}
+                            onUpdate={() => this.load()}
+                            messages={this.messages}
+                            defaultVariant={this.descriptionVariant}
+                            onVariantChange={(variant) => {
+                                this.descriptionVariant = variant;
+                                this.update();
+                            }}
+                            getEffectiveDescriptionHtml={(data, variant) => this.getEffectiveDescriptionHtml(data, variant)}
+                        />
 
                         {displayedHints ? (
                             <div>

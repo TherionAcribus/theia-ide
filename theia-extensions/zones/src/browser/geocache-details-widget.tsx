@@ -49,6 +49,8 @@ type GeocacheWaypoint = {
     longitude?: number;
     gc_coords?: string;
     note?: string;
+    note_override?: string;
+    note_override_updated_at?: string;
 };
 type GeocacheChecker = { id?: number; name?: string; url?: string };
 
@@ -256,6 +258,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
 
     // Copier tout le reste du code de WaypointsEditor...
     const duplicateWaypoint = (waypoint: GeocacheWaypoint) => {
+        const note = waypoint.note_override ?? waypoint.note;
         setEditingId('new');
         setEditForm({
             prefix: waypoint.prefix,
@@ -265,7 +268,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             latitude: undefined,
             longitude: undefined,
             gc_coords: waypoint.gc_coords,
-            note: waypoint.note
+            note_override: note
         });
         setCalculatedCoords('');
     };
@@ -279,13 +282,15 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
     const saveWaypoint = async () => {
         if (!geocacheId) { return; }
         try {
+            const noteToSave = (editForm.note_override ?? editForm.note) || '';
             const dataToSave = {
                 prefix: editForm.prefix,
                 lookup: editForm.lookup,
                 name: editForm.name,
                 type: editForm.type,
                 gc_coords: editForm.gc_coords,
-                note: editForm.note
+                note: noteToSave,
+                note_override: noteToSave
             };
             
             console.log('[WaypointsEditor] 🔍 SAVE WAYPOINT');
@@ -564,8 +569,8 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                         <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 2 }}>Note</label>
                         <textarea
                             className='theia-input'
-                            value={editForm.note || ''}
-                            onChange={e => setEditForm({ ...editForm, note: e.target.value })}
+                            value={(editForm.note_override ?? editForm.note) || ''}
+                            onChange={e => setEditForm({ ...editForm, note_override: e.target.value })}
                             rows={3}
                             style={{ width: '100%', resize: 'vertical' }}
                         />
@@ -610,7 +615,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                 <td>{w.name}</td>
                                 <td>{w.type}</td>
                                 <td>{w.gc_coords || (w.latitude !== undefined && w.longitude !== undefined ? `${w.latitude}, ${w.longitude}` : '')}</td>
-                                <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.note}</td>
+                                <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.note_override ?? w.note}</td>
                                 <td>
                                     <div style={{ display: 'flex', gap: 4 }}>
                                         <button
@@ -684,6 +689,8 @@ interface DescriptionEditorProps {
     getEffectiveDescriptionHtml: (data: GeocacheDto, variant: DescriptionVariant) => string;
     onTranslateToFrench: () => Promise<void>;
     isTranslating: boolean;
+    onTranslateAllToFrench: () => Promise<void>;
+    isTranslatingAll: boolean;
 }
 
 const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
@@ -696,7 +703,9 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
     onVariantChange,
     getEffectiveDescriptionHtml,
     onTranslateToFrench,
-    isTranslating
+    isTranslating,
+    onTranslateAllToFrench,
+    isTranslatingAll
 }) => {
     const [variant, setVariant] = React.useState<DescriptionVariant>(defaultVariant);
     const [isEditing, setIsEditing] = React.useState(false);
@@ -809,6 +818,14 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                         title='Traduire la description originale en français (conserve le HTML)'
                     >
                         {isTranslating ? 'Traduction…' : 'Traduire (FR)'}
+                    </button>
+                    <button
+                        className='theia-button secondary'
+                        onClick={() => { void onTranslateAllToFrench(); }}
+                        disabled={isEditing || isTranslatingAll}
+                        title='Traduire en français : description + indices + notes de waypoints'
+                    >
+                        {isTranslatingAll ? 'Traduction…' : 'Traduire tout (FR)'}
                     </button>
                     {!isEditing ? (
                         <button className='theia-button' onClick={startEdit}>Éditer</button>
@@ -1125,6 +1142,8 @@ type GeocacheDto = {
     description_override_updated_at?: string;
     hints?: string;
     hints_decoded?: string;
+    hints_decoded_override?: string;
+    hints_decoded_override_updated_at?: string;
     attributes?: GeocacheAttribute[];
     favorites_count?: number;
     logs_count?: number;
@@ -1151,6 +1170,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected descriptionVariant: DescriptionVariant = 'original';
     protected descriptionVariantGeocacheId: number | undefined;
     protected isTranslatingDescription = false;
+    protected isTranslatingAllContent = false;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -2348,6 +2368,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     private getDecodedHints(data: GeocacheDto): string | undefined {
+        if (data.hints_decoded_override) {
+            return data.hints_decoded_override;
+        }
         if (data.hints_decoded) {
             return data.hints_decoded;
         }
@@ -2355,6 +2378,121 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return undefined;
         }
         return rot13(data.hints);
+    }
+
+    protected async translateAllToFrench(): Promise<void> {
+        if (!this.data || !this.geocacheId) {
+            this.messages.warn('Aucune géocache chargée');
+            return;
+        }
+
+        if (this.isTranslatingAllContent) {
+            return;
+        }
+
+        const hasAnyOverride =
+            Boolean(this.data.description_override_html) ||
+            Boolean(this.data.description_override_raw) ||
+            Boolean(this.data.hints_decoded_override) ||
+            Boolean((this.data.waypoints || []).some(w => Boolean(w.note_override)));
+
+        if (hasAnyOverride) {
+            const dialog = new ConfirmDialog({
+                title: 'Traduire tout le contenu',
+                msg: 'Des valeurs modifiées existent déjà (description, indices, ou notes de waypoints). Voulez-vous les remplacer par la traduction ?'
+            });
+            const ok = await dialog.open();
+            if (!ok) {
+                return;
+            }
+        }
+
+        const sourceHtml = this.getEffectiveDescriptionHtml(this.data, 'original');
+        const sourceHints = this.data.hints_decoded || (this.data.hints ? rot13(this.data.hints) : '');
+        const sourceWaypoints = (this.data.waypoints || []).map(w => ({
+            id: w.id,
+            note: (w.note || '').toString(),
+        })).filter(w => typeof w.id === 'number');
+
+        this.isTranslatingAllContent = true;
+        this.update();
+
+        try {
+            const languageModel = await this.languageModelRegistry.selectLanguageModel({
+                agent: GeoAppTranslateDescriptionAgentId,
+                purpose: 'chat',
+                identifier: 'default/universal'
+            });
+            if (!languageModel) {
+                this.messages.error('Aucun modèle IA n\'est configuré pour la traduction (vérifie la configuration IA de Theia)');
+                return;
+            }
+
+            const input = {
+                description_html: sourceHtml,
+                hints_decoded: sourceHints,
+                waypoints: sourceWaypoints,
+            };
+
+            const prompt =
+                'Traduis en français le contenu suivant et renvoie UNIQUEMENT un JSON valide.\n'
+                + 'Contraintes :\n'
+                + '- description_html : conserve strictement le HTML (balises/attributs/liens/images), ne traduis que le texte.\n'
+                + '- Ne traduis pas les coordonnées, codes GC, URLs, ni les identifiants techniques.\n'
+                + '- waypoints : conserve les ids, traduis uniquement la note.\n'
+                + 'Schéma JSON de sortie : {"description_html": string, "hints_decoded": string, "waypoints": [{"id": number, "note": string}] }\n';
+
+            const request: UserRequest = {
+                messages: [
+                    { actor: 'user', type: 'text', text: `${prompt}\nINPUT_JSON:\n${JSON.stringify(input)}` },
+                ],
+                agentId: GeoAppTranslateDescriptionAgentId,
+                requestId: `geoapp-translate-all-${Date.now()}`,
+                sessionId: `geoapp-translate-all-session-${Date.now()}`,
+            };
+
+            const response = await this.languageModelService.sendRequest(languageModel, request);
+            let parsed: any;
+            try {
+                parsed = await getJsonOfResponse(response) as any;
+            } catch {
+                const text = await getTextOfResponse(response);
+                parsed = JSON.parse(text);
+            }
+
+            const translatedHtml = (parsed?.description_html || '').toString();
+            const translatedHints = (parsed?.hints_decoded || '').toString();
+            const translatedWaypoints = Array.isArray(parsed?.waypoints) ? parsed.waypoints : [];
+
+            const payload = {
+                description_override_html: translatedHtml,
+                description_override_raw: htmlToRawText(translatedHtml),
+                hints_decoded_override: translatedHints,
+                waypoints: translatedWaypoints
+                    .filter((w: any) => w && typeof w.id === 'number' && w.note !== undefined && w.note !== null)
+                    .map((w: any) => ({ id: w.id, note_override: String(w.note) })),
+            };
+
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/translated-content`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            this.descriptionVariant = 'modified';
+            await this.load();
+            this.messages.info('Traduction enregistrée (description + indices + waypoints)');
+        } catch (e) {
+            console.error('[GeocacheDetailsWidget] translateAllToFrench error', e);
+            this.messages.error(`Traduction IA: erreur (${String(e)})`);
+        } finally {
+            this.isTranslatingAllContent = false;
+            this.update();
+        }
     }
 
     private toggleHintsDisplayMode = async (): Promise<void> => {
@@ -2476,7 +2614,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         const displayDecodedHints = this.preferenceService.get(this.displayDecodedHintsPreferenceKey, false) as boolean;
         const decodedHints = d ? this.getDecodedHints(d) : undefined;
         const rawHints = d?.hints;
-        const hasHints = Boolean(rawHints) || Boolean(d?.hints_decoded);
+        const hasHints = Boolean(rawHints) || Boolean(d?.hints_decoded) || Boolean(d?.hints_decoded_override);
         const displayedHints = hasHints
             ? (displayDecodedHints ? (decodedHints || rawHints) : (rawHints || decodedHints))
             : undefined;
@@ -2647,6 +2785,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             getEffectiveDescriptionHtml={(data, variant) => this.getEffectiveDescriptionHtml(data, variant)}
                             onTranslateToFrench={() => this.translateDescriptionToFrench()}
                             isTranslating={this.isTranslatingDescription}
+                            onTranslateAllToFrench={() => this.translateAllToFrench()}
+                            isTranslatingAll={this.isTranslatingAllContent}
                         />
 
                         {displayedHints ? (

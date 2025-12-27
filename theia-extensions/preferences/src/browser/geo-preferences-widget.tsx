@@ -72,6 +72,16 @@ export class GeoPreferencesWidget extends ReactWidget {
                                     Configurer OCR (IA)
                                 </button>
                             )}
+                            {category === 'ai' && (
+                                <button
+                                    className='theia-button secondary'
+                                    type='button'
+                                    onClick={() => { void this.openAiConfiguration(); }}
+                                    title='Ouvrir la configuration IA pour choisir le modèle utilisé par les agents Theia (ex: Traduction GeoApp)'
+                                >
+                                    Configurer Agent Theia (IA)
+                                </button>
+                            )}
                         </div>
                     </header>
                     <div className='geo-preferences-items'>

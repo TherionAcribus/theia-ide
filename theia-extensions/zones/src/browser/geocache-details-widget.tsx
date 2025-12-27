@@ -6,7 +6,7 @@ import { ApplicationShell, ConfirmDialog, StatefulWidget } from '@theia/core/lib
 import { CommandService } from '@theia/core';
 import { ChatAgent, ChatAgentLocation, ChatAgentService, ChatService, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
 import { DEFAULT_CHAT_AGENT_PREF } from '@theia/ai-chat/lib/common/ai-chat-preferences';
-import { LanguageModelRegistry, LanguageModelService } from '@theia/ai-core';
+import { LanguageModelRegistry, LanguageModelService, UserRequest, getJsonOfResponse, getTextOfResponse, isLanguageModelParsedResponse } from '@theia/ai-core';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
 import { GeocacheContext } from '@mysterai/theia-plugins/lib/browser/plugin-executor-widget';
@@ -14,6 +14,7 @@ import { FormulaSolverSolveFromGeocacheCommand } from '@mysterai/theia-formula-s
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 import { GeocacheImagesPanel } from './geocache-images-panel';
+import { GeoAppTranslateDescriptionAgentId } from './geoapp-translate-description-agent';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -164,6 +165,23 @@ function rawTextToHtml(value?: string): string {
     }
     const escaped = escapeHtml(value);
     return escaped.replace(/\r\n|\n|\r/g, '<br/>');
+}
+
+function htmlToRawText(value?: string): string {
+    const html = (value || '').toString();
+    if (!html.trim()) {
+        return '';
+    }
+    if (typeof document === 'undefined') {
+        return html;
+    }
+    try {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        return (div.innerText || div.textContent || '').toString();
+    } catch {
+        return html;
+    }
 }
 
 /**
@@ -664,6 +682,8 @@ interface DescriptionEditorProps {
     defaultVariant: DescriptionVariant;
     onVariantChange: (variant: DescriptionVariant) => void;
     getEffectiveDescriptionHtml: (data: GeocacheDto, variant: DescriptionVariant) => string;
+    onTranslateToFrench: () => Promise<void>;
+    isTranslating: boolean;
 }
 
 const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
@@ -674,7 +694,9 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
     messages,
     defaultVariant,
     onVariantChange,
-    getEffectiveDescriptionHtml
+    getEffectiveDescriptionHtml,
+    onTranslateToFrench,
+    isTranslating
 }) => {
     const [variant, setVariant] = React.useState<DescriptionVariant>(defaultVariant);
     const [isEditing, setIsEditing] = React.useState(false);
@@ -779,6 +801,14 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                         title={hasModified ? undefined : 'Aucune description modifiée'}
                     >
                         Modifiée
+                    </button>
+                    <button
+                        className='theia-button secondary'
+                        onClick={() => { void onTranslateToFrench(); }}
+                        disabled={isEditing || isTranslating}
+                        title='Traduire la description originale en français (conserve le HTML)'
+                    >
+                        {isTranslating ? 'Traduction…' : 'Traduire (FR)'}
                     </button>
                     {!isEditing ? (
                         <button className='theia-button' onClick={startEdit}>Éditer</button>
@@ -1120,6 +1150,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected interactionTimerId: number | undefined;
     protected descriptionVariant: DescriptionVariant = 'original';
     protected descriptionVariantGeocacheId: number | undefined;
+    protected isTranslatingDescription = false;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -1625,6 +1656,117 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return rawTextToHtml(data.description_raw);
         }
         return '';
+    }
+
+    protected async translateDescriptionToFrench(): Promise<void> {
+        if (!this.data || !this.geocacheId) {
+            this.messages.warn('Aucune géocache chargée');
+            return;
+        }
+
+        if (this.isTranslatingDescription) {
+            return;
+        }
+
+        const hasModified = Boolean(this.data.description_override_raw) || Boolean(this.data.description_override_html);
+        if (hasModified) {
+            const dialog = new ConfirmDialog({
+                title: 'Traduire la description',
+                msg: 'Une description modifiée existe déjà. Voulez-vous la remplacer par la traduction ?'
+            });
+            const ok = await dialog.open();
+            if (!ok) {
+                return;
+            }
+        }
+
+        const sourceHtml = this.getEffectiveDescriptionHtml(this.data, 'original');
+        if (!sourceHtml.trim()) {
+            this.messages.warn('Description originale vide');
+            return;
+        }
+
+        this.isTranslatingDescription = true;
+        this.update();
+
+        try {
+            const languageModel = await this.languageModelRegistry.selectLanguageModel({
+                agent: GeoAppTranslateDescriptionAgentId,
+                purpose: 'chat',
+                identifier: 'default/universal'
+            });
+
+            if (!languageModel) {
+                this.messages.error('Aucun modèle IA n\'est configuré pour la traduction (vérifie la configuration IA de Theia)');
+                return;
+            }
+
+            const prompt =
+                'Tu es un traducteur. Traduis en français le contenu TEXTUEL du HTML fourni, en conservant le HTML.\n'
+                + '- Ne change pas les balises, attributs, liens, images, classes, ids.\n'
+                + '- Ne traduis pas les coordonnées, codes GC, URLs, ni les identifiants techniques.\n'
+                + '- Ne renvoie que le HTML final, sans markdown, sans explications.';
+
+            const request: UserRequest = {
+                messages: [
+                    { actor: 'user', type: 'text', text: `${prompt}\n\nHTML:\n${sourceHtml}` },
+                ],
+                agentId: GeoAppTranslateDescriptionAgentId,
+                requestId: `geoapp-translate-description-${Date.now()}`,
+                sessionId: `geoapp-translate-description-session-${Date.now()}`,
+            };
+
+            const response = await this.languageModelService.sendRequest(languageModel, request);
+            let translatedHtml = '';
+            if (isLanguageModelParsedResponse(response)) {
+                translatedHtml = JSON.stringify(response.parsed);
+            } else {
+                try {
+                    translatedHtml = await getTextOfResponse(response);
+                } catch {
+                    const jsonResponse = await getJsonOfResponse(response) as any;
+                    translatedHtml = typeof jsonResponse === 'string' ? jsonResponse : String(jsonResponse);
+                }
+            }
+
+            translatedHtml = (translatedHtml || '').toString();
+            translatedHtml = translatedHtml
+                .replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '')
+                .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                .replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]/gi, '')
+                .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
+                .trim();
+
+            if (!translatedHtml) {
+                this.messages.warn('Traduction IA: réponse vide');
+                return;
+            }
+
+            const translatedRaw = htmlToRawText(translatedHtml);
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/description`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    description_override_html: translatedHtml,
+                    description_override_raw: translatedRaw,
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            this.descriptionVariant = 'modified';
+            await this.load();
+            this.messages.info('Traduction enregistrée dans la description modifiée');
+        } catch (e) {
+            console.error('[GeocacheDetailsWidget] translateDescriptionToFrench error', e);
+            this.messages.error(`Traduction IA: erreur (${String(e)})`);
+        } finally {
+            this.isTranslatingDescription = false;
+            this.update();
+        }
     }
 
     protected async autoSyncGcPersonalNoteFromDetailsIfEnabled(): Promise<void> {
@@ -2503,6 +2645,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 this.update();
                             }}
                             getEffectiveDescriptionHtml={(data, variant) => this.getEffectiveDescriptionHtml(data, variant)}
+                            onTranslateToFrench={() => this.translateDescriptionToFrench()}
+                            isTranslating={this.isTranslatingDescription}
                         />
 
                         {displayedHints ? (

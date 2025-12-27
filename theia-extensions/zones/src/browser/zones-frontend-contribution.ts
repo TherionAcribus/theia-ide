@@ -4,6 +4,7 @@ import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheLogsWidget } from './geocache-logs-widget';
 import { GeocacheNotesWidget } from './geocache-notes-widget';
+import { GeocacheLogEditorTabsManager } from './geocache-log-editor-tabs-manager';
 import { MapManagerWidget } from './map/map-manager-widget';
 import { MapWidgetFactory } from './map/map-widget-factory';
 
@@ -19,6 +20,9 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
 
     @inject(MapWidgetFactory)
     protected readonly mapWidgetFactory: MapWidgetFactory;
+
+    @inject(GeocacheLogEditorTabsManager)
+    protected readonly geocacheLogEditorTabsManager: GeocacheLogEditorTabsManager;
 
     async onStart(app: FrontendApplication): Promise<void> {
         console.log('[ZonesFrontendContribution] ========== onStart appelé - extension zones initialisée ==========');
@@ -203,6 +207,25 @@ export class ZonesFrontendContribution implements FrontendApplicationContributio
         };
         window.addEventListener('open-geocache-notes', openNotesHandler);
         document.addEventListener('open-geocache-notes', openNotesHandler);
+
+        // Écouteur pour ouvrir l'éditeur de logs (nouvel onglet)
+        const openLogEditorHandler = async (event: any) => {
+            try {
+                const detail = event?.detail || {};
+                const geocacheIds = Array.isArray(detail.geocacheIds) ? detail.geocacheIds : [];
+                const title = detail.title;
+                if (!geocacheIds.length) {
+                    console.warn('[ZonesFrontendContribution] open-geocache-log-editor: geocacheIds manquant');
+                    return;
+                }
+                await this.geocacheLogEditorTabsManager.openLogEditor({ geocacheIds, title });
+            } catch (error) {
+                console.error('[ZonesFrontendContribution] Erreur lors de l\'ouverture de l\'éditeur de logs:', error);
+            }
+        };
+
+        window.addEventListener('open-geocache-log-editor', openLogEditorHandler);
+        document.addEventListener('open-geocache-log-editor', openLogEditorHandler);
 
         console.log('[ZonesFrontendContribution] ========== Tous les écouteurs sont maintenant actifs ==========');
     }

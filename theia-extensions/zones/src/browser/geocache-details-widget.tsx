@@ -2181,6 +2181,21 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         window.dispatchEvent(event);
     };
 
+    private openLogEditor = (): void => {
+        if (!this.geocacheId || !this.data) {
+            this.messages.warn('Aucune géocache sélectionnée pour loguer.');
+            return;
+        }
+
+        const event = new CustomEvent('open-geocache-log-editor', {
+            detail: {
+                geocacheIds: [this.geocacheId],
+                title: this.data.gc_code ? `Log - ${this.data.gc_code}` : 'Log - 1 géocache',
+            }
+        });
+        window.dispatchEvent(event);
+    };
+
     /**
      * Ouvre le widget des notes pour cette géocache dans le panneau droit
      */
@@ -2669,6 +2684,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             title='Voir les logs de cette géocache'
                                         >
                                             💬 Logs
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={this.openLogEditor}
+                                            style={{ fontSize: 12, padding: '4px 12px' }}
+                                            title='Loguer cette géocache (éditeur)'
+                                        >
+                                            ✍️ Loguer
                                         </button>
                                         <button
                                             className='theia-button secondary'

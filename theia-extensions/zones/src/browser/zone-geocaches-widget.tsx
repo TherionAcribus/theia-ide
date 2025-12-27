@@ -42,6 +42,22 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
 
     protected interactionTimerId: number | undefined;
 
+    protected openLogEditorForSelected = (ids: number[]): void => {
+        if (!ids || ids.length === 0) {
+            this.messages.warn('Aucune géocache sélectionnée');
+            return;
+        }
+        if (typeof window === 'undefined') {
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('open-geocache-log-editor', {
+            detail: {
+                geocacheIds: ids,
+                title: ids.length === 1 ? 'Log - 1 géocache' : `Log - ${ids.length} géocaches`,
+            }
+        }));
+    };
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -1495,6 +1511,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                         onRowClick={(geocache) => this.handleRowClick(geocache)}
                         onDeleteSelected={(ids) => this.handleDeleteSelected(ids)}
                         onRefreshSelected={(ids) => this.handleRefreshSelected(ids)}
+                        onLogSelected={(ids: number[]) => this.openLogEditorForSelected(ids)}
                         onCopySelected={(ids) => this.handleCopySelected(ids)}
                         onMoveSelected={(ids) => this.handleMoveSelected(ids)}
                         onApplyPluginSelected={(ids) => this.handleApplyPluginSelected(ids)}

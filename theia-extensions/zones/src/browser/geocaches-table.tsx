@@ -55,6 +55,7 @@ interface GeocachesTableProps {
     onRowClick?: (geocache: Geocache) => void;
     onDeleteSelected?: (ids: number[]) => void;
     onRefreshSelected?: (ids: number[]) => void;
+    onLogSelected?: (ids: number[]) => void;
     onCopySelected?: (ids: number[]) => void;
     onMoveSelected?: (ids: number[]) => void;
     onApplyPluginSelected?: (ids: number[]) => void;
@@ -73,6 +74,7 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
     onRowClick,
     onDeleteSelected,
     onRefreshSelected,
+    onLogSelected,
     onCopySelected,
     onMoveSelected,
     onApplyPluginSelected,
@@ -344,6 +346,15 @@ export const GeocachesTable: React.FC<GeocachesTableProps> = ({
                         <span style={{ fontSize: '0.9em', opacity: 0.8 }}>
                             {selectedIds.length} sélectionnée(s)
                         </span>
+                        {onLogSelected && (
+                            <button
+                                onClick={() => onLogSelected(selectedIds)}
+                                className="theia-button primary"
+                                title="Loguer les géocaches sélectionnées"
+                            >
+                                ✍️ Loguer
+                            </button>
+                        )}
                         {onApplyPluginSelected && (
                             <button
                                 onClick={() => onApplyPluginSelected(selectedIds)}

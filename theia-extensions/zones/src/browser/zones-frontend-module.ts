@@ -7,6 +7,7 @@ import { ZonesCommandContribution } from './zones-command-contribution';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { GeocacheDetailsWidget } from './geocache-details-widget';
 import { GeocacheLogsWidget } from './geocache-logs-widget';
+import { GeocacheLogEditorWidget } from './geocache-log-editor-widget';
 import { GeocacheNotesWidget } from './geocache-notes-widget';
 import { MapWidget } from './map/map-widget';
 import { MapService } from './map/map-service';
@@ -14,6 +15,7 @@ import { MapWidgetFactory } from './map/map-widget-factory';
 import { MapManagerWidget } from './map/map-manager-widget';
 import { BatchMapIntegration } from './batch-map-integration';
 import { GeocacheTabsManager } from './geocache-tabs-manager';
+import { GeocacheLogEditorTabsManager } from './geocache-log-editor-tabs-manager';
 import { GeocacheImageEditorWidget } from './geocache-image-editor-widget';
 import { GeocacheImageEditorTabsManager } from './geocache-image-editor-tabs-manager';
 import { GeocacheImageEditorFrontendContribution } from './geocache-image-editor-frontend-contribution';
@@ -45,18 +47,24 @@ export default new ContainerModule(bind => {
         createWidget: () => ctx.container.get(GeocacheDetailsWidget)
     })).inSingletonScope();
 
-     // GeocacheImageEditorWidget: instances gérées par GeocacheImageEditorTabsManager (plusieurs onglets possibles)
-     bind(GeocacheImageEditorWidget).toSelf();
-     bind(WidgetFactory).toDynamicValue(ctx => ({
-         id: GeocacheImageEditorWidget.ID,
-         createWidget: () => ctx.container.get(GeocacheImageEditorWidget)
-     })).inSingletonScope();
+    // GeocacheImageEditorWidget: instances gérées par GeocacheImageEditorTabsManager (plusieurs onglets possibles)
+    bind(GeocacheImageEditorWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: GeocacheImageEditorWidget.ID,
+        createWidget: () => ctx.container.get(GeocacheImageEditorWidget)
+    })).inSingletonScope();
 
     // Widget des logs de géocache (affichable dans right, bottom ou main)
     bind(GeocacheLogsWidget).toSelf().inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheLogsWidget.ID,
         createWidget: () => ctx.container.get(GeocacheLogsWidget)
+    })).inSingletonScope();
+
+    bind(GeocacheLogEditorWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: GeocacheLogEditorWidget.ID,
+        createWidget: () => ctx.container.get(GeocacheLogEditorWidget)
     })).inSingletonScope();
 
     // Widget des notes de géocache (affichable dans right, bottom ou main)
@@ -102,11 +110,13 @@ export default new ContainerModule(bind => {
     // Gestionnaire centralisé des onglets de détails de géocaches
     bind(GeocacheTabsManager).toSelf().inSingletonScope();
 
-     // Gestionnaire centralisé des onglets d'éditeur d'images
-     bind(GeocacheImageEditorTabsManager).toSelf().inSingletonScope();
+    bind(GeocacheLogEditorTabsManager).toSelf().inSingletonScope();
 
-     bind(GeocacheImageEditorFrontendContribution).toSelf().inSingletonScope();
-     bind(FrontendApplicationContribution).toService(GeocacheImageEditorFrontendContribution);
+    // Gestionnaire centralisé des onglets d'éditeur d'images
+    bind(GeocacheImageEditorTabsManager).toSelf().inSingletonScope();
+
+    bind(GeocacheImageEditorFrontendContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeocacheImageEditorFrontendContribution);
 
     // Gestionnaire centralisé des onglets de tableaux de géocaches par zone
     bind(ZoneTabsManager).toSelf().inSingletonScope();

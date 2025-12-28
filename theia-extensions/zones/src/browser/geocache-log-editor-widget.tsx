@@ -31,6 +31,10 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected isSubmitting = false;
     protected lastSubmitSummary: { ok: number; failed: number } | undefined;
 
+    protected globalTextArea: HTMLTextAreaElement | null = null;
+    protected perCacheTextAreas: Record<number, HTMLTextAreaElement | null> = {};
+    protected activeEditor: { type: 'global' } | { type: 'per-cache'; geocacheId: number } | undefined;
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService
     ) {
@@ -40,6 +44,357 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-pen';
         this.addClass('theia-geocache-log-editor-widget');
+    }
+
+    protected escapeHtml(value: string): string {
+        return (value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    protected sanitizeUrl(url: string): string | undefined {
+        const trimmed = (url || '').trim();
+        if (!trimmed) {
+            return undefined;
+        }
+        if (/^https?:\/\//i.test(trimmed)) {
+            return trimmed;
+        }
+        return undefined;
+    }
+
+    protected renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
+        const nodes: React.ReactNode[] = [];
+        let remaining = text || '';
+        let idx = 0;
+
+        const pushText = (t: string) => {
+            if (t) {
+                nodes.push(<React.Fragment key={`${keyPrefix}-t-${idx++}`}>{t}</React.Fragment>);
+            }
+        };
+
+        while (remaining.length > 0) {
+            const candidates: Array<{ kind: 'code' | 'bold' | 'italic' | 'link'; pos: number }> = [];
+            const codePos = remaining.indexOf('`');
+            if (codePos >= 0) candidates.push({ kind: 'code', pos: codePos });
+            const boldPos = remaining.indexOf('**');
+            if (boldPos >= 0) candidates.push({ kind: 'bold', pos: boldPos });
+            const italicPos = remaining.indexOf('*');
+            if (italicPos >= 0) candidates.push({ kind: 'italic', pos: italicPos });
+            const linkPos = remaining.indexOf('[');
+            if (linkPos >= 0) candidates.push({ kind: 'link', pos: linkPos });
+
+            if (candidates.length === 0) {
+                pushText(remaining);
+                break;
+            }
+
+            candidates.sort((a, b) => a.pos - b.pos);
+            const next = candidates[0];
+            if (next.pos > 0) {
+                pushText(remaining.slice(0, next.pos));
+                remaining = remaining.slice(next.pos);
+            }
+
+            if (next.kind === 'code' && remaining.startsWith('`')) {
+                const end = remaining.indexOf('`', 1);
+                if (end > 0) {
+                    const content = remaining.slice(1, end);
+                    nodes.push(<code key={`${keyPrefix}-c-${idx++}`}>{content}</code>);
+                    remaining = remaining.slice(end + 1);
+                    continue;
+                }
+            }
+
+            if (next.kind === 'bold' && remaining.startsWith('**')) {
+                const end = remaining.indexOf('**', 2);
+                if (end > 1) {
+                    const content = remaining.slice(2, end);
+                    nodes.push(<strong key={`${keyPrefix}-b-${idx++}`}>{content}</strong>);
+                    remaining = remaining.slice(end + 2);
+                    continue;
+                }
+            }
+
+            if (next.kind === 'italic' && remaining.startsWith('*') && !remaining.startsWith('**')) {
+                const end = remaining.indexOf('*', 1);
+                if (end > 0) {
+                    const content = remaining.slice(1, end);
+                    nodes.push(<em key={`${keyPrefix}-i-${idx++}`}>{content}</em>);
+                    remaining = remaining.slice(end + 1);
+                    continue;
+                }
+            }
+
+            if (next.kind === 'link' && remaining.startsWith('[')) {
+                const closeBracket = remaining.indexOf(']');
+                if (closeBracket > 0 && remaining[closeBracket + 1] === '(') {
+                    const closeParen = remaining.indexOf(')', closeBracket + 2);
+                    if (closeParen > closeBracket + 2) {
+                        const label = remaining.slice(1, closeBracket);
+                        const url = remaining.slice(closeBracket + 2, closeParen);
+                        const safeUrl = this.sanitizeUrl(url);
+                        if (safeUrl) {
+                            nodes.push(
+                                <a
+                                    key={`${keyPrefix}-l-${idx++}`}
+                                    href={safeUrl}
+                                    target='_blank'
+                                    rel='noreferrer'
+                                    style={{ color: 'var(--theia-textLink-foreground)' }}
+                                >
+                                    {label}
+                                </a>
+                            );
+                        } else {
+                            nodes.push(<React.Fragment key={`${keyPrefix}-l-${idx++}`}>{label} ({url})</React.Fragment>);
+                        }
+                        remaining = remaining.slice(closeParen + 1);
+                        continue;
+                    }
+                }
+            }
+
+            pushText(remaining.slice(0, 1));
+            remaining = remaining.slice(1);
+        }
+
+        return nodes;
+    }
+
+    protected renderMarkdown(text: string, keyPrefix: string): React.ReactNode {
+        const lines = (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        const blocks: React.ReactNode[] = [];
+        let i = 0;
+
+        const pushParagraph = (paragraphLines: string[], key: string) => {
+            const joined = paragraphLines.join('\n');
+            const parts = joined.split('\n');
+            blocks.push(
+                <p key={key} style={{ margin: '6px 0', whiteSpace: 'pre-wrap' }}>
+                    {parts.map((p, pi) => (
+                        <React.Fragment key={`${key}-p-${pi}`}>
+                            {this.renderInlineMarkdown(p, `${key}-in-${pi}`)}
+                            {pi < parts.length - 1 ? <br /> : null}
+                        </React.Fragment>
+                    ))}
+                </p>
+            );
+        };
+
+        while (i < lines.length) {
+            const raw = lines[i];
+            const line = raw ?? '';
+
+            if (/^```/.test(line.trim())) {
+                const start = i;
+                i += 1;
+                const codeLines: string[] = [];
+                while (i < lines.length && !/^```/.test((lines[i] ?? '').trim())) {
+                    codeLines.push(lines[i] ?? '');
+                    i += 1;
+                }
+                if (i < lines.length) {
+                    i += 1;
+                }
+                const code = codeLines.join('\n');
+                blocks.push(
+                    <pre
+                        key={`${keyPrefix}-code-${start}`}
+                        style={{
+                            margin: '8px 0',
+                            padding: 10,
+                            borderRadius: 6,
+                            border: '1px solid var(--theia-panel-border)',
+                            background: 'var(--theia-editor-background)',
+                            overflow: 'auto',
+                            fontSize: 12,
+                        }}
+                    >
+                        <code>{code}</code>
+                    </pre>
+                );
+                continue;
+            }
+
+            const hMatch = /^(#{1,3})\s+(.*)$/.exec(line);
+            if (hMatch) {
+                const level = hMatch[1].length;
+                const content = hMatch[2] || '';
+                const Tag = (level === 1 ? 'h1' : level === 2 ? 'h2' : 'h3') as any;
+                blocks.push(
+                    <Tag key={`${keyPrefix}-h-${i}`} style={{ margin: '10px 0 6px 0' }}>
+                        {this.renderInlineMarkdown(content, `${keyPrefix}-h-in-${i}`)}
+                    </Tag>
+                );
+                i += 1;
+                continue;
+            }
+
+            if (/^>\s+/.test(line)) {
+                const quoteLines: string[] = [];
+                const start = i;
+                while (i < lines.length && /^>\s+/.test(lines[i] ?? '')) {
+                    quoteLines.push((lines[i] ?? '').replace(/^>\s+/, ''));
+                    i += 1;
+                }
+                blocks.push(
+                    <blockquote
+                        key={`${keyPrefix}-q-${start}`}
+                        style={{
+                            margin: '8px 0',
+                            paddingLeft: 10,
+                            borderLeft: '3px solid var(--theia-panel-border)',
+                            opacity: 0.9,
+                        }}
+                    >
+                        {this.renderMarkdown(quoteLines.join('\n'), `${keyPrefix}-q-inner-${start}`)}
+                    </blockquote>
+                );
+                continue;
+            }
+
+            if (/^\s*[-*]\s+/.test(line)) {
+                const items: string[] = [];
+                const start = i;
+                while (i < lines.length && /^\s*[-*]\s+/.test(lines[i] ?? '')) {
+                    items.push((lines[i] ?? '').replace(/^\s*[-*]\s+/, ''));
+                    i += 1;
+                }
+                blocks.push(
+                    <ul key={`${keyPrefix}-ul-${start}`} style={{ margin: '6px 0 6px 20px' }}>
+                        {items.map((it, ii) => (
+                            <li key={`${keyPrefix}-ul-${start}-${ii}`}>
+                                {this.renderInlineMarkdown(it, `${keyPrefix}-ul-in-${start}-${ii}`)}
+                            </li>
+                        ))}
+                    </ul>
+                );
+                continue;
+            }
+
+            if (!line.trim()) {
+                i += 1;
+                continue;
+            }
+
+            const paragraphLines: string[] = [];
+            const start = i;
+            while (
+                i < lines.length &&
+                (lines[i] ?? '').trim() &&
+                !/^(#{1,3})\s+/.test(lines[i] ?? '') &&
+                !/^```/.test((lines[i] ?? '').trim()) &&
+                !/^>\s+/.test(lines[i] ?? '') &&
+                !/^\s*[-*]\s+/.test(lines[i] ?? '')
+            ) {
+                paragraphLines.push(lines[i] ?? '');
+                i += 1;
+            }
+            pushParagraph(paragraphLines, `${keyPrefix}-p-${start}`);
+        }
+
+        return <div style={{ display: 'grid', gap: 4 }}>{blocks}</div>;
+    }
+
+    protected applyEditorValue(editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number }, nextValue: string): void {
+        if (editor.type === 'global') {
+            this.globalText = nextValue;
+        } else {
+            this.perCacheText = { ...this.perCacheText, [editor.geocacheId]: nextValue };
+        }
+    }
+
+    protected getEditorValue(editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number }): string {
+        return editor.type === 'global' ? this.globalText : (this.perCacheText[editor.geocacheId] ?? '');
+    }
+
+    protected getEditorTextArea(editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number }): HTMLTextAreaElement | null {
+        return editor.type === 'global' ? this.globalTextArea : (this.perCacheTextAreas[editor.geocacheId] ?? null);
+    }
+
+    protected applyMarkdownWrap(before: string, after: string, placeholder: string): void {
+        const editor = this.activeEditor;
+        if (!editor) {
+            this.messages.warn('Clique dans une zone de texte pour appliquer le Markdown.');
+            return;
+        }
+
+        const ta = this.getEditorTextArea(editor);
+        const value = this.getEditorValue(editor);
+        const start = ta ? ta.selectionStart : value.length;
+        const end = ta ? ta.selectionEnd : value.length;
+        const hasSelection = start !== end;
+        const selected = value.slice(start, end);
+        const insert = hasSelection ? selected : placeholder;
+        const nextValue = value.slice(0, start) + before + insert + after + value.slice(end);
+
+        this.applyEditorValue(editor, nextValue);
+        this.update();
+
+        setTimeout(() => {
+            const nextTa = this.getEditorTextArea(editor);
+            if (!nextTa) {
+                return;
+            }
+            nextTa.focus();
+            if (!hasSelection) {
+                const selStart = start + before.length;
+                nextTa.setSelectionRange(selStart, selStart + insert.length);
+            } else {
+                const selStart = start + before.length;
+                const selEnd = selStart + insert.length;
+                nextTa.setSelectionRange(selStart, selEnd);
+            }
+        }, 0);
+    }
+
+    protected applyMarkdownPrefix(prefix: string, placeholder: string): void {
+        const editor = this.activeEditor;
+        if (!editor) {
+            this.messages.warn('Clique dans une zone de texte pour appliquer le Markdown.');
+            return;
+        }
+
+        const ta = this.getEditorTextArea(editor);
+        const value = this.getEditorValue(editor);
+        const start = ta ? ta.selectionStart : value.length;
+        const end = ta ? ta.selectionEnd : value.length;
+
+        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+        const lineEnd = value.indexOf('\n', end);
+        const safeLineEnd = lineEnd === -1 ? value.length : lineEnd;
+
+        const selectedBlock = value.slice(lineStart, safeLineEnd);
+        const isEmpty = !selectedBlock.trim();
+        const toProcess = isEmpty ? placeholder : selectedBlock;
+
+        const processed = toProcess
+            .split('\n')
+            .map(l => (l.trim() ? `${prefix}${l}` : l))
+            .join('\n');
+
+        const nextValue = value.slice(0, lineStart) + processed + value.slice(safeLineEnd);
+        this.applyEditorValue(editor, nextValue);
+        this.update();
+
+        setTimeout(() => {
+            const nextTa = this.getEditorTextArea(editor);
+            if (!nextTa) {
+                return;
+            }
+            nextTa.focus();
+            const selStart = lineStart + prefix.length;
+            if (isEmpty) {
+                nextTa.setSelectionRange(selStart, selStart + placeholder.length);
+            } else {
+                nextTa.setSelectionRange(lineStart, lineStart + processed.length);
+            }
+        }, 0);
     }
 
     setContext(params: { geocacheIds: number[]; title?: string }): void {
@@ -242,10 +597,12 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         return (
             <div style={{ padding: 12, height: '100%', overflow: 'auto', display: 'grid', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                    <div>
-                        <h3 style={{ margin: 0 }}>Logs</h3>
-                        <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>
-                            {this.geocacheIds.length} géocache(s)
+                    <div style={{ display: 'grid', gap: 8 }}>
+                        <div>
+                            <h3 style={{ margin: 0 }}>Logs</h3>
+                            <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>
+                                {this.geocacheIds.length} géocache(s)
+                            </div>
                         </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -322,13 +679,49 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                 {this.useSameTextForAll && (
                     <div>
                         <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Texte (Markdown)</label>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+                            <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>Markdown</span>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Gras'>
+                                <strong>B</strong>
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('*', '*', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Italique'>
+                                <em>I</em>
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('`', '`', 'code')} disabled={this.isLoading || this.isSubmitting} title='Code inline'>
+                                {'</>'}
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('[', '](https://example.com)', 'lien')} disabled={this.isLoading || this.isSubmitting} title='Lien'>
+                                🔗
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('# ', 'Titre')} disabled={this.isLoading || this.isSubmitting} title='Titre'>
+                                H1
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('## ', 'Sous-titre')} disabled={this.isLoading || this.isSubmitting} title='Sous-titre'>
+                                H2
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('- ', 'item')} disabled={this.isLoading || this.isSubmitting} title='Liste'>
+                                -
+                            </button>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('> ', 'Citation')} disabled={this.isLoading || this.isSubmitting} title='Citation'>
+                                &gt;
+                            </button>
+                        </div>
                         <textarea
                             className='theia-input'
                             value={this.globalText}
                             onChange={e => { this.globalText = e.target.value; this.update(); }}
+                            onFocus={() => { this.activeEditor = { type: 'global' }; }}
+                            ref={el => { this.globalTextArea = el; }}
                             rows={10}
                             style={{ width: '100%', resize: 'vertical' }}
                         />
+
+                        <details style={{ marginTop: 8 }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Aperçu Markdown</summary>
+                            <div style={{ marginTop: 8, background: 'var(--theia-editor-background)', border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, fontSize: 13, overflow: 'auto' }}>
+                                {this.renderMarkdown(this.globalText, 'global-preview')}
+                            </div>
+                        </details>
                     </div>
                 )}
 
@@ -352,6 +745,33 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                     <div style={{ fontWeight: 700 }}>{gc.gc_code}</div>
                                     <div style={{ opacity: 0.8, fontSize: 12, textAlign: 'right' }}>{gc.name}</div>
                                 </div>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, marginBottom: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>Markdown</span>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Gras'>
+                                        <strong>B</strong>
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('*', '*', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Italique'>
+                                        <em>I</em>
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('`', '`', 'code')} disabled={this.isLoading || this.isSubmitting} title='Code inline'>
+                                        {'</>'}
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('[', '](https://example.com)', 'lien')} disabled={this.isLoading || this.isSubmitting} title='Lien'>
+                                        🔗
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('# ', 'Titre')} disabled={this.isLoading || this.isSubmitting} title='Titre'>
+                                        H1
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('## ', 'Sous-titre')} disabled={this.isLoading || this.isSubmitting} title='Sous-titre'>
+                                        H2
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('- ', 'item')} disabled={this.isLoading || this.isSubmitting} title='Liste'>
+                                        -
+                                    </button>
+                                    <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('> ', 'Citation')} disabled={this.isLoading || this.isSubmitting} title='Citation'>
+                                        &gt;
+                                    </button>
+                                </div>
                                 <textarea
                                     className='theia-input'
                                     value={this.perCacheText[gc.id] ?? ''}
@@ -359,22 +779,22 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                         this.perCacheText = { ...this.perCacheText, [gc.id]: e.target.value };
                                         this.update();
                                     }}
+                                    onFocus={() => { this.activeEditor = { type: 'per-cache', geocacheId: gc.id }; }}
+                                    ref={el => { this.perCacheTextAreas = { ...this.perCacheTextAreas, [gc.id]: el }; }}
                                     rows={6}
                                     style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
                                     placeholder='Texte (Markdown)'
                                 />
+
+                                <details style={{ marginTop: 8 }}>
+                                    <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Aperçu Markdown</summary>
+                                    <div style={{ marginTop: 8, background: 'var(--theia-editor-background)', border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, fontSize: 13, overflow: 'auto' }}>
+                                        {this.renderMarkdown(this.perCacheText[gc.id] ?? '', `per-preview-${gc.id}`)}
+                                    </div>
+                                </details>
                             </div>
                         ))}
                     </div>
-                )}
-
-                {!this.isLoading && this.geocaches.length > 0 && (
-                    <details>
-                        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Aperçu field notes</summary>
-                        <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', background: 'var(--theia-editor-background)', border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, fontSize: 12, overflow: 'auto' }}>
-                            {this.buildFieldNotes()}
-                        </pre>
-                    </details>
                 )}
             </div>
         );

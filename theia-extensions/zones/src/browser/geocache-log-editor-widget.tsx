@@ -9,6 +9,8 @@ interface GeocacheListItem {
     id: number;
     gc_code: string;
     name: string;
+    favorites_count?: number;
+    logs_count?: number;
 }
 
 @injectable()
@@ -27,6 +29,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected useSameTextForAll = true;
     protected globalText = '';
     protected perCacheText: Record<number, string> = {};
+    protected perCacheFavorite: Record<number, boolean> = {};
 
     protected isSubmitting = false;
     protected lastSubmitSummary: { ok: number; failed: number } | undefined;
@@ -402,6 +405,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.geocacheIds = Array.from(new Set(ids));
         this.geocaches = [];
         this.perCacheText = {};
+        this.perCacheFavorite = {};
 
         if (params.title) {
             this.title.label = params.title;
@@ -434,10 +438,20 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     id: data.id as number,
                     gc_code: (data.gc_code || '').toString(),
                     name: (data.name || '').toString(),
+                    favorites_count: typeof data.favorites_count === 'number' ? (data.favorites_count as number) : undefined,
+                    logs_count: typeof data.logs_count === 'number' ? (data.logs_count as number) : undefined,
                 } as GeocacheListItem;
             }));
 
             this.geocaches = results;
+
+            const nextFav: Record<number, boolean> = { ...this.perCacheFavorite };
+            for (const gc of results) {
+                if (typeof nextFav[gc.id] !== 'boolean') {
+                    nextFav[gc.id] = false;
+                }
+            }
+            this.perCacheFavorite = nextFav;
         } catch (e) {
             console.error('[GeocacheLogEditorWidget] loadGeocaches error', e);
             this.messages.error('Impossible de charger la liste des géocaches.');
@@ -445,6 +459,22 @@ export class GeocacheLogEditorWidget extends ReactWidget {
             this.isLoading = false;
             this.update();
         }
+    }
+
+    protected formatFavoritePercent(favoritesCount: number | undefined, logsCount: number | undefined): string {
+        if (typeof favoritesCount !== 'number' || typeof logsCount !== 'number' || logsCount <= 0) {
+            return '—';
+        }
+        const pct = (favoritesCount / logsCount) * 100;
+        if (!isFinite(pct)) {
+            return '—';
+        }
+        return `${pct.toFixed(1)}%`;
+    }
+
+    protected toggleFavoriteForGeocacheId(geocacheId: number, nextValue: boolean): void {
+        this.perCacheFavorite = { ...this.perCacheFavorite, [geocacheId]: nextValue };
+        this.update();
     }
 
     protected getTextForGeocacheId(geocacheId: number): string {
@@ -486,6 +516,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     text: this.getTextForGeocacheId(gc.id),
                     date: this.logDate,
                     logType: this.logType,
+                    favorite: this.logType === 'found' ? (this.perCacheFavorite[gc.id] === true) : false,
                 };
 
                 let responseBody: any = undefined;
@@ -636,6 +667,68 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     </div>
                 </div>
 
+                {this.useSameTextForAll && this.geocaches.length === 1 && this.geocaches[0] && (
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <div style={{ fontSize: 12, opacity: 0.85 }}>
+                            PF: {typeof this.geocaches[0].favorites_count === 'number' ? this.geocaches[0].favorites_count : '—'}
+                            {'  '}(
+                            {this.formatFavoritePercent(this.geocaches[0].favorites_count, this.geocaches[0].logs_count)}
+                            )
+                        </div>
+                        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, opacity: this.logType === 'found' ? 0.9 : 0.5 }}>
+                            <input
+                                type='checkbox'
+                                checked={this.perCacheFavorite[this.geocaches[0].id] === true}
+                                onChange={e => this.toggleFavoriteForGeocacheId(this.geocaches[0].id, e.target.checked)}
+                                disabled={this.logType !== 'found'}
+                            />
+                            Donner un PF
+                        </label>
+                    </div>
+                )}
+
+                {this.geocaches.length > 1 && (
+                    <div style={{ border: '1px solid var(--theia-panel-border)', borderRadius: 6, overflow: 'hidden' }}>
+                        <div style={{ padding: '8px 10px', fontWeight: 600, background: 'var(--theia-editor-background)' }}>
+                            Points favoris (PF)
+                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                                <tr style={{ background: 'var(--theia-editor-background)' }}>
+                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>GC</th>
+                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Nom</th>
+                                    <th style={{ textAlign: 'right', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>PF</th>
+                                    <th style={{ textAlign: 'right', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>%</th>
+                                    <th style={{ textAlign: 'center', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Donner PF</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {this.geocaches.map(gc => (
+                                    <tr key={`fav-${gc.id}`} style={{ borderTop: '1px solid var(--theia-panel-border)' }}>
+                                        <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700 }}>{gc.gc_code}</td>
+                                        <td style={{ padding: '6px 10px' }}>{gc.name}</td>
+                                        <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                            {typeof gc.favorites_count === 'number' ? gc.favorites_count : '—'}
+                                        </td>
+                                        <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                            {this.formatFavoritePercent(gc.favorites_count, gc.logs_count)}
+                                        </td>
+                                        <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                                            <input
+                                                type='checkbox'
+                                                checked={this.perCacheFavorite[gc.id] === true}
+                                                onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
+                                                disabled={this.logType !== 'found'}
+                                                title={this.logType !== 'found' ? 'Le PF est disponible uniquement pour un log Found it' : 'Donner un point favori'}
+                                            />
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+
                 {this.lastSubmitSummary && (
                     <div style={{ opacity: 0.85, fontSize: 12 }}>
                         Résultat: {this.lastSubmitSummary.ok} ok, {this.lastSubmitSummary.failed} échec(s)
@@ -745,6 +838,25 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                     <div style={{ fontWeight: 700 }}>{gc.gc_code}</div>
                                     <div style={{ opacity: 0.8, fontSize: 12, textAlign: 'right' }}>{gc.name}</div>
                                 </div>
+
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+                                    <div style={{ fontSize: 12, opacity: 0.85 }}>
+                                        PF: {typeof gc.favorites_count === 'number' ? gc.favorites_count : '—'}
+                                        {'  '}(
+                                        {this.formatFavoritePercent(gc.favorites_count, gc.logs_count)}
+                                        )
+                                    </div>
+                                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, opacity: this.logType === 'found' ? 0.9 : 0.5 }}>
+                                        <input
+                                            type='checkbox'
+                                            checked={this.perCacheFavorite[gc.id] === true}
+                                            onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
+                                            disabled={this.logType !== 'found'}
+                                        />
+                                        Donner un PF
+                                    </label>
+                                </div>
+
                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, marginBottom: 6 }}>
                                     <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>Markdown</span>
                                     <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Gras'>

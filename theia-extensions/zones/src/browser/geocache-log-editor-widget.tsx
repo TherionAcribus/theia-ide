@@ -2,6 +2,15 @@ import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
+import {
+    useReactTable,
+    getCoreRowModel,
+    getSortedRowModel,
+    ColumnDef,
+    flexRender,
+    SortingState,
+} from '@tanstack/react-table';
+import { GeocacheIcon } from './geocache-icon';
 
 type LogTypeValue = 'found' | 'dnf' | 'note';
 
@@ -23,7 +32,255 @@ interface GeocacheListItem {
     name: string;
     favorites_count?: number;
     logs_count?: number;
+    placed_at?: string | null;
+    cache_type?: string;
 }
+
+const GeocacheLogEditorGeocachesTable: React.FC<{
+    data: GeocacheListItem[];
+    logType: LogTypeValue;
+    perCacheFavorite: Record<number, boolean>;
+    perCacheSubmitStatus: Record<number, SubmissionStatus>;
+    perCacheSubmitReference: Record<number, string | undefined>;
+    onToggleFavorite: (geocacheId: number, nextValue: boolean) => void;
+    maxHeight?: number;
+}> = ({ data, logType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, maxHeight = 220 }) => {
+    const [sorting, setSorting] = React.useState<SortingState>([]);
+
+    const columns = React.useMemo<ColumnDef<GeocacheListItem>[]>(() => {
+        const getPct = (favoritesCount: number | undefined, logsCount: number | undefined): number | undefined => {
+            if (typeof favoritesCount !== 'number' || typeof logsCount !== 'number' || logsCount <= 0) {
+                return undefined;
+            }
+            const pct = (favoritesCount / logsCount) * 100;
+            return isFinite(pct) ? pct : undefined;
+        };
+
+        const getPlacedTs = (iso: string | null | undefined): number | undefined => {
+            if (!iso) {
+                return undefined;
+            }
+            const ts = Date.parse(iso);
+            return isFinite(ts) ? ts : undefined;
+        };
+
+        const formatPlaced = (iso: string | null | undefined): string => {
+            if (!iso) {
+                return '—';
+            }
+            const ts = Date.parse(iso);
+            if (!isFinite(ts)) {
+                return '—';
+            }
+            return new Date(ts).toISOString().slice(0, 10);
+        };
+
+        const statusBadge = (gc: GeocacheListItem): React.ReactNode => {
+            const status = perCacheSubmitStatus[gc.id];
+            if (status === 'ok') {
+                const ref = perCacheSubmitReference[gc.id];
+                return (
+                    <span
+                        style={{
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            fontSize: 12,
+                            background: '#2ecc71',
+                            color: '#fff',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
+                        }}
+                        title={ref ? `logReferenceCode: ${ref}` : 'Log envoyé'}
+                    >
+                        ✅
+                    </span>
+                );
+            }
+            if (status === 'failed') {
+                return (
+                    <span
+                        style={{
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            fontSize: 12,
+                            background: 'var(--theia-errorForeground)',
+                            color: '#fff',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
+                        }}
+                        title='Dernière tentative en échec'
+                    >
+                        ⚠️
+                    </span>
+                );
+            }
+            return (
+                <span
+                    style={{
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        fontSize: 12,
+                        background: '#7f8c8d',
+                        color: '#fff',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                    }}
+                    title='Pas encore envoyé'
+                >
+                    ⏳
+                </span>
+            );
+        };
+
+        return [
+            {
+                id: 'status',
+                header: 'Statut',
+                cell: ({ row }) => statusBadge(row.original),
+                sortingFn: (a, b) => {
+                    const rank = (s: SubmissionStatus | undefined): number => {
+                        if (s === 'failed') {
+                            return 0;
+                        }
+                        if (s === 'ok') {
+                            return 2;
+                        }
+                        return 1;
+                    };
+                    return rank(perCacheSubmitStatus[a.original.id]) - rank(perCacheSubmitStatus[b.original.id]);
+                },
+            },
+            {
+                accessorKey: 'gc_code',
+                header: 'GC',
+                cell: info => <strong>{info.getValue() as string}</strong>,
+            },
+            {
+                accessorKey: 'name',
+                header: 'Nom',
+                cell: info => (
+                    <div style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={info.getValue() as string}>
+                        {info.getValue() as string}
+                    </div>
+                ),
+            },
+            {
+                accessorKey: 'cache_type',
+                header: 'Type',
+                cell: info => {
+                    const type = (info.getValue() as string | undefined) || '';
+                    if (!type) {
+                        return <span style={{ opacity: 0.7 }}>—</span>;
+                    }
+                    return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <GeocacheIcon type={type} size={18} showLabel={false} />
+                            <span style={{ fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap' }}>{type}</span>
+                        </div>
+                    );
+                },
+                sortingFn: 'alphanumeric',
+            },
+            {
+                id: 'placed_at',
+                header: 'Posée',
+                accessorFn: row => getPlacedTs(row.placed_at),
+                cell: ({ row }) => <span style={{ fontSize: 12, opacity: 0.85 }}>{formatPlaced(row.original.placed_at)}</span>,
+            },
+            {
+                accessorKey: 'favorites_count',
+                header: 'PF',
+                cell: info => <span style={{ fontSize: 12 }}>{typeof info.getValue() === 'number' ? (info.getValue() as number) : '—'}</span>,
+            },
+            {
+                id: 'pf_pct',
+                header: '%PF',
+                accessorFn: row => getPct(row.favorites_count, row.logs_count),
+                cell: ({ row }) => {
+                    const pct = getPct(row.original.favorites_count, row.original.logs_count);
+                    return <span style={{ fontSize: 12, opacity: 0.85 }}>{typeof pct === 'number' ? `${pct.toFixed(1)}%` : '—'}</span>;
+                },
+            },
+            {
+                id: 'fav',
+                header: 'Donner PF',
+                cell: ({ row }) => {
+                    const gc = row.original;
+                    const disabled = logType !== 'found' || perCacheSubmitStatus[gc.id] === 'ok';
+                    return (
+                        <input
+                            type='checkbox'
+                            checked={perCacheFavorite[gc.id] === true}
+                            onChange={e => onToggleFavorite(gc.id, e.target.checked)}
+                            disabled={disabled}
+                        />
+                    );
+                },
+                enableSorting: false,
+            },
+        ];
+    }, [logType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite]);
+
+    const table = useReactTable({
+        data,
+        columns,
+        state: { sorting },
+        onSortingChange: setSorting,
+        getCoreRowModel: getCoreRowModel(),
+        getSortedRowModel: getSortedRowModel(),
+    });
+
+    return (
+        <div style={{ border: '1px solid var(--theia-panel-border)', borderRadius: 6, overflow: 'hidden' }}>
+            <div style={{ padding: '6px 10px', fontSize: 12, fontWeight: 700, background: 'var(--theia-editor-background)' }}>
+                Géocaches
+            </div>
+            <div style={{ overflow: 'auto', maxHeight }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                        {table.getHeaderGroups().map(headerGroup => (
+                            <tr key={headerGroup.id}>
+                                {headerGroup.headers.map(header => (
+                                    <th
+                                        key={header.id}
+                                        onClick={header.column.getToggleSortingHandler()}
+                                        style={{
+                                            textAlign: 'left',
+                                            padding: '6px 8px',
+                                            borderTop: '1px solid var(--theia-panel-border)',
+                                            borderBottom: '1px solid var(--theia-panel-border)',
+                                            background: 'var(--theia-editor-background)',
+                                            position: 'sticky',
+                                            top: 0,
+                                            zIndex: 1,
+                                            cursor: header.column.getCanSort() ? 'pointer' : 'default',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        {flexRender(header.column.columnDef.header, header.getContext())}
+                                        {header.column.getIsSorted() === 'asc' && <span style={{ marginLeft: 6 }}>▲</span>}
+                                        {header.column.getIsSorted() === 'desc' && <span style={{ marginLeft: 6 }}>▼</span>}
+                                    </th>
+                                ))}
+                            </tr>
+                        ))}
+                    </thead>
+                    <tbody>
+                        {table.getRowModel().rows.map(row => (
+                            <tr key={row.id}>
+                                {row.getVisibleCells().map(cell => (
+                                    <td key={cell.id} style={{ padding: '6px 8px', borderBottom: '1px solid var(--theia-panel-border)', verticalAlign: 'middle' }}>
+                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
 
 @injectable()
 export class GeocacheLogEditorWidget extends ReactWidget {
@@ -440,6 +697,45 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.update();
     }
 
+    protected toggleUseSameTextForAll(checked: boolean): void {
+        if (this.useSameTextForAll && !checked) {
+            const nextPerCacheText: Record<number, string> = { ...this.perCacheText };
+            const nextPerCacheImages: Record<number, SelectedLogImage[]> = { ...this.perCacheImages };
+
+            const globalText = this.globalText;
+            const globalImages = this.globalImages;
+
+            for (const gc of this.geocaches) {
+                const existingText = nextPerCacheText[gc.id] ?? '';
+                if (!existingText && globalText) {
+                    nextPerCacheText[gc.id] = globalText;
+                }
+
+                const existingImages = nextPerCacheImages[gc.id] ?? [];
+                const existingKeys = new Set(existingImages.map(i => `${i.file.name}:${i.file.size}:${i.file.lastModified}`));
+                const additions = globalImages
+                    .filter(i => !existingKeys.has(`${i.file.name}:${i.file.size}:${i.file.lastModified}`))
+                    .map(i => ({
+                        id: this.generateId(),
+                        file: i.file,
+                        status: 'pending' as ImageUploadStatus,
+                    }));
+
+                if (additions.length > 0) {
+                    nextPerCacheImages[gc.id] = [...existingImages, ...additions];
+                } else {
+                    nextPerCacheImages[gc.id] = existingImages;
+                }
+            }
+
+            this.perCacheText = nextPerCacheText;
+            this.perCacheImages = nextPerCacheImages;
+        }
+
+        this.useSameTextForAll = checked;
+        this.update();
+    }
+
     protected generateId(): string {
         try {
             const w: any = window as any;
@@ -673,6 +969,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     name: (data.name || '').toString(),
                     favorites_count: typeof data.favorites_count === 'number' ? (data.favorites_count as number) : undefined,
                     logs_count: typeof data.logs_count === 'number' ? (data.logs_count as number) : undefined,
+                    placed_at: (data.placed_at ?? null) as string | null,
+                    cache_type: (data.type || '').toString(),
                 } as GeocacheListItem;
             }));
 
@@ -993,78 +1291,23 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     </div>
                 </div>
 
-                {this.useSameTextForAll && this.geocaches.length === 1 && this.geocaches[0] && (
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <div>
-                            {this.renderSubmitBadge(this.geocaches[0].id)}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.85 }}>
-                            PF: {typeof this.geocaches[0].favorites_count === 'number' ? this.geocaches[0].favorites_count : '—'}
-                            {'  '}(
-                            {this.formatFavoritePercent(this.geocaches[0].favorites_count, this.geocaches[0].logs_count)}
-                            )
-                        </div>
-                        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, opacity: this.logType === 'found' ? 0.9 : 0.5 }}>
-                            <input
-                                type='checkbox'
-                                checked={this.perCacheFavorite[this.geocaches[0].id] === true}
-                                onChange={e => this.toggleFavoriteForGeocacheId(this.geocaches[0].id, e.target.checked)}
-                                disabled={this.logType !== 'found' || this.isGeocacheSubmittedOk(this.geocaches[0].id)}
-                            />
-                            Donner un PF
-                        </label>
-                    </div>
-                )}
-
-                {this.geocaches.length > 1 && (
-                    <div style={{ border: '1px solid var(--theia-panel-border)', borderRadius: 6, overflow: 'hidden' }}>
-                        <div style={{ padding: '8px 10px', fontWeight: 600, background: 'var(--theia-editor-background)' }}>
-                            Points favoris (PF)
-                        </div>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                            <thead>
-                                <tr style={{ background: 'var(--theia-editor-background)' }}>
-                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Log</th>
-                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>GC</th>
-                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Nom</th>
-                                    <th style={{ textAlign: 'right', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>PF</th>
-                                    <th style={{ textAlign: 'right', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>%</th>
-                                    <th style={{ textAlign: 'center', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Donner PF</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {this.geocaches.map(gc => (
-                                    <tr key={`fav-${gc.id}`} style={{ borderTop: '1px solid var(--theia-panel-border)', opacity: this.isGeocacheSubmittedOk(gc.id) ? 0.7 : 1 }}>
-                                        <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                                            {this.renderSubmitBadge(gc.id)}
-                                        </td>
-                                        <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700 }}>{gc.gc_code}</td>
-                                        <td style={{ padding: '6px 10px' }}>{gc.name}</td>
-                                        <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                            {typeof gc.favorites_count === 'number' ? gc.favorites_count : '—'}
-                                        </td>
-                                        <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                            {this.formatFavoritePercent(gc.favorites_count, gc.logs_count)}
-                                        </td>
-                                        <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                                            <input
-                                                type='checkbox'
-                                                checked={this.perCacheFavorite[gc.id] === true}
-                                                onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
-                                                disabled={this.logType !== 'found' || this.isGeocacheSubmittedOk(gc.id)}
-                                                title={this.logType !== 'found' ? 'Le PF est disponible uniquement pour un log Found it' : 'Donner un point favori'}
-                                            />
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-
                 {this.lastSubmitSummary && (
                     <div style={{ opacity: 0.85, fontSize: 12 }}>
                         Résultat: {this.lastSubmitSummary.ok} ok, {this.lastSubmitSummary.failed} échec(s)
+                    </div>
+                )}
+
+                {!this.isLoading && this.geocaches.length > 0 && (
+                    <div style={{ background: 'var(--theia-editor-background)' }}>
+                        <GeocacheLogEditorGeocachesTable
+                            data={this.geocaches}
+                            logType={this.logType}
+                            perCacheFavorite={this.perCacheFavorite}
+                            perCacheSubmitStatus={this.perCacheSubmitStatus}
+                            perCacheSubmitReference={this.perCacheSubmitReference}
+                            onToggleFavorite={(geocacheId, nextValue) => this.toggleFavoriteForGeocacheId(geocacheId, nextValue)}
+                            maxHeight={220}
+                        />
                     </div>
                 )}
 
@@ -1079,10 +1322,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             fontWeight: 600,
                         }}
                     >
-                        ✅ Logs envoyés pour toutes les géocaches sélectionnées
+                        ✅ Tous les logs ont été envoyés.
                     </div>
                 )}
-
                 <div style={{ display: 'grid', gridTemplateColumns: '160px 220px 1fr', gap: 12, alignItems: 'end' }}>
                     <div>
                         <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Date</label>
@@ -1111,7 +1353,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <input
                             type='checkbox'
                             checked={this.useSameTextForAll}
-                            onChange={e => { this.useSameTextForAll = e.target.checked; this.update(); }}
+                            onChange={e => { this.toggleUseSameTextForAll(e.target.checked); }}
                         />
                         <span style={{ fontSize: 12, opacity: 0.85 }}>Texte identique pour toutes les géocaches</span>
                     </div>

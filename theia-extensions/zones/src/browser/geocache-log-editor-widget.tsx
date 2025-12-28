@@ -39,15 +39,27 @@ interface GeocacheListItem {
 const GeocacheLogEditorGeocachesTable: React.FC<{
     data: GeocacheListItem[];
     logType: LogTypeValue;
+    perCacheLogType: Record<number, LogTypeValue>;
     perCacheFavorite: Record<number, boolean>;
     perCacheSubmitStatus: Record<number, SubmissionStatus>;
     perCacheSubmitReference: Record<number, string | undefined>;
     onToggleFavorite: (geocacheId: number, nextValue: boolean) => void;
+    onToggleLogType: (geocacheId: number, nextValue: LogTypeValue) => void;
     maxHeight?: number;
-}> = ({ data, logType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, maxHeight = 220 }) => {
+}> = ({ data, logType, perCacheLogType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, onToggleLogType, maxHeight = 220 }) => {
     const [sorting, setSorting] = React.useState<SortingState>([]);
 
     const columns = React.useMemo<ColumnDef<GeocacheListItem>[]>(() => {
+        const typeLabel = (value: LogTypeValue): string => {
+            if (value === 'found') {
+                return 'Found it';
+            }
+            if (value === 'dnf') {
+                return "Didn't find it";
+            }
+            return 'Write note';
+        };
+
         const getPct = (favoritesCount: number | undefined, logsCount: number | undefined): number | undefined => {
             if (typeof favoritesCount !== 'number' || typeof logsCount !== 'number' || logsCount <= 0) {
                 return undefined;
@@ -156,6 +168,29 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                 cell: info => <strong>{info.getValue() as string}</strong>,
             },
             {
+                id: 'log_type',
+                header: 'Log',
+                cell: ({ row }) => {
+                    const gc = row.original;
+                    const disabled = perCacheSubmitStatus[gc.id] === 'ok';
+                    const current = perCacheLogType[gc.id] ?? logType;
+                    return (
+                        <select
+                            className='theia-select'
+                            value={current}
+                            onChange={e => onToggleLogType(gc.id, e.target.value as LogTypeValue)}
+                            disabled={disabled}
+                            style={{ fontSize: 12 }}
+                        >
+                            <option value='found'>{typeLabel('found')}</option>
+                            <option value='dnf'>{typeLabel('dnf')}</option>
+                            <option value='note'>{typeLabel('note')}</option>
+                        </select>
+                    );
+                },
+                enableSorting: false,
+            },
+            {
                 accessorKey: 'name',
                 header: 'Nom',
                 cell: info => (
@@ -206,7 +241,8 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                 header: 'Donner PF',
                 cell: ({ row }) => {
                     const gc = row.original;
-                    const disabled = logType !== 'found' || perCacheSubmitStatus[gc.id] === 'ok';
+                    const currentLogType = perCacheLogType[gc.id] ?? logType;
+                    const disabled = currentLogType !== 'found' || perCacheSubmitStatus[gc.id] === 'ok';
                     return (
                         <input
                             type='checkbox'
@@ -219,7 +255,7 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                 enableSorting: false,
             },
         ];
-    }, [logType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite]);
+    }, [logType, perCacheLogType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, onToggleLogType]);
 
     const table = useReactTable({
         data,
@@ -298,6 +334,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected useSameTextForAll = true;
     protected globalText = '';
     protected perCacheText: Record<number, string> = {};
+    protected perCacheLogType: Record<number, LogTypeValue> = {};
     protected perCacheFavorite: Record<number, boolean> = {};
 
     protected globalImages: SelectedLogImage[] = [];
@@ -679,6 +716,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.geocacheIds = Array.from(new Set(ids));
         this.geocaches = [];
         this.perCacheText = {};
+        this.perCacheLogType = {};
         this.perCacheFavorite = {};
         this.perCacheSubmitStatus = {};
         this.perCacheSubmitReference = {};
@@ -976,6 +1014,15 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
             this.geocaches = results;
 
+            const nextTypes: Record<number, LogTypeValue> = { ...this.perCacheLogType };
+            for (const gc of results) {
+                const existing = nextTypes[gc.id];
+                if (existing !== 'found' && existing !== 'dnf' && existing !== 'note') {
+                    nextTypes[gc.id] = this.logType;
+                }
+            }
+            this.perCacheLogType = nextTypes;
+
             const nextFav: Record<number, boolean> = { ...this.perCacheFavorite };
             for (const gc of results) {
                 if (typeof nextFav[gc.id] !== 'boolean') {
@@ -1006,6 +1053,31 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected toggleFavoriteForGeocacheId(geocacheId: number, nextValue: boolean): void {
         this.perCacheFavorite = { ...this.perCacheFavorite, [geocacheId]: nextValue };
         this.update();
+    }
+
+    protected setGlobalLogType(nextValue: LogTypeValue): void {
+        this.logType = nextValue;
+        const nextTypes: Record<number, LogTypeValue> = { ...this.perCacheLogType };
+        for (const gc of this.geocaches) {
+            nextTypes[gc.id] = nextValue;
+        }
+        this.perCacheLogType = nextTypes;
+        this.update();
+    }
+
+    protected setLogTypeForGeocacheId(geocacheId: number, nextValue: LogTypeValue): void {
+        const nextTypes: Record<number, LogTypeValue> = { ...this.perCacheLogType, [geocacheId]: nextValue };
+        this.perCacheLogType = nextTypes;
+
+        const values = this.geocaches.map(gc => nextTypes[gc.id] ?? this.logType);
+        if (values.length > 0 && values.every(v => v === values[0])) {
+            this.logType = values[0];
+        }
+        this.update();
+    }
+
+    protected getLogTypeForGeocacheId(geocacheId: number): LogTypeValue {
+        return this.perCacheLogType[geocacheId] ?? this.logType;
     }
 
     protected isGeocacheSubmittedOk(geocacheId: number): boolean {
@@ -1107,11 +1179,12 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                 if (this.isGeocacheSubmittedOk(gc.id)) {
                     continue;
                 }
+                const logTypeForGc = this.getLogTypeForGeocacheId(gc.id);
                 const payload = {
                     text: this.getTextForGeocacheId(gc.id),
                     date: this.logDate,
-                    logType: this.logType,
-                    favorite: this.logType === 'found' ? (this.perCacheFavorite[gc.id] === true) : false,
+                    logType: logTypeForGc,
+                    favorite: logTypeForGc === 'found' ? (this.perCacheFavorite[gc.id] === true) : false,
                 };
 
                 const imageGuids = await this.uploadImagesForGeocache(gc.id);
@@ -1143,9 +1216,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                 detail: {
                                     geocacheId: gc.id,
                                     gcCode: gc.gc_code,
-                                    logType: this.logType,
+                                    logType: logTypeForGc,
                                     logDate: this.logDate,
-                                    found: this.logType === 'found',
+                                    found: logTypeForGc === 'found',
                                     logReferenceCode: ref,
                                 }
                             }));
@@ -1302,10 +1375,12 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <GeocacheLogEditorGeocachesTable
                             data={this.geocaches}
                             logType={this.logType}
+                            perCacheLogType={this.perCacheLogType}
                             perCacheFavorite={this.perCacheFavorite}
                             perCacheSubmitStatus={this.perCacheSubmitStatus}
                             perCacheSubmitReference={this.perCacheSubmitReference}
                             onToggleFavorite={(geocacheId, nextValue) => this.toggleFavoriteForGeocacheId(geocacheId, nextValue)}
+                            onToggleLogType={(geocacheId, nextValue) => this.setLogTypeForGeocacheId(geocacheId, nextValue)}
                             maxHeight={220}
                         />
                     </div>
@@ -1341,7 +1416,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <select
                             className='theia-select'
                             value={this.logType}
-                            onChange={e => { this.logType = e.target.value as LogTypeValue; this.update(); }}
+                            onChange={e => { this.setGlobalLogType(e.target.value as LogTypeValue); }}
                             style={{ width: '100%' }}
                         >
                             <option value='found'>Found it</option>
@@ -1475,15 +1550,32 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                         {this.formatFavoritePercent(gc.favorites_count, gc.logs_count)}
                                         )
                                     </div>
-                                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, opacity: this.logType === 'found' ? 0.9 : 0.5 }}>
-                                        <input
-                                            type='checkbox'
-                                            checked={this.perCacheFavorite[gc.id] === true}
-                                            onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
-                                            disabled={this.logType !== 'found'}
-                                        />
-                                        Donner un PF
-                                    </label>
+                                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                                            <span style={{ opacity: 0.85 }}>Type</span>
+                                            <select
+                                                className='theia-select'
+                                                value={this.getLogTypeForGeocacheId(gc.id)}
+                                                onChange={e => this.setLogTypeForGeocacheId(gc.id, e.target.value as LogTypeValue)}
+                                                disabled={this.isGeocacheSubmittedOk(gc.id)}
+                                                style={{ fontSize: 12 }}
+                                            >
+                                                <option value='found'>{this.getLogTypeLabel('found')}</option>
+                                                <option value='dnf'>{this.getLogTypeLabel('dnf')}</option>
+                                                <option value='note'>{this.getLogTypeLabel('note')}</option>
+                                            </select>
+                                        </label>
+
+                                        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, opacity: this.getLogTypeForGeocacheId(gc.id) === 'found' ? 0.9 : 0.5 }}>
+                                            <input
+                                                type='checkbox'
+                                                checked={this.perCacheFavorite[gc.id] === true}
+                                                onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
+                                                disabled={this.getLogTypeForGeocacheId(gc.id) !== 'found'}
+                                            />
+                                            Donner un PF
+                                        </label>
+                                    </div>
                                 </div>
 
                                 <div style={{ marginTop: 10 }}>

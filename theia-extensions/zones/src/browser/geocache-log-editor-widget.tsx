@@ -7,6 +7,16 @@ type LogTypeValue = 'found' | 'dnf' | 'note';
 
 type SubmissionStatus = 'ok' | 'failed';
 
+type ImageUploadStatus = 'pending' | 'uploading' | 'ok' | 'failed';
+
+interface SelectedLogImage {
+    id: string;
+    file: File;
+    status: ImageUploadStatus;
+    imageGuid?: string;
+    error?: string;
+}
+
 interface GeocacheListItem {
     id: number;
     gc_code: string;
@@ -32,6 +42,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected globalText = '';
     protected perCacheText: Record<number, string> = {};
     protected perCacheFavorite: Record<number, boolean> = {};
+
+    protected globalImages: SelectedLogImage[] = [];
+    protected perCacheImages: Record<number, SelectedLogImage[]> = {};
 
     protected isSubmitting = false;
     protected lastSubmitSummary: { ok: number; failed: number } | undefined;
@@ -412,6 +425,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.perCacheFavorite = {};
         this.perCacheSubmitStatus = {};
         this.perCacheSubmitReference = {};
+        this.globalImages = [];
+        this.perCacheImages = {};
 
         if (params.title) {
             this.title.label = params.title;
@@ -423,6 +438,218 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
         void this.loadGeocaches();
         this.update();
+    }
+
+    protected generateId(): string {
+        try {
+            const w: any = window as any;
+            if (w?.crypto?.randomUUID) {
+                return w.crypto.randomUUID();
+            }
+        } catch {
+        }
+        return `img-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    protected addSelectedImages(files: FileList | File[], target: 'global' | { geocacheId: number }): void {
+        const list = Array.from(files as any as File[]).filter(f => f instanceof File);
+        if (list.length === 0) {
+            return;
+        }
+
+        const mapped: SelectedLogImage[] = list.map(file => ({
+            id: this.generateId(),
+            file,
+            status: 'pending',
+        }));
+
+        if (target === 'global') {
+            this.globalImages = [...this.globalImages, ...mapped];
+        } else {
+            const current = this.perCacheImages[target.geocacheId] ?? [];
+            this.perCacheImages = { ...this.perCacheImages, [target.geocacheId]: [...current, ...mapped] };
+        }
+        this.update();
+    }
+
+    protected removeSelectedImage(target: 'global' | { geocacheId: number }, imageId: string): void {
+        if (target === 'global') {
+            this.globalImages = this.globalImages.filter(img => img.id !== imageId);
+        } else {
+            const current = this.perCacheImages[target.geocacheId] ?? [];
+            this.perCacheImages = { ...this.perCacheImages, [target.geocacheId]: current.filter(img => img.id !== imageId) };
+        }
+        this.update();
+    }
+
+    protected getImagesForGeocacheId(geocacheId: number): SelectedLogImage[] {
+        return this.useSameTextForAll ? this.globalImages : (this.perCacheImages[geocacheId] ?? []);
+    }
+
+    protected setImagesForGeocacheId(geocacheId: number, images: SelectedLogImage[]): void {
+        if (this.useSameTextForAll) {
+            this.globalImages = images;
+        } else {
+            this.perCacheImages = { ...this.perCacheImages, [geocacheId]: images };
+        }
+        this.update();
+    }
+
+    protected async uploadOneLogImage(geocacheId: number, img: SelectedLogImage): Promise<SelectedLogImage> {
+        try {
+            const form = new FormData();
+            form.append('image_file', img.file, img.file.name);
+
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${geocacheId}/logs/images/upload`, {
+                method: 'POST',
+                credentials: 'include',
+                body: form,
+            });
+
+            let body: any = undefined;
+            try {
+                body = await res.json();
+            } catch {
+                body = undefined;
+            }
+
+            if (!res.ok) {
+                const detail = body?.error ? `: ${body.error}` : '';
+                return { ...img, status: 'failed', error: `HTTP ${res.status}${detail}` };
+            }
+
+            const guid = typeof body?.image_guid === 'string' ? body.image_guid : undefined;
+            if (!guid) {
+                return { ...img, status: 'failed', error: 'Missing image_guid' };
+            }
+
+            return { ...img, status: 'ok', imageGuid: guid, error: undefined };
+        } catch (e) {
+            console.error('[GeocacheLogEditorWidget] uploadOneLogImage error', e);
+            return { ...img, status: 'failed', error: 'Erreur réseau/backend' };
+        }
+    }
+
+    protected async uploadImagesForGeocache(geocacheId: number): Promise<string[]> {
+        const current = this.getImagesForGeocacheId(geocacheId);
+        if (current.length === 0) {
+            return [];
+        }
+
+        let working = [...current];
+        if (this.useSameTextForAll) {
+            working = working.map(img => ({
+                ...img,
+                status: 'pending',
+                imageGuid: undefined,
+                error: undefined,
+            }));
+            this.setImagesForGeocacheId(geocacheId, working);
+        }
+        for (let i = 0; i < working.length; i += 1) {
+            const img = working[i];
+            if (img.status === 'ok' && img.imageGuid) {
+                continue;
+            }
+            working[i] = { ...img, status: 'uploading', error: undefined };
+            this.setImagesForGeocacheId(geocacheId, working);
+            const uploaded = await this.uploadOneLogImage(geocacheId, working[i]);
+            working[i] = uploaded;
+            this.setImagesForGeocacheId(geocacheId, working);
+        }
+
+        return working.filter(x => x.status === 'ok' && typeof x.imageGuid === 'string').map(x => x.imageGuid as string);
+    }
+
+    protected renderImagesSection(target: 'global' | { geocacheId: number }, disabled: boolean): React.ReactNode {
+        const images = target === 'global' ? this.globalImages : (this.perCacheImages[target.geocacheId] ?? []);
+        const title = target === 'global' ? 'Photos (appliquées à toutes les géocaches)' : 'Photos';
+
+        const onDrop = (e: React.DragEvent) => {
+            e.preventDefault();
+            if (disabled) {
+                return;
+            }
+            const files = e.dataTransfer?.files;
+            if (files && files.length > 0) {
+                this.addSelectedImages(files, target === 'global' ? 'global' : { geocacheId: target.geocacheId });
+            }
+        };
+
+        const onDragOver = (e: React.DragEvent) => {
+            e.preventDefault();
+        };
+
+        return (
+            <div style={{ border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, background: 'var(--theia-editor-background)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{title}</div>
+                    <label style={{ fontSize: 12, opacity: disabled ? 0.6 : 0.9, cursor: disabled ? 'not-allowed' : 'pointer' }}>
+                        <input
+                            type='file'
+                            accept='image/png,image/jpeg,image/jpg,image/webp'
+                            multiple
+                            disabled={disabled}
+                            style={{ display: 'none' }}
+                            onChange={e => {
+                                const files = e.currentTarget.files;
+                                if (files && files.length > 0) {
+                                    this.addSelectedImages(files, target === 'global' ? 'global' : { geocacheId: target.geocacheId });
+                                }
+                                e.currentTarget.value = '';
+                            }}
+                        />
+                        + Ajouter…
+                    </label>
+                </div>
+
+                <div
+                    onDrop={onDrop}
+                    onDragOver={onDragOver}
+                    style={{
+                        border: '1px dashed var(--theia-panel-border)',
+                        borderRadius: 6,
+                        padding: 10,
+                        fontSize: 12,
+                        opacity: disabled ? 0.6 : 0.9,
+                        background: 'var(--theia-editor-background)',
+                    }}
+                >
+                    Glisse-dépose tes images ici
+                </div>
+
+                {images.length === 0 ? (
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>Aucune photo</div>
+                ) : (
+                    <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                        {images.map(img => (
+                            <div key={img.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', fontSize: 12 }}>
+                                <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={img.file.name}>
+                                        {img.file.name}
+                                    </div>
+                                    <div style={{ opacity: 0.8 }}>
+                                        {img.status === 'pending' && '⏳ en attente'}
+                                        {img.status === 'uploading' && '⬆️ upload…'}
+                                        {img.status === 'ok' && `✅ ${img.imageGuid ?? 'ok'}`}
+                                        {img.status === 'failed' && `⚠️ ${img.error ?? 'échec'}`}
+                                    </div>
+                                </div>
+                                <button
+                                    className='theia-button secondary'
+                                    style={{ fontSize: 12, padding: '2px 10px' }}
+                                    disabled={disabled || img.status === 'uploading'}
+                                    onClick={() => this.removeSelectedImage(target === 'global' ? 'global' : { geocacheId: target.geocacheId }, img.id)}
+                                    title='Retirer cette image'
+                                >
+                                    Supprimer
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
     }
 
     protected async loadGeocaches(): Promise<void> {
@@ -589,13 +816,16 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     favorite: this.logType === 'found' ? (this.perCacheFavorite[gc.id] === true) : false,
                 };
 
+                const imageGuids = await this.uploadImagesForGeocache(gc.id);
+                const payloadWithImages = imageGuids.length > 0 ? { ...payload, images: imageGuids } : payload;
+
                 let responseBody: any = undefined;
                 try {
                     const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${gc.id}/logs/submit`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
-                        body: JSON.stringify(payload),
+                        body: JSON.stringify(payloadWithImages),
                     });
 
                     try {
@@ -928,6 +1158,10 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             style={{ width: '100%', resize: 'vertical' }}
                         />
 
+                        <div style={{ marginTop: 10 }}>
+                            {this.renderImagesSection('global', this.isLoading || this.isSubmitting || allSubmitted)}
+                        </div>
+
                         <details style={{ marginTop: 8 }}>
                             <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Aperçu Markdown</summary>
                             <div style={{ marginTop: 8, background: 'var(--theia-editor-background)', border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, fontSize: 13, overflow: 'auto' }}>
@@ -1008,6 +1242,10 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                         />
                                         Donner un PF
                                     </label>
+                                </div>
+
+                                <div style={{ marginTop: 10 }}>
+                                    {this.renderImagesSection({ geocacheId: gc.id }, this.isLoading || this.isSubmitting || this.isGeocacheSubmittedOk(gc.id))}
                                 </div>
 
                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8, marginBottom: 6 }}>

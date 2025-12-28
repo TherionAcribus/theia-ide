@@ -2,6 +2,8 @@ import * as React from 'react';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
+import { StorageService } from '@theia/core/lib/browser';
+import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import {
     useReactTable,
     getCoreRowModel,
@@ -14,7 +16,7 @@ import { GeocacheIcon } from './geocache-icon';
 
 type LogTypeValue = 'found' | 'dnf' | 'note';
 
-type SubmissionStatus = 'ok' | 'failed';
+type SubmissionStatus = 'ok' | 'failed' | 'skipped';
 
 type ImageUploadStatus = 'pending' | 'uploading' | 'ok' | 'failed';
 
@@ -34,6 +36,18 @@ interface GeocacheListItem {
     logs_count?: number;
     placed_at?: string | null;
     cache_type?: string;
+}
+
+interface LogHistoryEntry {
+    id: string;
+    createdAt: string;
+    logDate: string;
+    useSameTextForAll: boolean;
+    globalText: string;
+    perCacheText: Record<number, string>;
+    logType: LogTypeValue;
+    perCacheLogType: Record<number, LogTypeValue>;
+    perCacheFavorite: Record<number, boolean>;
 }
 
 const GeocacheLogEditorGeocachesTable: React.FC<{
@@ -108,6 +122,24 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                     </span>
                 );
             }
+            if (status === 'skipped') {
+                return (
+                    <span
+                        style={{
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            fontSize: 12,
+                            background: '#f39c12',
+                            color: '#fff',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap'
+                        }}
+                        title='Cache déjà loguée (précédemment)'
+                    >
+                        ↩️
+                    </span>
+                );
+            }
             if (status === 'failed') {
                 return (
                     <span
@@ -154,10 +186,13 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                         if (s === 'failed') {
                             return 0;
                         }
+                        if (s === 'skipped') {
+                            return 1;
+                        }
                         if (s === 'ok') {
                             return 2;
                         }
-                        return 1;
+                        return 3;
                     };
                     return rank(perCacheSubmitStatus[a.original.id]) - rank(perCacheSubmitStatus[b.original.id]);
                 },
@@ -322,6 +357,10 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
 export class GeocacheLogEditorWidget extends ReactWidget {
     static readonly ID = 'geocache.logEditor.widget';
 
+    protected readonly legacyLogHistoryLocalStorageKey = 'geoApp.logs.history.v1';
+    protected readonly logHistoryStorageKey = 'geoApp.logs.history.v2';
+    protected readonly logHistoryMaxItemsPreferenceKey = 'geoApp.logs.history.maxItems';
+
     protected backendBaseUrl = 'http://127.0.0.1:8000';
 
     protected geocacheIds: number[] = [];
@@ -353,8 +392,14 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         | { editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number }; start: number; end: number }
         | undefined;
 
+    protected logHistory: LogHistoryEntry[] = [];
+    protected logHistoryCursor: number = -1;
+    protected isLoadingHistory = false;
+
     constructor(
-        @inject(MessageService) protected readonly messages: MessageService
+        @inject(MessageService) protected readonly messages: MessageService,
+        @inject(StorageService) protected readonly storageService: StorageService,
+        @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
     ) {
         super();
         this.title.label = 'Logs';
@@ -362,6 +407,141 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.title.closable = true;
         this.title.iconClass = 'fa fa-pen';
         this.addClass('theia-geocache-log-editor-widget');
+    }
+
+    protected getLogHistoryMaxItems(): number {
+        const raw = this.preferenceService.get<number>(this.logHistoryMaxItemsPreferenceKey, 10);
+        const value = typeof raw === 'number' && isFinite(raw) ? Math.floor(raw) : 10;
+        return Math.max(1, Math.min(50, value));
+    }
+
+
+    protected readLegacyLocalStorageHistory(): LogHistoryEntry[] {
+        try {
+            if (typeof window === 'undefined' || !window.localStorage) {
+                return [];
+            }
+            const raw = window.localStorage.getItem(this.legacyLogHistoryLocalStorageKey);
+            if (!raw) {
+                return [];
+            }
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) {
+                return [];
+            }
+            return (parsed as any[])
+                .filter(x => x && typeof x === 'object')
+                .map((x: any): LogHistoryEntry => ({
+                    id: typeof x.id === 'string' ? x.id : this.generateId(),
+                    createdAt: typeof x.createdAt === 'string' ? x.createdAt : new Date().toISOString(),
+                    logDate: typeof x.logDate === 'string' ? x.logDate : new Date().toISOString().slice(0, 10),
+                    useSameTextForAll: x.useSameTextForAll === true,
+                    globalText: typeof x.globalText === 'string' ? x.globalText : '',
+                    perCacheText: (x.perCacheText && typeof x.perCacheText === 'object') ? x.perCacheText as Record<number, string> : {},
+                    logType: x.logType === 'found' || x.logType === 'dnf' || x.logType === 'note' ? x.logType : 'found',
+                    perCacheLogType: (x.perCacheLogType && typeof x.perCacheLogType === 'object') ? x.perCacheLogType as Record<number, LogTypeValue> : {},
+                    perCacheFavorite: (x.perCacheFavorite && typeof x.perCacheFavorite === 'object') ? x.perCacheFavorite as Record<number, boolean> : {},
+                }));
+        } catch {
+            return [];
+        }
+    }
+
+    protected async refreshLogHistory(): Promise<void> {
+        this.isLoadingHistory = true;
+        this.logHistoryCursor = -1;
+        this.update();
+
+        let stored = await this.storageService.getData<LogHistoryEntry[]>(this.logHistoryStorageKey, []);
+        if (!Array.isArray(stored)) {
+            stored = [];
+        }
+
+        if (stored.length === 0) {
+            const legacy = this.readLegacyLocalStorageHistory();
+            if (legacy.length > 0) {
+                stored = legacy;
+                await this.storageService.setData(this.logHistoryStorageKey, stored);
+            }
+        }
+
+        this.logHistory = stored;
+        this.isLoadingHistory = false;
+        this.update();
+    }
+
+    protected async saveCurrentStateToHistory(): Promise<void> {
+        const entry: LogHistoryEntry = {
+            id: this.generateId(),
+            createdAt: new Date().toISOString(),
+            logDate: this.logDate,
+            useSameTextForAll: this.useSameTextForAll,
+            globalText: this.globalText,
+            perCacheText: { ...this.perCacheText },
+            logType: this.logType,
+            perCacheLogType: { ...this.perCacheLogType },
+            perCacheFavorite: { ...this.perCacheFavorite },
+        };
+
+        const maxItems = this.getLogHistoryMaxItems();
+        const next = [entry, ...this.logHistory].slice(0, maxItems);
+        this.logHistory = next;
+        await this.storageService.setData(this.logHistoryStorageKey, next);
+        this.logHistoryCursor = -1;
+        this.update();
+    }
+
+    protected applyHistoryEntry(entry: LogHistoryEntry): void {
+        const safeLogType = entry.logType === 'found' || entry.logType === 'dnf' || entry.logType === 'note' ? entry.logType : this.logType;
+
+        const perCacheValues = entry.perCacheText && typeof entry.perCacheText === 'object'
+            ? Object.values(entry.perCacheText).filter(v => typeof v === 'string') as string[]
+            : [];
+
+        const templateText = (typeof entry.globalText === 'string' && entry.globalText.trim())
+            ? entry.globalText
+            : (perCacheValues.find(v => v.trim()) ?? '');
+
+        this.useSameTextForAll = true;
+        this.globalText = templateText;
+        this.logType = safeLogType;
+
+        const nextPerCacheLogType: Record<number, LogTypeValue> = { ...this.perCacheLogType };
+        const nextPerCacheFavorite: Record<number, boolean> = { ...this.perCacheFavorite };
+
+        for (const gc of this.geocaches) {
+            const cachedType = entry.perCacheLogType?.[gc.id];
+            if (cachedType === 'found' || cachedType === 'dnf' || cachedType === 'note') {
+                nextPerCacheLogType[gc.id] = cachedType;
+            }
+            const cachedFav = entry.perCacheFavorite?.[gc.id];
+            if (typeof cachedFav === 'boolean') {
+                nextPerCacheFavorite[gc.id] = cachedFav;
+            }
+        }
+        this.perCacheLogType = nextPerCacheLogType;
+        this.perCacheFavorite = nextPerCacheFavorite;
+        this.update();
+    }
+
+    protected navigateHistory(delta: number): void {
+        if (this.logHistory.length === 0) {
+            return;
+        }
+
+        let nextCursor: number;
+        if (this.logHistoryCursor < 0) {
+            if (delta <= 0) {
+                return;
+            }
+            nextCursor = 0;
+        } else {
+            nextCursor = this.logHistoryCursor + delta;
+        }
+
+        nextCursor = Math.max(0, Math.min(this.logHistory.length - 1, nextCursor));
+        this.logHistoryCursor = nextCursor;
+        this.applyHistoryEntry(this.logHistory[nextCursor]);
     }
 
     protected escapeHtml(value: string): string {
@@ -761,6 +941,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         }
 
         void this.loadGeocaches();
+        void this.refreshLogHistory();
         this.update();
     }
 
@@ -1133,6 +1314,24 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                 </span>
             );
         }
+        if (status === 'skipped') {
+            return (
+                <span
+                    style={{
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        fontSize: 12,
+                        background: '#f39c12',
+                        color: '#fff',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                    }}
+                    title='Cache déjà loguée (non soumise)'
+                >
+                    ↩️ Déjà loguée
+                </span>
+            );
+        }
         if (status === 'failed') {
             return (
                 <span
@@ -1253,10 +1452,16 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             }));
                         }
                     } else {
-                        failed += 1;
-                        this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'failed' };
-                        const detail = responseBody?.error ? `: ${responseBody.error}` : '';
-                        this.messages.warn(`${gc.gc_code} - échec${detail}`);
+                        const errorCode = typeof responseBody?.error_code === 'string' ? responseBody.error_code : undefined;
+                        if (res.status === 409 && errorCode === 'ALREADY_LOGGED') {
+                            this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'skipped' };
+                            this.messages.warn(`${gc.gc_code} - déjà loguée (ignorée)`);
+                        } else {
+                            failed += 1;
+                            this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'failed' };
+                            const detail = responseBody?.error ? `: ${responseBody.error}` : '';
+                            this.messages.warn(`${gc.gc_code} - échec${detail}`);
+                        }
                     }
                 } catch (e) {
                     console.error('[GeocacheLogEditorWidget] submit log error', gc, e, responseBody);
@@ -1269,6 +1474,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
             }
 
             this.lastSubmitSummary = { ok, failed };
+            if (ok > 0) {
+                await this.saveCurrentStateToHistory();
+            }
             if (failed === 0) {
                 this.messages.info(`Logs envoyés sur Geocaching.com: ${ok}/${ok}`);
             } else {
@@ -1346,6 +1554,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
     protected render(): React.ReactNode {
         const allSubmitted = this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id));
+        const canPrev = !this.isLoadingHistory && this.logHistory.length > 0 && (this.logHistoryCursor < this.logHistory.length - 1);
+        const canNext = !this.isLoadingHistory && this.logHistory.length > 0 && (this.logHistoryCursor > 0);
         return (
             <div style={{ padding: 12, height: '100%', overflow: 'auto', display: 'grid', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
@@ -1358,6 +1568,24 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => this.navigateHistory(+1)}
+                            disabled={this.isLoading || this.isLoadingHistory || !canPrev}
+                            title='Log précédent'
+                            style={{ fontSize: 12, padding: '4px 10px' }}
+                        >
+                            ⬅️
+                        </button>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => this.navigateHistory(-1)}
+                            disabled={this.isLoading || this.isLoadingHistory || !canNext}
+                            title='Log suivant'
+                            style={{ fontSize: 12, padding: '4px 10px' }}
+                        >
+                            ➡️
+                        </button>
                         <button
                             className='theia-button primary'
                             onClick={() => { void this.submitLogsToGeocaching(); }}

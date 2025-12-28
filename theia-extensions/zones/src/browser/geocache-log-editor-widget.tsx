@@ -349,6 +349,10 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected perCacheTextAreas: Record<number, HTMLTextAreaElement | null> = {};
     protected activeEditor: { type: 'global' } | { type: 'per-cache'; geocacheId: number } | undefined;
 
+    protected pendingSelection:
+        | { editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number }; start: number; end: number }
+        | undefined;
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService
     ) {
@@ -378,6 +382,31 @@ export class GeocacheLogEditorWidget extends ReactWidget {
             return trimmed;
         }
         return undefined;
+    }
+
+    protected scheduleRestoreSelection(
+        editor: { type: 'global' } | { type: 'per-cache'; geocacheId: number },
+        start: number,
+        end: number,
+    ): void {
+        this.pendingSelection = { editor, start, end };
+        setTimeout(() => {
+            const pending = this.pendingSelection;
+            if (!pending) {
+                return;
+            }
+            const ta = this.getEditorTextArea(pending.editor);
+            if (!ta) {
+                return;
+            }
+            try {
+                const safeStart = Math.max(0, Math.min(pending.start, ta.value.length));
+                const safeEnd = Math.max(0, Math.min(pending.end, ta.value.length));
+                ta.setSelectionRange(safeStart, safeEnd);
+            } catch {
+                // ignore
+            }
+        }, 0);
     }
 
     protected renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
@@ -1467,7 +1496,13 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <textarea
                             className='theia-input'
                             value={this.globalText}
-                            onChange={e => { this.globalText = e.target.value; this.update(); }}
+                            onChange={e => {
+                                const start = e.currentTarget.selectionStart;
+                                const end = e.currentTarget.selectionEnd;
+                                this.globalText = e.currentTarget.value;
+                                this.update();
+                                this.scheduleRestoreSelection({ type: 'global' }, start, end);
+                            }}
                             onFocus={() => { this.activeEditor = { type: 'global' }; }}
                             ref={el => { this.globalTextArea = el; }}
                             disabled={this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id))}
@@ -1613,8 +1648,11 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                     className='theia-input'
                                     value={this.perCacheText[gc.id] ?? ''}
                                     onChange={e => {
+                                        const start = e.currentTarget.selectionStart;
+                                        const end = e.currentTarget.selectionEnd;
                                         this.perCacheText = { ...this.perCacheText, [gc.id]: e.target.value };
                                         this.update();
+                                        this.scheduleRestoreSelection({ type: 'per-cache', geocacheId: gc.id }, start, end);
                                     }}
                                     onFocus={() => { this.activeEditor = { type: 'per-cache', geocacheId: gc.id }; }}
                                     ref={el => { this.perCacheTextAreas = { ...this.perCacheTextAreas, [gc.id]: el }; }}

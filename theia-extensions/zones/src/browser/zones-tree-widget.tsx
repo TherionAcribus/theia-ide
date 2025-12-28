@@ -43,6 +43,37 @@ export class ZonesTreeWidget extends ReactWidget {
     protected moveDialog: { geocache: GeocacheDto; zoneId: number } | null = null;
     protected copyDialog: { geocache: GeocacheDto; zoneId: number } | null = null;
 
+    protected readonly handleGeocacheLogSubmitted = (event: CustomEvent<{ geocacheId: number; found?: boolean }>): void => {
+        const detail = event?.detail;
+        const geocacheId = detail?.geocacheId;
+        const found = detail?.found;
+        if (typeof geocacheId !== 'number' || found !== true) {
+            return;
+        }
+
+        let changed = false;
+        for (const [zoneId, geocaches] of this.zoneGeocaches.entries()) {
+            if (!geocaches || geocaches.length === 0) {
+                continue;
+            }
+            const idx = geocaches.findIndex(g => g.id === geocacheId);
+            if (idx < 0) {
+                continue;
+            }
+            const current = geocaches[idx];
+            if (current?.found === true) {
+                continue;
+            }
+            const next = { ...current, found: true };
+            this.zoneGeocaches.set(zoneId, [...geocaches.slice(0, idx), next, ...geocaches.slice(idx + 1)]);
+            changed = true;
+        }
+
+        if (changed) {
+            this.update();
+        }
+    };
+
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(WidgetManager) protected readonly widgetManager: WidgetManager,
@@ -63,7 +94,17 @@ export class ZonesTreeWidget extends ReactWidget {
     onAfterAttach(msg: any): void {
         super.onAfterAttach(msg);
         console.log('[ZonesTreeWidget] onAfterAttach');
+        if (typeof window !== 'undefined') {
+            window.addEventListener('geoapp-geocache-log-submitted', this.handleGeocacheLogSubmitted as EventListener);
+        }
         this.refresh();
+    }
+
+    protected onBeforeDetach(msg: any): void {
+        if (typeof window !== 'undefined') {
+            window.removeEventListener('geoapp-geocache-log-submitted', this.handleGeocacheLogSubmitted as EventListener);
+        }
+        super.onBeforeDetach(msg);
     }
 
     public async refresh(): Promise<void> {

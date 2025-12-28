@@ -5,6 +5,8 @@ import { MessageService } from '@theia/core';
 
 type LogTypeValue = 'found' | 'dnf' | 'note';
 
+type SubmissionStatus = 'ok' | 'failed';
+
 interface GeocacheListItem {
     id: number;
     gc_code: string;
@@ -33,6 +35,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
     protected isSubmitting = false;
     protected lastSubmitSummary: { ok: number; failed: number } | undefined;
+    protected perCacheSubmitStatus: Record<number, SubmissionStatus> = {};
+    protected perCacheSubmitReference: Record<number, string | undefined> = {};
 
     protected globalTextArea: HTMLTextAreaElement | null = null;
     protected perCacheTextAreas: Record<number, HTMLTextAreaElement | null> = {};
@@ -406,6 +410,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.geocaches = [];
         this.perCacheText = {};
         this.perCacheFavorite = {};
+        this.perCacheSubmitStatus = {};
+        this.perCacheSubmitReference = {};
 
         if (params.title) {
             this.title.label = params.title;
@@ -477,6 +483,66 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         this.update();
     }
 
+    protected isGeocacheSubmittedOk(geocacheId: number): boolean {
+        return this.perCacheSubmitStatus[geocacheId] === 'ok';
+    }
+
+    protected renderSubmitBadge(geocacheId: number): React.ReactNode {
+        const status = this.perCacheSubmitStatus[geocacheId];
+        if (status === 'ok') {
+            return (
+                <span
+                    style={{
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        fontSize: 12,
+                        background: '#2ecc71',
+                        color: '#fff',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                    }}
+                    title={this.perCacheSubmitReference[geocacheId] ? `logReferenceCode: ${this.perCacheSubmitReference[geocacheId]}` : 'Log envoyé'}
+                >
+                    ✅ Log envoyé
+                </span>
+            );
+        }
+        if (status === 'failed') {
+            return (
+                <span
+                    style={{
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                        fontSize: 12,
+                        background: 'var(--theia-errorForeground)',
+                        color: '#fff',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap'
+                    }}
+                    title='Dernière tentative en échec'
+                >
+                    ⚠️ Échec
+                </span>
+            );
+        }
+        return (
+            <span
+                style={{
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    fontSize: 12,
+                    background: '#7f8c8d',
+                    color: '#fff',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap'
+                }}
+                title='Pas encore envoyé'
+            >
+                ⏳ À envoyer
+            </span>
+        );
+    }
+
     protected getTextForGeocacheId(geocacheId: number): string {
         return this.useSameTextForAll ? this.globalText : (this.perCacheText[geocacheId] ?? '');
     }
@@ -491,6 +557,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         }
 
         const missingText = this.geocaches
+            .filter(gc => !this.isGeocacheSubmittedOk(gc.id))
             .map(gc => ({ gc, text: (this.getTextForGeocacheId(gc.id) || '').trim() }))
             .filter(x => !x.text);
 
@@ -512,6 +579,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
         try {
             for (const gc of this.geocaches) {
+                if (this.isGeocacheSubmittedOk(gc.id)) {
+                    continue;
+                }
                 const payload = {
                     text: this.getTextForGeocacheId(gc.id),
                     date: this.logDate,
@@ -536,16 +606,36 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
                     if (res.ok) {
                         ok += 1;
+                        this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'ok' };
+                        const ref = typeof responseBody?.log_reference_code === 'string' ? responseBody.log_reference_code : undefined;
+                        this.perCacheSubmitReference = { ...this.perCacheSubmitReference, [gc.id]: ref };
+
+                        if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('geoapp-geocache-log-submitted', {
+                                detail: {
+                                    geocacheId: gc.id,
+                                    gcCode: gc.gc_code,
+                                    logType: this.logType,
+                                    logDate: this.logDate,
+                                    found: this.logType === 'found',
+                                    logReferenceCode: ref,
+                                }
+                            }));
+                        }
                     } else {
                         failed += 1;
+                        this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'failed' };
                         const detail = responseBody?.error ? `: ${responseBody.error}` : '';
                         this.messages.warn(`${gc.gc_code} - échec${detail}`);
                     }
                 } catch (e) {
                     console.error('[GeocacheLogEditorWidget] submit log error', gc, e, responseBody);
                     failed += 1;
+                    this.perCacheSubmitStatus = { ...this.perCacheSubmitStatus, [gc.id]: 'failed' };
                     this.messages.warn(`${gc.gc_code} - erreur réseau/backend`);
                 }
+
+                this.update();
             }
 
             this.lastSubmitSummary = { ok, failed };
@@ -625,6 +715,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     }
 
     protected render(): React.ReactNode {
+        const allSubmitted = this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id));
         return (
             <div style={{ padding: 12, height: '100%', overflow: 'auto', display: 'grid', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
@@ -640,7 +731,12 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <button
                             className='theia-button primary'
                             onClick={() => { void this.submitLogsToGeocaching(); }}
-                            disabled={this.isLoading || this.isSubmitting || this.geocaches.length === 0}
+                            disabled={
+                                this.isLoading ||
+                                this.isSubmitting ||
+                                this.geocaches.length === 0 ||
+                                this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id))
+                            }
                             title='Envoyer le(s) log(s) sur Geocaching.com via le backend'
                             style={{ fontSize: 12, padding: '4px 12px' }}
                         >
@@ -669,6 +765,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
                 {this.useSameTextForAll && this.geocaches.length === 1 && this.geocaches[0] && (
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <div>
+                            {this.renderSubmitBadge(this.geocaches[0].id)}
+                        </div>
                         <div style={{ fontSize: 12, opacity: 0.85 }}>
                             PF: {typeof this.geocaches[0].favorites_count === 'number' ? this.geocaches[0].favorites_count : '—'}
                             {'  '}(
@@ -680,7 +779,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                 type='checkbox'
                                 checked={this.perCacheFavorite[this.geocaches[0].id] === true}
                                 onChange={e => this.toggleFavoriteForGeocacheId(this.geocaches[0].id, e.target.checked)}
-                                disabled={this.logType !== 'found'}
+                                disabled={this.logType !== 'found' || this.isGeocacheSubmittedOk(this.geocaches[0].id)}
                             />
                             Donner un PF
                         </label>
@@ -695,6 +794,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                             <thead>
                                 <tr style={{ background: 'var(--theia-editor-background)' }}>
+                                    <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Log</th>
                                     <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>GC</th>
                                     <th style={{ textAlign: 'left', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>Nom</th>
                                     <th style={{ textAlign: 'right', padding: '6px 10px', borderTop: '1px solid var(--theia-panel-border)' }}>PF</th>
@@ -704,7 +804,10 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             </thead>
                             <tbody>
                                 {this.geocaches.map(gc => (
-                                    <tr key={`fav-${gc.id}`} style={{ borderTop: '1px solid var(--theia-panel-border)' }}>
+                                    <tr key={`fav-${gc.id}`} style={{ borderTop: '1px solid var(--theia-panel-border)', opacity: this.isGeocacheSubmittedOk(gc.id) ? 0.7 : 1 }}>
+                                        <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+                                            {this.renderSubmitBadge(gc.id)}
+                                        </td>
                                         <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700 }}>{gc.gc_code}</td>
                                         <td style={{ padding: '6px 10px' }}>{gc.name}</td>
                                         <td style={{ padding: '6px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -718,7 +821,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                                 type='checkbox'
                                                 checked={this.perCacheFavorite[gc.id] === true}
                                                 onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
-                                                disabled={this.logType !== 'found'}
+                                                disabled={this.logType !== 'found' || this.isGeocacheSubmittedOk(gc.id)}
                                                 title={this.logType !== 'found' ? 'Le PF est disponible uniquement pour un log Found it' : 'Donner un point favori'}
                                             />
                                         </td>
@@ -732,6 +835,21 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                 {this.lastSubmitSummary && (
                     <div style={{ opacity: 0.85, fontSize: 12 }}>
                         Résultat: {this.lastSubmitSummary.ok} ok, {this.lastSubmitSummary.failed} échec(s)
+                    </div>
+                )}
+
+                {allSubmitted && (
+                    <div
+                        style={{
+                            border: '1px solid var(--theia-panel-border)',
+                            background: 'var(--theia-editor-background)',
+                            borderRadius: 6,
+                            padding: '8px 10px',
+                            fontSize: 12,
+                            fontWeight: 600,
+                        }}
+                    >
+                        ✅ Logs envoyés pour toutes les géocaches sélectionnées
                     </div>
                 )}
 
@@ -774,28 +892,28 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Texte (Markdown)</label>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
                             <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>Markdown</span>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Gras'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Gras'>
                                 <strong>B</strong>
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('*', '*', 'texte')} disabled={this.isLoading || this.isSubmitting} title='Italique'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('*', '*', 'texte')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Italique'>
                                 <em>I</em>
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('`', '`', 'code')} disabled={this.isLoading || this.isSubmitting} title='Code inline'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('`', '`', 'code')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Code inline'>
                                 {'</>'}
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('[', '](https://example.com)', 'lien')} disabled={this.isLoading || this.isSubmitting} title='Lien'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('[', '](https://example.com)', 'lien')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Lien'>
                                 🔗
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('# ', 'Titre')} disabled={this.isLoading || this.isSubmitting} title='Titre'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('# ', 'Titre')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Titre'>
                                 H1
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('## ', 'Sous-titre')} disabled={this.isLoading || this.isSubmitting} title='Sous-titre'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('## ', 'Sous-titre')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Sous-titre'>
                                 H2
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('- ', 'item')} disabled={this.isLoading || this.isSubmitting} title='Liste'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('- ', 'item')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Liste'>
                                 -
                             </button>
-                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('> ', 'Citation')} disabled={this.isLoading || this.isSubmitting} title='Citation'>
+                            <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownPrefix('> ', 'Citation')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Citation'>
                                 &gt;
                             </button>
                         </div>
@@ -805,6 +923,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             onChange={e => { this.globalText = e.target.value; this.update(); }}
                             onFocus={() => { this.activeEditor = { type: 'global' }; }}
                             ref={el => { this.globalTextArea = el; }}
+                            disabled={this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id))}
                             rows={10}
                             style={{ width: '100%', resize: 'vertical' }}
                         />
@@ -836,7 +955,41 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             <div key={gc.id} style={{ border: '1px solid var(--theia-panel-border)', borderRadius: 6, padding: 10, background: 'var(--theia-editor-background)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                                     <div style={{ fontWeight: 700 }}>{gc.gc_code}</div>
-                                    <div style={{ opacity: 0.8, fontSize: 12, textAlign: 'right' }}>{gc.name}</div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                        {this.perCacheSubmitStatus[gc.id] === 'ok' && (
+                                            <span
+                                                style={{
+                                                    padding: '2px 6px',
+                                                    borderRadius: 3,
+                                                    fontSize: 12,
+                                                    background: '#2ecc71',
+                                                    color: '#fff',
+                                                    fontWeight: 700,
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                                title={this.perCacheSubmitReference[gc.id] ? `logReferenceCode: ${this.perCacheSubmitReference[gc.id]}` : 'Log envoyé'}
+                                            >
+                                                ✅ Log envoyé
+                                            </span>
+                                        )}
+                                        {this.perCacheSubmitStatus[gc.id] === 'failed' && (
+                                            <span
+                                                style={{
+                                                    padding: '2px 6px',
+                                                    borderRadius: 3,
+                                                    fontSize: 12,
+                                                    background: 'var(--theia-errorForeground)',
+                                                    color: '#fff',
+                                                    fontWeight: 700,
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                                title='Dernière tentative en échec'
+                                            >
+                                                ⚠️ Échec
+                                            </span>
+                                        )}
+                                        <div style={{ opacity: 0.8, fontSize: 12, textAlign: 'right' }}>{gc.name}</div>
+                                    </div>
                                 </div>
 
                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
@@ -893,6 +1046,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                     }}
                                     onFocus={() => { this.activeEditor = { type: 'per-cache', geocacheId: gc.id }; }}
                                     ref={el => { this.perCacheTextAreas = { ...this.perCacheTextAreas, [gc.id]: el }; }}
+                                    disabled={this.isGeocacheSubmittedOk(gc.id)}
                                     rows={6}
                                     style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
                                     placeholder='Texte (Markdown)'

@@ -42,6 +42,29 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
 
     protected interactionTimerId: number | undefined;
 
+    protected readonly handleGeocacheLogSubmitted = (event: CustomEvent<{ geocacheId: number; found?: boolean }>): void => {
+        const detail = event?.detail;
+        const geocacheId = detail?.geocacheId;
+        const found = detail?.found;
+        if (typeof geocacheId !== 'number' || found !== true) {
+            return;
+        }
+        if (!this.rows || this.rows.length === 0) {
+            return;
+        }
+        const idx = this.rows.findIndex(r => r.id === geocacheId);
+        if (idx < 0) {
+            return;
+        }
+        const current = this.rows[idx];
+        if (current?.found === true) {
+            return;
+        }
+        const next = { ...current, found: true };
+        this.rows = [...this.rows.slice(0, idx), next, ...this.rows.slice(idx + 1)];
+        this.update();
+    };
+
     protected openLogEditorForSelected = (ids: number[]): void => {
         if (!ids || ids.length === 0) {
             this.messages.warn('Aucune géocache sélectionnée');
@@ -101,6 +124,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         }
         this.node.addEventListener('click', this.handleContentClick, true);
         this.node.addEventListener('scroll', this.handleContentScroll, true);
+        window.addEventListener('geoapp-geocache-log-submitted', this.handleGeocacheLogSubmitted as EventListener);
     }
 
     protected removeInteractionListeners(): void {
@@ -109,6 +133,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         }
         this.node.removeEventListener('click', this.handleContentClick, true);
         this.node.removeEventListener('scroll', this.handleContentScroll, true);
+        window.removeEventListener('geoapp-geocache-log-submitted', this.handleGeocacheLogSubmitted as EventListener);
         this.clearMinOpenTimeTimer();
     }
 

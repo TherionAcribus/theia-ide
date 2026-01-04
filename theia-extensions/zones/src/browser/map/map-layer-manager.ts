@@ -2,7 +2,7 @@ import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import Feature from 'ol/Feature';
 import Map from 'ol/Map';
-import { Point, Circle } from 'ol/geom';
+import { Point, Circle, LineString, Polygon } from 'ol/geom';
 import Geometry from 'ol/geom/Geometry';
 import { Style, Fill, Stroke } from 'ol/style';
 import { createClusterSource } from './map-clustering';
@@ -10,7 +10,7 @@ import { createClusterStyle } from './map-geocache-style';
 import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties, GeocacheStyleOptions } from './map-geocache-style-sprite';
 import { lonLatToMapCoordinate } from './map-utils';
 import { createTileLayer, DEFAULT_PROVIDER_ID } from './map-tile-providers';
-import { DetectedCoordinateHighlight } from './map-service';
+import { DetectedCoordinateHighlight, FormulaSolverPreviewOverlay } from './map-service';
 
 /**
  * Interface pour un waypoint de géocache
@@ -64,6 +64,8 @@ export class MapLayerManager {
     private nearbyGeocacheLayer: any;
     private exclusionZoneVectorSource: VectorSource<Feature<Geometry>>;
     private exclusionZoneLayer: any;
+    private formulaSolverPreviewVectorSource: VectorSource<Feature<Geometry>>;
+    private formulaSolverPreviewLayer: any;
     private currentTileProviderId: string;
 
     constructor(map: Map) {
@@ -139,6 +141,18 @@ export class MapLayerManager {
             zIndex: 1 // Tout en bas pour ne pas gêner
         });
         this.map.addLayer(this.exclusionZoneLayer);
+
+        // Couche pour l'overlay "preview" du Formula Solver (zone/ligne/point estimés)
+        this.formulaSolverPreviewVectorSource = new VectorSource<Feature<Geometry>>();
+        this.formulaSolverPreviewLayer = new VectorLayer({
+            source: this.formulaSolverPreviewVectorSource,
+            style: this.createFormulaSolverPreviewStyle.bind(this),
+            properties: {
+                name: 'formula-solver-preview'
+            },
+            zIndex: 25
+        });
+        this.map.addLayer(this.formulaSolverPreviewLayer);
     }
 
     /**
@@ -153,6 +167,79 @@ export class MapLayerManager {
         this.map.removeLayer(this.tileLayer);
         this.tileLayer = createTileLayer(providerId);
         this.map.getLayers().insertAt(0, this.tileLayer);
+    }
+
+    setFormulaSolverPreviewOverlay(overlay?: FormulaSolverPreviewOverlay): void {
+        this.formulaSolverPreviewVectorSource.clear();
+        if (!overlay) {
+            return;
+        }
+
+        const b = overlay.bounds;
+        const minLon = b.minLon;
+        const maxLon = b.maxLon;
+        const minLat = b.minLat;
+        const maxLat = b.maxLat;
+
+        let geometry: Geometry | undefined;
+        if (overlay.kind === 'point') {
+            const centerLon = (minLon + maxLon) / 2;
+            const centerLat = (minLat + maxLat) / 2;
+            geometry = new Point(lonLatToMapCoordinate(centerLon, centerLat));
+        } else if (overlay.kind === 'line-lat') {
+            const lat = (minLat + maxLat) / 2;
+            geometry = new LineString([
+                lonLatToMapCoordinate(minLon, lat),
+                lonLatToMapCoordinate(maxLon, lat)
+            ]);
+        } else if (overlay.kind === 'line-lon') {
+            const lon = (minLon + maxLon) / 2;
+            geometry = new LineString([
+                lonLatToMapCoordinate(lon, minLat),
+                lonLatToMapCoordinate(lon, maxLat)
+            ]);
+        } else {
+            // bbox
+            const coords = [
+                lonLatToMapCoordinate(minLon, minLat),
+                lonLatToMapCoordinate(maxLon, minLat),
+                lonLatToMapCoordinate(maxLon, maxLat),
+                lonLatToMapCoordinate(minLon, maxLat),
+                lonLatToMapCoordinate(minLon, minLat)
+            ];
+            geometry = new Polygon([coords]);
+        }
+
+        if (!geometry) {
+            return;
+        }
+
+        const feature = new Feature({ geometry });
+        feature.setProperties({
+            isFormulaSolverPreview: true,
+            kind: overlay.kind,
+            formatted: overlay.formatted,
+            gcCode: overlay.gcCode,
+            geocacheId: overlay.geocacheId
+        });
+        this.formulaSolverPreviewVectorSource.addFeature(feature);
+    }
+
+    clearFormulaSolverPreviewOverlay(): void {
+        this.formulaSolverPreviewVectorSource.clear();
+    }
+
+    private createFormulaSolverPreviewStyle(feature: Feature<Geometry>): Style {
+        // Style volontairement léger (pas de fill opaque)
+        return new Style({
+            stroke: new Stroke({
+                color: 'rgba(0, 122, 204, 0.9)',
+                width: 2
+            }),
+            fill: new Fill({
+                color: 'rgba(0, 122, 204, 0.08)'
+            })
+        });
     }
 
     /**

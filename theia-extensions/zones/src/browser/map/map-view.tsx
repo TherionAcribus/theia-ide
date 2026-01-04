@@ -6,7 +6,7 @@ import { defaults as defaultInteractions } from 'ol/interaction';
 import Overlay from 'ol/Overlay';
 import 'ol/ol.css';
 import { MapLayerManager, MapGeocache } from './map-layer-manager';
-import { MapService, DetectedCoordinateHighlight } from './map-service';
+import { MapService, DetectedCoordinateHighlight, FormulaSolverPreviewOverlay } from './map-service';
 import { lonLatToMapCoordinate, calculateExtent, mapCoordinateToLonLat, formatGeocachingCoordinates } from './map-utils';
 import { TILE_PROVIDERS } from './map-tile-providers';
 import { fromLonLat } from 'ol/proj';
@@ -713,6 +713,38 @@ export const MapView: React.FC<MapViewProps> = ({
             applyHighlight(undefined);
             disposable.dispose();
             disposableMulti.dispose();
+        };
+    }, [isInitialized, mapService]);
+
+    // Overlay preview Formula Solver (zone/ligne/point estimés)
+    React.useEffect(() => {
+        if (!isInitialized || !layerManagerRef.current) {
+            return;
+        }
+
+        const applyOverlay = (overlay: FormulaSolverPreviewOverlay | undefined) => {
+            if (!layerManagerRef.current) {
+                return;
+            }
+            if (!overlay) {
+                layerManagerRef.current.clearFormulaSolverPreviewOverlay();
+                return;
+            }
+            layerManagerRef.current.setFormulaSolverPreviewOverlay(overlay);
+        };
+
+        const disposable = mapService.onDidUpdateFormulaSolverPreviewOverlay(overlay => {
+            applyOverlay(overlay);
+        });
+
+        const last = mapService.getLastFormulaSolverPreviewOverlay();
+        if (last) {
+            applyOverlay(last);
+        }
+
+        return () => {
+            applyOverlay(undefined);
+            disposable.dispose();
         };
     }, [isInitialized, mapService]);
 

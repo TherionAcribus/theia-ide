@@ -40,6 +40,21 @@ export interface DetectedCoordinateHighlight {
     bruteForceId?: string; // ID pour identification brute force
 }
 
+export type FormulaSolverPreviewOverlayKind = 'point' | 'bbox' | 'line-lat' | 'line-lon';
+
+export interface FormulaSolverPreviewOverlay {
+    kind: FormulaSolverPreviewOverlayKind;
+    bounds: {
+        minLat: number;
+        maxLat: number;
+        minLon: number;
+        maxLon: number;
+    };
+    formatted?: string;
+    gcCode?: string;
+    geocacheId?: number;
+}
+
 interface DetectedCoordinateHighlightEventDetail {
     gcCode?: string;
     geocacheId?: number; // ID de la géocache associée
@@ -57,6 +72,19 @@ interface DetectedCoordinateHighlightEventDetail {
     interactionType?: string; // Added interactionType property
     interactionData?: any; // Added interactionData property
     bruteForceId?: string; // ID pour identification brute force
+}
+
+interface FormulaSolverPreviewOverlayEventDetail {
+    kind?: FormulaSolverPreviewOverlayKind;
+    bounds?: {
+        minLat?: number;
+        maxLat?: number;
+        minLon?: number;
+        maxLon?: number;
+    };
+    formatted?: string;
+    gcCode?: string;
+    geocacheId?: number;
 }
 
 /**
@@ -97,6 +125,10 @@ export class MapService {
     private readonly onDidHighlightCoordinatesEmitter = new Emitter<DetectedCoordinateHighlight[]>();
     readonly onDidHighlightCoordinates: TheiaEvent<DetectedCoordinateHighlight[]> = this.onDidHighlightCoordinatesEmitter.event;
 
+    // Événement pour l'overlay "preview" du Formula Solver (zone/ligne/point estimés)
+    private readonly onDidUpdateFormulaSolverPreviewOverlayEmitter = new Emitter<FormulaSolverPreviewOverlay | undefined>();
+    readonly onDidUpdateFormulaSolverPreviewOverlay: TheiaEvent<FormulaSolverPreviewOverlay | undefined> = this.onDidUpdateFormulaSolverPreviewOverlayEmitter.event;
+
     // État interne
     private selectedGeocache: SelectedGeocache | null = null;
     private currentView: MapViewState | null = null;
@@ -104,12 +136,15 @@ export class MapService {
     private currentTileProvider: string = 'osm';
     private lastHighlightedCoordinate: DetectedCoordinateHighlight | undefined;
     private highlightedCoordinates: DetectedCoordinateHighlight[] = [];
+    private lastFormulaSolverPreviewOverlay: FormulaSolverPreviewOverlay | undefined;
 
     constructor() {
         if (typeof window !== 'undefined') {
             window.addEventListener('geoapp-map-highlight-coordinate', this.handleHighlightCoordinateEvent as EventListener);
             window.addEventListener('geoapp-map-highlight-clear', this.handleHighlightClearEvent as EventListener);
             window.addEventListener('geoapp-map-remove-brute-force-point', this.handleRemoveBruteForcePointEvent as EventListener);
+            window.addEventListener('geoapp-map-formula-solver-preview-overlay', this.handleFormulaSolverPreviewOverlayEvent as EventListener);
+            window.addEventListener('geoapp-map-formula-solver-preview-overlay-clear', this.handleFormulaSolverPreviewOverlayClearEvent as EventListener);
         }
     }
 
@@ -158,6 +193,45 @@ export class MapService {
         this.clearHighlightedCoordinate();
     };
 
+    private handleFormulaSolverPreviewOverlayEvent = (event: Event): void => {
+        const customEvent = event as CustomEvent<FormulaSolverPreviewOverlayEventDetail>;
+        const detail = customEvent.detail;
+
+        const kind = detail?.kind;
+        const b = detail?.bounds;
+        if (!kind || !b) {
+            console.warn('[MapService] Preview overlay ignoré: kind/bounds manquants', detail);
+            return;
+        }
+
+        const minLat = b.minLat;
+        const maxLat = b.maxLat;
+        const minLon = b.minLon;
+        const maxLon = b.maxLon;
+
+        if ([minLat, maxLat, minLon, maxLon].some(v => typeof v !== 'number' || !isFinite(v as number))) {
+            console.warn('[MapService] Preview overlay ignoré: bounds invalides', b);
+            return;
+        }
+
+        this.setFormulaSolverPreviewOverlay({
+            kind,
+            bounds: {
+                minLat: Math.min(minLat as number, maxLat as number),
+                maxLat: Math.max(minLat as number, maxLat as number),
+                minLon: Math.min(minLon as number, maxLon as number),
+                maxLon: Math.max(minLon as number, maxLon as number)
+            },
+            formatted: detail.formatted,
+            gcCode: detail.gcCode,
+            geocacheId: detail.geocacheId
+        });
+    };
+
+    private handleFormulaSolverPreviewOverlayClearEvent = (): void => {
+        this.setFormulaSolverPreviewOverlay(undefined);
+    };
+
     private handleRemoveBruteForcePointEvent = (event: Event): void => {
         const customEvent = event as CustomEvent<{ bruteForceId: string }>;
         const { bruteForceId } = customEvent.detail;
@@ -177,6 +251,15 @@ export class MapService {
     selectGeocache(geocache: SelectedGeocache): void {
         this.selectedGeocache = geocache;
         this.onDidSelectGeocacheEmitter.fire(geocache);
+    }
+
+    setFormulaSolverPreviewOverlay(overlay?: FormulaSolverPreviewOverlay): void {
+        this.lastFormulaSolverPreviewOverlay = overlay;
+        this.onDidUpdateFormulaSolverPreviewOverlayEmitter.fire(overlay);
+    }
+
+    getLastFormulaSolverPreviewOverlay(): FormulaSolverPreviewOverlay | undefined {
+        return this.lastFormulaSolverPreviewOverlay;
     }
 
     /**

@@ -18,6 +18,7 @@ import { AnsweringContextCache, PreparedAnsweringContext } from './answering-con
 import { Formula, Question, LetterValue, FormulaSolverState } from '../common/types';
 import { parseValueList } from './utils/value-parser';
 import { ensureFormulaFragments } from './utils/formula-fragments';
+import { CoordinatePreviewEngine } from './preview/coordinate-preview-engine';
 import {
     DetectedFormulasComponent,
     // QuestionFieldsComponent,
@@ -71,6 +72,9 @@ export class FormulaSolverWidget extends ReactWidget {
     protected answersEngine: AnswersEngine = 'ai';
     protected webSearchEnabled: boolean = true;
     protected webMaxResults: number = 5;
+    protected previewMapOverlayEnabled: boolean = true;
+
+    protected readonly previewEngine = new CoordinatePreviewEngine();
 
     // Profil IA par question (override)
     protected perQuestionProfiles: Map<string, FormulaSolverAiProfile> = new Map();
@@ -223,6 +227,8 @@ export class FormulaSolverWidget extends ReactWidget {
                 'geoapp-map-remove-brute-force-point',
                 this.handleExternalBruteForceRemoval as EventListener
             );
+            // Nettoyer l'overlay preview si le widget se ferme
+            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
         }
 
         super.onBeforeDetach(msg as any);
@@ -266,6 +272,7 @@ export class FormulaSolverWidget extends ReactWidget {
 
         this.webSearchEnabled = Boolean(this.preferenceService.get('geoApp.formulaSolver.ai.webSearchEnabled', true));
         this.webMaxResults = Number(this.preferenceService.get('geoApp.formulaSolver.ai.maxWebResults', 5) || 5);
+        this.previewMapOverlayEnabled = Boolean(this.preferenceService.get('geoApp.formulaSolver.preview.mapOverlayEnabled', true));
 
         this.stepConfig = {
             formulaDetectionMethod: formulaMethod,
@@ -280,6 +287,70 @@ export class FormulaSolverWidget extends ReactWidget {
         this.answersEngine = 'ai';
     }
 
+    protected updateMapPreviewOverlay(valuesOverride?: Map<string, LetterValue>): void {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        if (!this.previewMapOverlayEnabled) {
+            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
+            return;
+        }
+
+        const formula = this.state.selectedFormula;
+        if (!formula) {
+            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
+            return;
+        }
+
+        const values = valuesOverride ?? this.state.values;
+        const preview = this.previewEngine.build({ north: formula.north, east: formula.east }, values);
+        const n = preview.north;
+        const e = preview.east;
+
+        if (n.minDecimalDegrees === undefined || n.maxDecimalDegrees === undefined ||
+            e.minDecimalDegrees === undefined || e.maxDecimalDegrees === undefined) {
+            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
+            return;
+        }
+
+        const bounds = {
+            minLat: n.minDecimalDegrees,
+            maxLat: n.maxDecimalDegrees,
+            minLon: e.minDecimalDegrees,
+            maxLon: e.maxDecimalDegrees
+        };
+
+        const latSpan = Math.abs(bounds.maxLat - bounds.minLat);
+        const lonSpan = Math.abs(bounds.maxLon - bounds.minLon);
+        const eps = 1e-9;
+
+        let kind: 'point' | 'bbox' | 'line-lat' | 'line-lon' = 'bbox';
+        if (latSpan < eps && lonSpan < eps) {
+            kind = 'point';
+        } else if (latSpan < eps) {
+            kind = 'line-lat';
+        } else if (lonSpan < eps) {
+            kind = 'line-lon';
+        } else {
+            kind = 'bbox';
+        }
+
+        const formatted = (n.status === 'valid' && e.status === 'valid')
+            ? `${n.display} ${e.display}`
+            : undefined;
+
+        window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay', {
+            detail: {
+                kind,
+                bounds,
+                formatted,
+                gcCode: this.state.gcCode,
+                geocacheId: this.state.geocacheId
+            }
+        }));
+    }
+
     /**
      * Charge le Formula Solver depuis une geocache
      */
@@ -287,6 +358,8 @@ export class FormulaSolverWidget extends ReactWidget {
         console.log(`[FORMULA-SOLVER] Chargement depuis geocache ${geocacheId}`);
         
         try {
+            // Clear overlay preview (nouvelle géocache)
+            this.updateMapPreviewOverlay(new Map());
             this.detectionRequestId++;
             this.manualNorth = '';
             this.manualEast = '';
@@ -1535,8 +1608,12 @@ export class FormulaSolverWidget extends ReactWidget {
             isList: parsed.isList
         };
 
-        this.state.values.set(letter, letterValue);
-        this.update();
+        const nextValues = new Map(this.state.values);
+        nextValues.set(letter, letterValue);
+        this.updateState({ values: nextValues });
+
+        // Mise à jour overlay preview sur la carte (si activé)
+        this.updateMapPreviewOverlay(nextValues);
         
         // Déclencher le calcul automatique ou brute force si applicable
         this.tryAutoCalculateOrBruteForce();
@@ -1961,6 +2038,7 @@ export class FormulaSolverWidget extends ReactWidget {
                                 result: undefined,
                                 currentStep: 'questions'
                             });
+                            this.updateMapPreviewOverlay(new Map());
                             void this.extractQuestions(formula);
                         }}
                         onEditFormula={(formula, north, east) => this.handleEditFormula(formula, north, east)}
@@ -1973,6 +2051,7 @@ export class FormulaSolverWidget extends ReactWidget {
 
     protected renderQuestionsStep(): React.ReactNode {
         if (!this.state.selectedFormula) return null;
+        const previewSuspects = this.getPreviewSuspectLetters();
 
         return (
             <div className='questions-step' style={{ marginBottom: '20px' }}>
@@ -2286,14 +2365,19 @@ export class FormulaSolverWidget extends ReactWidget {
                                     const value = this.state.values.get(question.letter);
                                     const hasValue = value && value.rawValue.trim() !== '';
                                     const perQuestionProfile = this.perQuestionProfiles.get(question.letter) || this.stepConfig.aiProfileForAnswers;
+                                    const isSuspect = previewSuspects.has(question.letter);
 
                                     return (
                                         <div key={question.letter} style={{
                                             padding: '12px',
-                                            backgroundColor: hasValue ? 'var(--theia-list-hoverBackground)' : 'var(--theia-input-background)',
-                                            border: hasValue ? '1px solid var(--theia-focusBorder)' : '1px solid var(--theia-input-border)',
+                                            backgroundColor: isSuspect
+                                                ? 'var(--theia-inputValidation-errorBackground)'
+                                                : (hasValue ? 'var(--theia-list-hoverBackground)' : 'var(--theia-input-background)'),
+                                            border: isSuspect
+                                                ? '1px solid var(--theia-errorText)'
+                                                : (hasValue ? '1px solid var(--theia-focusBorder)' : '1px solid var(--theia-input-border)'),
                                             borderRadius: '4px'
-                                        }}>
+                                        }} title={isSuspect ? 'Valeur suspecte (incohérence détectée par la preview)' : undefined}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                                                 <div style={{
                                                     width: '30px',
@@ -2301,8 +2385,12 @@ export class FormulaSolverWidget extends ReactWidget {
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
-                                                    backgroundColor: hasValue ? 'var(--theia-button-background)' : 'var(--theia-input-background)',
-                                                    color: hasValue ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
+                                                    backgroundColor: isSuspect
+                                                        ? 'var(--theia-errorText)'
+                                                        : (hasValue ? 'var(--theia-button-background)' : 'var(--theia-input-background)'),
+                                                    color: isSuspect
+                                                        ? 'var(--theia-button-foreground)'
+                                                        : (hasValue ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)'),
                                                     borderRadius: '4px',
                                                     fontWeight: 'bold',
                                                     fontSize: '16px'
@@ -2431,6 +2519,23 @@ export class FormulaSolverWidget extends ReactWidget {
                 </div>
             </div>
         );
+    }
+
+    protected getPreviewSuspectLetters(): Set<string> {
+        const formula = this.state.selectedFormula;
+        if (!formula) {
+            return new Set<string>();
+        }
+        try {
+            const preview = this.previewEngine.build({ north: formula.north, east: formula.east }, this.state.values);
+            const suspects = [
+                ...(preview.north?.suspectLetters || []),
+                ...(preview.east?.suspectLetters || [])
+            ];
+            return new Set<string>(suspects);
+        } catch {
+            return new Set<string>();
+        }
     }
 
     protected renderCalculateStep(): React.ReactNode {

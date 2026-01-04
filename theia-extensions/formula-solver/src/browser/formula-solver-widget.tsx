@@ -80,6 +80,10 @@ export class FormulaSolverWidget extends ReactWidget {
     // Profil IA par question (override)
     protected perQuestionProfiles: Map<string, FormulaSolverAiProfile> = new Map();
 
+    // UI: options avancées repliées par défaut
+    protected stepConfigPanelOpen: boolean = false;
+    protected showAdvancedAnswerFields: boolean = false;
+
     // --- IA: contexte & prompts (visualisation / overrides) ---
     protected answeringContextOpen: boolean = false;
     protected answeringContextUseOverride: boolean = false;
@@ -1819,6 +1823,33 @@ export class FormulaSolverWidget extends ReactWidget {
             fontSize: '12px'
         };
 
+        if (!this.stepConfigPanelOpen) {
+            return (
+                <button
+                    style={{
+                        padding: '6px 10px',
+                        backgroundColor: 'var(--theia-button-secondaryBackground)',
+                        color: 'var(--theia-button-secondaryForeground)',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                    }}
+                    onClick={() => {
+                        this.stepConfigPanelOpen = true;
+                        this.update();
+                    }}
+                    title="Afficher les options (méthodes / profils IA)"
+                >
+                    <span className="codicon codicon-settings-gear" />
+                    Options IA
+                </button>
+            );
+        }
+
         return (
             <div style={{
                 display: 'flex',
@@ -1826,6 +1857,29 @@ export class FormulaSolverWidget extends ReactWidget {
                 gap: '10px',
                 flexWrap: 'wrap'
             }}>
+                <button
+                    style={{
+                        padding: '6px 10px',
+                        backgroundColor: 'transparent',
+                        color: 'var(--theia-foreground)',
+                        border: '1px solid var(--theia-panel-border)',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                    }}
+                    onClick={() => {
+                        this.stepConfigPanelOpen = false;
+                        this.update();
+                    }}
+                    title="Replier les options"
+                >
+                    <span className="codicon codicon-chevron-up" />
+                    Replier
+                </button>
+
                 <div style={{
                     display: 'flex',
                     gap: '10px',
@@ -2259,6 +2313,27 @@ export class FormulaSolverWidget extends ReactWidget {
                         </button>
 
                         {this.stepConfig.answersMode !== 'manual' && (
+                            <button
+                                style={{
+                                    padding: '6px 10px',
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--theia-foreground)',
+                                    border: '1px solid var(--theia-panel-border)',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    fontSize: '12px'
+                                }}
+                                onClick={() => {
+                                    this.showAdvancedAnswerFields = !this.showAdvancedAnswerFields;
+                                    this.update();
+                                }}
+                                title="Afficher/masquer les champs avancés (infos complémentaires IA)"
+                            >
+                                {this.showAdvancedAnswerFields ? 'Masquer champs IA' : 'Afficher champs IA'}
+                            </button>
+                        )}
+
+                        {this.stepConfig.answersMode !== 'manual' && (
                             <>
                                 <button
                                     style={{
@@ -2558,7 +2633,7 @@ export class FormulaSolverWidget extends ReactWidget {
                                                 )}
                                             </div>
 
-                                            {this.stepConfig.answersMode !== 'manual' && (
+                                            {this.stepConfig.answersMode !== 'manual' && this.showAdvancedAnswerFields && (
                                                 <div style={{ marginBottom: '8px' }}>
                                                     <textarea
                                                         value={this.perLetterExtraInfo.get(question.letter) || ''}

@@ -516,7 +516,9 @@ export class MapLayerManager {
     showDetectedCoordinate(highlight: DetectedCoordinateHighlight): void {
         console.log('[MapLayerManager] showDetectedCoordinate called', highlight);
         
-        const shouldClear = highlight.replaceExisting !== true;
+        // Par défaut on remplace l'ancien point (clear).
+        // Si replaceExisting === false, on garde l'existant (mode multi-points géré aussi par showMultipleDetectedCoordinates).
+        const shouldClear = highlight.replaceExisting !== false;
         if (shouldClear) {
             console.log('[MapLayerManager] Clearing previous detected coordinates');
             this.detectedCoordinateSource.clear();

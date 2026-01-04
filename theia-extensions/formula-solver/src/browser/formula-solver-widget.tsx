@@ -517,8 +517,7 @@ export class FormulaSolverWidget extends ReactWidget {
                     },
                     waypointTitle: 'Solution formule',
                     waypointNote: note,
-                    sourceResultText: formattedCoords,
-                    replaceExisting: false
+                    sourceResultText: formattedCoords
                 }
             }));
 

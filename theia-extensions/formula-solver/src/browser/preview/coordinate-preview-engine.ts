@@ -51,7 +51,7 @@ export class CoordinatePreviewEngine {
         const status = this.computeStatus(missingLetters, issues);
         const message = this.buildMessage(status, missingLetters, issues);
 
-        const display = `${parsed.cardinal}${degrees.segment.displayDigits}°${minutes.segment.displayDigits}.${decimals.segment.displayDigits}`;
+        const display = `${parsed.cardinal}${degrees.segment.displayText}°${minutes.segment.displayText}.${decimals.segment.displayText}`;
 
         const { minDecimalDegrees, maxDecimalDegrees, decimalDegrees } = this.computeDecimalDegrees(axis, parsed.cardinal, degrees.segment, minutes.segment, decimals.segment);
 
@@ -159,11 +159,13 @@ export class CoordinatePreviewEngine {
         const usedLettersSet = new Set<string>();
         const missingLettersSet = new Set<string>();
 
-        let out = '';
+        let outDigits = '';
+        let outText = '';
         const sourcesPerChar: string[][] = [];
         for (const token of tokens) {
             if (token.kind === 'digits') {
-                out += token.raw;
+                outDigits += token.raw;
+                outText += token.raw;
                 for (let k = 0; k < token.raw.length; k++) {
                     sourcesPerChar.push([]);
                 }
@@ -175,11 +177,14 @@ export class CoordinatePreviewEngine {
                     const v = getProvidedValue(values, letter);
                     if (!v) {
                         missingLettersSet.add(letter);
-                        out += '?';
+                        // Interne: '?' pour ranges, UI: afficher la lettre
+                        outDigits += '?';
+                        outText += letter;
                         sourcesPerChar.push([]);
                         continue;
                     }
-                    out += String(v.value);
+                    outDigits += String(v.value);
+                    outText += String(v.value);
                     // La valeur peut produire plusieurs digits; on attribue la provenance au bloc complet
                     const digits = String(v.value);
                     for (let k = 0; k < digits.length; k++) {
@@ -193,7 +198,9 @@ export class CoordinatePreviewEngine {
                 const missing = token.variables.filter(l => !getProvidedValue(values, l));
                 missing.forEach(l => missingLettersSet.add(l));
                 if (missing.length > 0) {
-                    out += '?';
+                    // Interne: '?' pour ranges, UI: afficher l'expression brute
+                    outDigits += '?';
+                    outText += token.raw;
                     sourcesPerChar.push([]);
                     continue;
                 }
@@ -207,23 +214,27 @@ export class CoordinatePreviewEngine {
                 const evaluated = evaluateExpression(stripOuterParens(token.raw), valueMap);
                 if (!isFiniteNumber(evaluated)) {
                     issues.push(issue('error', axis, 'expr', `Expression invalide : ${token.raw}`, id, token.variables.filter(l => getProvidedValue(values, l))));
-                    out += '?';
+                    outDigits += '?';
+                    outText += token.raw;
                     sourcesPerChar.push([]);
                     continue;
                 }
                 if (evaluated < 0) {
                     issues.push(issue('error', axis, 'negative', `Résultat négatif : ${token.raw} = ${evaluated}`, id, token.variables.filter(l => getProvidedValue(values, l))));
-                    out += '?';
+                    outDigits += '?';
+                    outText += token.raw;
                     sourcesPerChar.push([]);
                     continue;
                 }
                 if (!Number.isInteger(evaluated)) {
                     issues.push(issue('error', axis, 'non-integer', `Résultat non entier : ${token.raw} = ${evaluated}`, id, token.variables.filter(l => getProvidedValue(values, l))));
-                    out += '?';
+                    outDigits += '?';
+                    outText += token.raw;
                     sourcesPerChar.push([]);
                     continue;
                 }
-                out += String(evaluated);
+                outDigits += String(evaluated);
+                outText += String(evaluated);
                 {
                     const digits = String(evaluated);
                     const suspects = token.variables.filter(l => getProvidedValue(values, l));
@@ -236,15 +247,16 @@ export class CoordinatePreviewEngine {
 
             // other
             issues.push(issue('error', axis, 'token', `Caractère inattendu dans l'expression: ${token.raw}`, id));
-            out += '?';
+            outDigits += '?';
+            outText += token.raw;
             sourcesPerChar.push([]);
         }
 
         // Normalisation: padding à gauche si entièrement numérique et plus court que prévu
         let padded = false;
-        if (options.padLeftZerosIfNumeric && out && /^[0-9]+$/.test(out) && out.length < expectedLength) {
-            const padCount = expectedLength - out.length;
-            out = out.padStart(expectedLength, '0');
+        if (options.padLeftZerosIfNumeric && outDigits && /^[0-9]+$/.test(outDigits) && outDigits.length < expectedLength) {
+            const padCount = expectedLength - outDigits.length;
+            outDigits = outDigits.padStart(expectedLength, '0');
             for (let i = 0; i < padCount; i++) {
                 sourcesPerChar.unshift([]);
             }
@@ -252,39 +264,45 @@ export class CoordinatePreviewEngine {
         }
 
         // Si trop court (par ex. ? ou 1 digit), on complète à droite pour stabiliser l'affichage
-        if (out.length < expectedLength) {
-            const fillCount = expectedLength - out.length;
-            out = out + '?'.repeat(fillCount);
+        if (outDigits.length < expectedLength) {
+            const fillCount = expectedLength - outDigits.length;
+            outDigits = outDigits + '?'.repeat(fillCount);
             for (let i = 0; i < fillCount; i++) {
                 sourcesPerChar.push([]);
             }
         }
 
-        const isFullyResolved = /^[0-9]+$/.test(out) && !out.includes('?');
+        // displayText: si c'est un nombre pur, on peut aussi le pad (sinon on garde l'expression lisible)
+        if (options.padLeftZerosIfNumeric && outText && /^[0-9]+$/.test(outText) && outText.length < expectedLength) {
+            outText = outText.padStart(expectedLength, '0');
+        }
+
+        const isFullyResolved = /^[0-9]+$/.test(outDigits) && !outDigits.includes('?');
 
         // Range min/max si possible (digits + '?', longueur >= expectedLength)
         let minValue: number | undefined;
         let maxValue: number | undefined;
-        if (out.length === expectedLength && /^[0-9?]+$/.test(out)) {
-            const minStr = out.replace(/\?/g, '0');
-            const maxStr = out.replace(/\?/g, '9');
+        if (outDigits.length === expectedLength && /^[0-9?]+$/.test(outDigits)) {
+            const minStr = outDigits.replace(/\?/g, '0');
+            const maxStr = outDigits.replace(/\?/g, '9');
             minValue = safeInt(minStr);
             maxValue = safeInt(maxStr);
         }
 
         // Length mismatch: si résolu mais longueur != attendue (overflow)
-        if (!out.includes('?') && out.length !== expectedLength) {
-            issues.push(issue('error', axis, 'length', `Longueur invalide pour ${id}: attendue ${expectedLength}, obtenue ${out.length}`, id, Array.from(usedLettersSet).filter(l => getProvidedValue(values, l))));
+        if (!outDigits.includes('?') && outDigits.length !== expectedLength) {
+            issues.push(issue('error', axis, 'length', `Longueur invalide pour ${id}: attendue ${expectedLength}, obtenue ${outDigits.length}`, id, Array.from(usedLettersSet).filter(l => getProvidedValue(values, l))));
         }
-        if (out.length > expectedLength) {
-            issues.push(issue('error', axis, 'length', `Longueur trop grande pour ${id}: attendue ${expectedLength}, obtenue ${out.length}`, id, Array.from(usedLettersSet).filter(l => getProvidedValue(values, l))));
+        if (outDigits.length > expectedLength) {
+            issues.push(issue('error', axis, 'length', `Longueur trop grande pour ${id}: attendue ${expectedLength}, obtenue ${outDigits.length}`, id, Array.from(usedLettersSet).filter(l => getProvidedValue(values, l))));
         }
 
         const segment: PreviewDigitSegment = {
             id,
             rawExpression,
             expectedLength,
-            displayDigits: out,
+            displayText: outText || rawExpression || '?',
+            displayDigits: outDigits,
             isFullyResolved,
             usedLetters: uniqSorted(Array.from(usedLettersSet)),
             missingLetters: uniqSorted(Array.from(missingLettersSet)),

@@ -17,7 +17,12 @@ export interface PreviewDigitSegment {
     id: 'degrees' | 'minutes' | 'decimals';
     rawExpression: string;
     expectedLength: number;
-    /** Chaîne affichable (digits + '?'), peut dépasser expectedLength si overflow. */
+    /**
+     * Chaîne affichable (préférence UI): digits + lettres + expressions.
+     * Exemple: 'ABC', '(A+B)C', '49'
+     */
+    displayText: string;
+    /** Chaîne numérique interne (digits + '?'), peut dépasser expectedLength si overflow. */
     displayDigits: string;
     /** Vrai si aucun '?' et uniquement des digits. */
     isFullyResolved: boolean;

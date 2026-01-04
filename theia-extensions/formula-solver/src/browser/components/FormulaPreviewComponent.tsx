@@ -72,9 +72,9 @@ const InnerFormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula, 
         return (
             <div className="coordinate-fragments">
                 {renderSegment('Cardinal', axisPreview.cardinal, suspectsText)}
-                {renderSegment('Degrés', axisPreview.degrees.displayDigits, buildSegmentTooltip(axisPreview, 'degrees'))}
-                {renderSegment('Minutes', axisPreview.minutes.displayDigits, buildSegmentTooltip(axisPreview, 'minutes'))}
-                {renderSegment('Décimales', axisPreview.decimals.displayDigits, buildSegmentTooltip(axisPreview, 'decimals'))}
+                {renderSegment('Degrés', axisPreview.degrees.displayText, buildSegmentTooltip(axisPreview, 'degrees'))}
+                {renderSegment('Minutes', axisPreview.minutes.displayText, buildSegmentTooltip(axisPreview, 'minutes'))}
+                {renderSegment('Décimales', axisPreview.decimals.displayText, buildSegmentTooltip(axisPreview, 'decimals'))}
             </div>
         );
     };
@@ -194,6 +194,8 @@ function buildSegmentTooltip(axisPreview: AxisPreview, segmentId: 'degrees' | 'm
     const seg = axisPreview[segmentId];
     const lines: string[] = [];
     lines.push(`${segmentId} : ${seg.rawExpression || '(vide)'}`);
+    lines.push(`Affichage: ${seg.displayText || '—'}`);
+    lines.push(`Digits: ${seg.displayDigits || '—'}`);
     if (seg.usedLetters?.length) {
         lines.push(`Lettres: ${seg.usedLetters.join(', ')}`);
     }

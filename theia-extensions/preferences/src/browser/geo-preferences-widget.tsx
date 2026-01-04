@@ -199,6 +199,7 @@ export class GeoPreferencesWidget extends ReactWidget {
         const map: Record<string, string> = {
             ai: 'Intelligence Artificielle',
             ui: 'Interface utilisateur',
+            alphabets: 'Alphabets',
             map: 'Carte',
             updates: 'Mises à jour',
             search: 'Recherche',

@@ -9,6 +9,16 @@ export interface SymbolItemProps {
     imagePath?: string;
     isDraggable?: boolean;
     showIndex?: boolean;
+    /**
+     * Affiche la "valeur" (caractère) sous le symbole.
+     * Utile quand le symbole est rendu via une police (glyph) ou une image.
+     */
+    showValue?: boolean;
+    /**
+     * Libellé à afficher pour la valeur (par défaut: `char`).
+     * Permet de personnaliser l'affichage (ex: espace -> ␠).
+     */
+    valueLabel?: string;
     compact?: boolean;  // Mode compact (case ajustée à la taille de la font)
     onDragStart?: (index: number) => void;
     onDragOver?: (index: number) => void;
@@ -58,18 +68,23 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
     };
 
     render(): React.ReactNode {
-        const { char, index, scale, size = 96, fontFamily, imagePath, isDraggable, showIndex, compact = false } = this.props;
+        const { char, index, scale, size = 96, fontFamily, imagePath, isDraggable, showIndex, compact = false, showValue, valueLabel } = this.props;
 
         // En mode compact, la case s'adapte à la taille de la font
         const fontSize = compact ? Math.round(size * 0.42) : Math.round(size * 0.42);
         const baseSize = compact ? fontSize + 8 : size; // Font + petit padding en compact
+        const valueText = valueLabel ?? (char === ' ' ? '␠' : char);
+        const shouldShowValue = Boolean(showValue) && !showIndex;
+        const valueFontSize = Math.max(10, Math.round(fontSize * 0.35));
+        const valueLineHeightPx = Math.round(valueFontSize * 1.2);
 
         const symbolStyle: React.CSSProperties = {
             width: `${baseSize * scale}px`,
-            height: `${baseSize * scale}px`,
+            height: `${(baseSize + (shouldShowValue ? valueLineHeightPx + 6 : 0)) * scale}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            flexDirection: shouldShowValue ? 'column' : 'row',
             fontSize: `${fontSize * scale}px`,
             position: 'relative',
             cursor: isDraggable ? 'move' : (this.props.onClick ? 'pointer' : 'default'),
@@ -81,7 +96,7 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
             margin: '0px'
         };
 
-        const content = fontFamily ? (
+        const symbolContent = fontFamily ? (
             <span style={{
                 fontFamily: `"${fontFamily}", monospace`,
                 fontSize: `${fontSize * scale}px`
@@ -114,7 +129,27 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
                 title={showIndex ? `Position: ${index + 1}` : char}
                 className='alphabet-symbol-item'
             >
-                {content}
+                {symbolContent}
+                {shouldShowValue && (
+                    <span
+                        style={{
+                            marginTop: `${2 * scale}px`,
+                            fontSize: `${valueFontSize * scale}px`,
+                            lineHeight: 1,
+                            fontFamily: 'var(--theia-ui-font-family)',
+                            color: 'var(--theia-descriptionForeground)',
+                            opacity: 0.95,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: '100%',
+                            padding: `0 ${4 * scale}px`
+                        }}
+                        title={valueText}
+                    >
+                        {valueText}
+                    </span>
+                )}
                 {showIndex && (
                     <div style={{
                         position: 'absolute',

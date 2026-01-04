@@ -8,6 +8,7 @@ import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, StatefulWidget, WidgetManager } from '@theia/core/lib/browser';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 import { AlphabetsService } from './services/alphabets-service';
 import { Alphabet, ZoomState, PinnedState, AssociatedGeocache, DistanceInfo, DetectedCoordinates } from '../common/alphabet-protocol';
 import { CoordinatesDetector } from './components/coordinates-detector';
@@ -15,6 +16,8 @@ import { GeocacheAssociation } from './components/geocache-association';
 import { SymbolItem } from './components/symbol-item';
 import { SymbolContextMenu } from './components/symbol-context-menu';
 import './font-api';
+
+const PREF_AVAILABLE_SYMBOLS_SHOW_VALUE = 'geoApp.alphabets.availableSymbols.showValue';
 
 interface SerializedAlphabetViewerState {
     alphabetId?: string;
@@ -119,6 +122,13 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
 
         // Configurer les raccourcis clavier
         this.setupKeyboardShortcuts();
+
+        // Re-render si la préférence change (GeoPreferencesWidget ou settings.json)
+        this.toDispose.push(this.preferenceService.onPreferenceChanged(e => {
+            if (e.preferenceName === PREF_AVAILABLE_SYMBOLS_SHOW_VALUE) {
+                this.update();
+            }
+        }));
 
         this.update();
         console.log('AlphabetViewerWidget: Initial update called');
@@ -1748,6 +1758,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
 
         const scale = this.zoomState.availableSymbols;
         const config = this.alphabet.alphabetConfig;
+        const showValue = this.preferenceService.get(PREF_AVAILABLE_SYMBOLS_SHOW_VALUE, false) as boolean;
 
         return (
             <div style={{ padding: '16px' }}>
@@ -1758,22 +1769,43 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
                     marginBottom: '12px'
                 }}>
                     <h3 style={{ margin: 0, fontSize: '16px' }}>Symboles disponibles</h3>
-                    <div className='zoom-controls'>
-                        <button
-                            onClick={() => this.adjustZoom('availableSymbols', -0.25)}
-                            disabled={scale <= 0.5}
-                            title='Diminuer'
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                        <label
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '12px',
+                                color: 'var(--theia-descriptionForeground)',
+                                cursor: 'pointer',
+                                userSelect: 'none'
+                            }}
+                            title='Affiche la valeur (ex: a, b, 1…) sous chaque symbole'
                         >
-                            <i className='fa fa-minus'></i>
-                        </button>
-                        <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
-                        <button
-                            onClick={() => this.adjustZoom('availableSymbols', 0.25)}
-                            disabled={scale >= 2.0}
-                            title='Augmenter'
-                        >
-                            <i className='fa fa-plus'></i>
-                        </button>
+                            <input
+                                type='checkbox'
+                                checked={showValue}
+                                onChange={e => { void this.setAvailableSymbolsShowValue(e.currentTarget.checked); }}
+                            />
+                            Afficher la valeur
+                        </label>
+                        <div className='zoom-controls'>
+                            <button
+                                onClick={() => this.adjustZoom('availableSymbols', -0.25)}
+                                disabled={scale <= 0.5}
+                                title='Diminuer'
+                            >
+                                <i className='fa fa-minus'></i>
+                            </button>
+                            <span style={{ fontSize: '11px', padding: '0 8px' }}>{Math.round(scale * 100)}%</span>
+                            <button
+                                onClick={() => this.adjustZoom('availableSymbols', 0.25)}
+                                disabled={scale >= 2.0}
+                                title='Augmenter'
+                            >
+                                <i className='fa fa-plus'></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -1793,6 +1825,16 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
         );
     }
 
+    private async setAvailableSymbolsShowValue(enabled: boolean): Promise<void> {
+        try {
+            await this.preferenceService.set(PREF_AVAILABLE_SYMBOLS_SHOW_VALUE, enabled, PreferenceScope.User);
+            this.update();
+        } catch (error) {
+            console.error('[AlphabetViewerWidget] Impossible de modifier la préférence showValue', error);
+            this.messageService.error('Impossible de modifier la préférence d’affichage de valeur');
+        }
+    }
+
     /**
      * Rendu d'une section de symboles.
      */
@@ -1804,6 +1846,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
         const fontName = this.alphabet?.alphabetConfig?.type === 'font' 
             ? `Alphabet-${this.alphabetId}` 
             : undefined;
+        const showValue = this.preferenceService.get(PREF_AVAILABLE_SYMBOLS_SHOW_VALUE, false) as boolean;
 
         return (
             <div style={{ marginBottom: '20px' }}>
@@ -1824,6 +1867,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
                             fontFamily={fontName}
                             isDraggable={false}
                             showIndex={false}
+                            showValue={showValue}
                             onClick={(c) => this.addSymbol(c)}
                         />
                     ))}

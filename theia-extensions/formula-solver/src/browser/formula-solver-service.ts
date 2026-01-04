@@ -2,8 +2,9 @@
  * Service frontend pour interagir avec l'API Formula Solver.
  */
 
-import { injectable } from '@theia/core/shared/inversify';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import axios, { AxiosInstance } from 'axios';
+import { PreferenceService, PreferenceChange } from '@theia/core/lib/common/preferences/preference-service';
 import { CalculationResult, Formula } from '../common/types';
 
 export const FormulaSolverService = Symbol('FormulaSolverService');
@@ -28,6 +29,28 @@ export interface CalculateCoordinatesParams {
     originLon?: number;
 }
 
+export interface SearchAnswerWebParams {
+    question: string;
+    context?: string;
+    maxResults?: number;
+}
+
+export interface SearchAnswerWebResult {
+    bestAnswer?: string;
+    results?: Array<{
+        text?: string;
+        source?: string;
+        score?: number;
+        type?: string;
+    }>;
+}
+
+export interface SearchAnswersWebBatchParams {
+    questions: Record<string, string>;
+    context?: string;
+    maxResults?: number;
+}
+
 export interface FormulaSolverGeocache {
     id: number;
     gc_code: string;
@@ -42,6 +65,8 @@ export interface FormulaSolverService {
     extractQuestions(params: ExtractQuestionsParams): Promise<Map<string, string>>;
     calculateCoordinates(params: CalculateCoordinatesParams): Promise<CalculationResult>;
     getGeocache(id: number): Promise<FormulaSolverGeocache>;
+    searchAnswerWeb(params: SearchAnswerWebParams): Promise<SearchAnswerWebResult>;
+    searchAnswersWebBatch(params: SearchAnswersWebBatchParams): Promise<Map<string, SearchAnswerWebResult>>;
     calculateChecksum(value: string | number): number;
     calculateReducedChecksum(value: string | number): number;
     calculateLength(value: string | number): number;
@@ -49,13 +74,20 @@ export interface FormulaSolverService {
 
 @injectable()
 export class FormulaSolverServiceImpl implements FormulaSolverService {
-    protected readonly api: AxiosInstance;
+    protected api: AxiosInstance;
+    protected baseUrl: string;
 
-    constructor() {
-        this.api = axios.create({
-            baseURL: 'http://localhost:8000/api/formula-solver',
-            timeout: 30000,
-            headers: { 'Content-Type': 'application/json' }
+    constructor(
+        @inject(PreferenceService) private readonly preferenceService: PreferenceService
+    ) {
+        const initialUrl = String(this.preferenceService.get('geoApp.backend.apiBaseUrl', 'http://localhost:8000') || 'http://localhost:8000');
+        this.baseUrl = this.normalizeBaseUrl(initialUrl);
+        this.api = this.createClient(this.baseUrl);
+
+        this.preferenceService.onPreferenceChanged((event: PreferenceChange) => {
+            if (event.preferenceName === 'geoApp.backend.apiBaseUrl') {
+                this.updateBaseUrl(String(event.newValue || 'http://localhost:8000'));
+            }
         });
     }
 
@@ -85,6 +117,57 @@ export class FormulaSolverServiceImpl implements FormulaSolverService {
     async getGeocache(id: number): Promise<FormulaSolverGeocache> {
         const response = await this.api.get(`/geocache/${id}`);
         return response.data?.geocache;
+    }
+
+    async searchAnswerWeb(params: SearchAnswerWebParams): Promise<SearchAnswerWebResult> {
+        const response = await this.api.post('/ai/search-answer', {
+            question: params.question,
+            context: params.context,
+            max_results: params.maxResults
+        });
+
+        return {
+            bestAnswer: response.data?.best_answer,
+            results: response.data?.results
+        };
+    }
+
+    async searchAnswersWebBatch(params: SearchAnswersWebBatchParams): Promise<Map<string, SearchAnswerWebResult>> {
+        try {
+            const response = await this.api.post('/ai/search-answers', {
+                questions: params.questions,
+                context: params.context,
+                max_results: params.maxResults
+            });
+
+            const raw = response.data?.answers ?? {};
+            return new Map<string, SearchAnswerWebResult>(
+                Object.entries(raw).map(([letter, value]: [string, any]) => ([
+                    letter,
+                    {
+                        bestAnswer: value?.best_answer,
+                        results: value?.results
+                    }
+                ]))
+            );
+        } catch (error) {
+            // Fallback: exécuter question par question si l'endpoint batch n'est pas disponible.
+            const entries = Object.entries(params.questions);
+            const results = new Map<string, SearchAnswerWebResult>();
+            for (const [letter, question] of entries) {
+                if (!question) {
+                    results.set(letter, { bestAnswer: '', results: [] });
+                    continue;
+                }
+                const single = await this.searchAnswerWeb({
+                    question,
+                    context: params.context,
+                    maxResults: params.maxResults
+                });
+                results.set(letter, single);
+            }
+            return results;
+        }
     }
 
     calculateChecksum(value: string | number): number {
@@ -122,5 +205,31 @@ export class FormulaSolverServiceImpl implements FormulaSolverService {
 
     calculateLength(value: string | number): number {
         return value.toString().replace(/\s+/g, '').length;
+    }
+
+    protected createClient(baseURL: string): AxiosInstance {
+        return axios.create({
+            baseURL: `${baseURL}/api/formula-solver`,
+            timeout: 30000,
+            headers: { 'Content-Type': 'application/json' }
+        });
+    }
+
+    protected updateBaseUrl(url: string): void {
+        const normalized = this.normalizeBaseUrl(url);
+        if (normalized === this.baseUrl) {
+            return;
+        }
+        this.baseUrl = normalized;
+        this.api = this.createClient(this.baseUrl);
+        console.info('[FORMULA-SOLVER] URL backend mise à jour:', this.baseUrl);
+    }
+
+    protected normalizeBaseUrl(url: string): string {
+        const trimmed = (url || '').trim();
+        if (!trimmed) {
+            return 'http://localhost:8000';
+        }
+        return trimmed.replace(/\/+$/, '');
     }
 }

@@ -86,6 +86,7 @@ export interface FormulaSolverState {
     currentStep: 'detect' | 'questions' | 'values' | 'calculate';
     geocacheId?: number;
     gcCode?: string;
+    geocacheName?: string;
     text?: string;
     originLat?: number;
     originLon?: number;

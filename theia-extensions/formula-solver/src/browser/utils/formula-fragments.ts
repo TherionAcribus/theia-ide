@@ -10,8 +10,6 @@ interface FragmentBuildOptions {
     index?: number;
 }
 
-const CARDINALS = new Set(['N', 'S', 'E', 'W', 'O']);
-
 /**
  * Ajoute les fragments à une formule si nécessaire.
  */
@@ -93,7 +91,9 @@ export function parseCoordinateFragments(coordinate: string, axis: Axis): Coordi
  */
 function buildFragment(options: FragmentBuildOptions, forcedStatus?: FragmentStatus): FormulaFragment {
     const cleaned = options.raw.replace(/\s+/g, '');
-    const variables = extractVariables(cleaned);
+    // Le point cardinal (N/E/S/W/O) n'est pas une variable, mais les lettres
+    // peuvent être des variables (y compris 'E') dans les expressions.
+    const variables = options.kind === 'cardinal' ? [] : extractVariables(cleaned);
     const isPureNumber = cleaned.length > 0 && /^[0-9]+$/.test(cleaned);
 
     let status: FragmentStatus = forcedStatus || 'pending';
@@ -137,13 +137,7 @@ function buildFragment(options: FragmentBuildOptions, forcedStatus?: FragmentSta
 function extractVariables(value: string): string[] {
     const matches = value.match(/[A-Z]/g) || [];
     const variables = new Set<string>();
-    matches.forEach(letter => {
-        const upper = letter.toUpperCase();
-        if (CARDINALS.has(upper)) {
-            return;
-        }
-        variables.add(upper);
-    });
+    matches.forEach(letter => variables.add(letter.toUpperCase()));
     return Array.from(variables).sort();
 }
 

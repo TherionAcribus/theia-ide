@@ -14,6 +14,7 @@ import {
 } from '@theia/ai-core';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import axios, { AxiosInstance } from 'axios';
+import { PreferenceService, PreferenceChange } from '@theia/core/lib/common/preferences/preference-service';
 
 /**
  * Gestionnaire des Tool Functions Formula Solver
@@ -30,19 +31,26 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
     protected readonly messages!: MessageService;
 
     private apiClient: AxiosInstance;
-    private readonly baseURL: string = 'http://localhost:8000/api/formula-solver';
+    private baseUrl: string;
 
     constructor() {
-        this.apiClient = axios.create({
-            baseURL: this.baseURL,
-            timeout: 30000,
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        // NOTE: les injections @inject ne sont pas disponibles dans le constructor.
+        // L'initialisation se fait dans onStart().
+        this.baseUrl = 'http://localhost:8000';
+        this.apiClient = axios.create({ baseURL: `${this.baseUrl}/api/formula-solver` });
     }
 
     async onStart(): Promise<void> {
+        // Initialiser le client HTTP avec l'URL backend issue des préférences.
+        const initialUrl = String(this.preferenceService.get('geoApp.backend.apiBaseUrl', 'http://localhost:8000') || 'http://localhost:8000');
+        this.updateBaseUrl(initialUrl);
+
+        this.preferenceService.onPreferenceChanged((event: PreferenceChange) => {
+            if (event.preferenceName === 'geoApp.backend.apiBaseUrl') {
+                this.updateBaseUrl(String(event.newValue || 'http://localhost:8000'));
+            }
+        });
+
         console.log('[FORMULA-SOLVER-TOOLS] Enregistrement des tools IA...');
         await this.registerTools();
         console.log('[FORMULA-SOLVER-TOOLS] Tools IA enregistrés avec succès');
@@ -403,6 +411,33 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
             result = this.calculateChecksum(result);
         }
         return result;
+    }
+
+    @inject(PreferenceService)
+    protected readonly preferenceService!: PreferenceService;
+
+    private updateBaseUrl(url: string): void {
+        const normalized = this.normalizeBaseUrl(url);
+        if (normalized === this.baseUrl) {
+            return;
+        }
+        this.baseUrl = normalized;
+        this.apiClient = axios.create({
+            baseURL: `${this.baseUrl}/api/formula-solver`,
+            timeout: 30000,
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        console.info('[FORMULA-SOLVER-TOOLS] URL backend mise à jour:', this.baseUrl);
+    }
+
+    private normalizeBaseUrl(url: string): string {
+        const trimmed = (url || '').trim();
+        if (!trimmed) {
+            return 'http://localhost:8000';
+        }
+        return trimmed.replace(/\/+$/, '');
     }
 }
 

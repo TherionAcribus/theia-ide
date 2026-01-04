@@ -7,6 +7,7 @@ import { MessageService } from '@theia/core';
 import { FormulaSolverLLMService } from './formula-solver-llm-service';
 import { Formula } from '../common/types';
 import { ensureFormulaFragments } from './utils/formula-fragments';
+import { FormulaSolverAiProfile } from './geoapp-formula-solver-agents';
 
 export const FormulaSolverAIService = Symbol('FormulaSolverAIService');
 
@@ -35,7 +36,7 @@ export interface FormulaSolverAIService {
     /**
      * Résout une formule de géocache avec l'IA
      */
-    solveWithAI(text: string, geocacheId?: number): Promise<AIResolutionResult>;
+    solveWithAI(text: string, geocacheId?: number, profile?: FormulaSolverAiProfile): Promise<AIResolutionResult>;
     
     /**
      * Vérifie si l'IA est disponible
@@ -59,7 +60,7 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
     /**
      * Résout une formule avec l'IA via l'Agent Formula Solver
      */
-    async solveWithAI(text: string, geocacheId?: number): Promise<AIResolutionResult> {
+    async solveWithAI(text: string, geocacheId?: number, profile: FormulaSolverAiProfile = 'fast'): Promise<AIResolutionResult> {
         console.log('[FORMULA-SOLVER-AI] 🚀 DÉMARRAGE RÉSOLUTION IA AVEC AGENT');
         console.log('[FORMULA-SOLVER-AI] 📝 Texte à analyser:', text.substring(0, 100) + (text.length > 100 ? '...' : ''));
 
@@ -75,7 +76,7 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
             console.log('[FORMULA-SOLVER-AI] 🔍 ÉTAPE 1: Détection de formule');
             result.steps!.push('🔍 Détection de la formule avec IA...');
 
-            const formulas = await this.llmService.detectFormulasWithAI(text);
+            const formulas = await this.llmService.detectFormulasWithAI(text, profile);
             if (formulas && formulas.length > 0) {
                 result.formulas = formulas;
                 const formulaStr = `${formulas[0].north} ${formulas[0].east}`;
@@ -96,7 +97,7 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
             console.log('[FORMULA-SOLVER-AI] 🔤 Variables trouvées:', variables);
 
             if (variables.length > 0) {
-                const questions = await this.llmService.extractQuestionsWithAI(text, variables);
+                const questions = await this.llmService.extractQuestionsWithAI(text, variables, profile);
                 if (questions) {
                     result.questions = new Map(Object.entries(questions));
                     const foundCount = Array.from(result.questions.values()).filter(q => q).length;
@@ -115,7 +116,7 @@ export class FormulaSolverAIServiceImpl implements FormulaSolverAIService {
                     questionsObj[key] = value;
                 });
 
-                const answers = await this.llmService.searchAnswersWithAI(questionsObj, text.substring(0, 200));
+                const answers = await this.llmService.searchAnswersWithAI(questionsObj, text.substring(0, 200), profile);
                 if (answers) {
                     result.answers = new Map(Object.entries(answers));
                     console.log('[FORMULA-SOLVER-AI] ✅ Réponses IA trouvées:', Array.from(result.answers.entries()));

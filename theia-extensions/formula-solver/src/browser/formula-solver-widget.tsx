@@ -8,8 +8,13 @@ import { injectable, inject, postConstruct, optional } from '@theia/core/shared/
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 import { FormulaSolverService } from './formula-solver-service';
 import { FormulaSolverAIService } from './formula-solver-ai-service';
+import { FormulaSolverPipeline, AnswersEngine } from './formula-solver-pipeline';
+import { AnswersMode, FormulaDetectionMethod, FormulaSolverStepConfig, QuestionsMethod } from './formula-solver-config';
+import { FormulaSolverAiProfile } from './geoapp-formula-solver-agents';
+import { AnsweringContextCache, PreparedAnsweringContext } from './answering-context-cache';
 import { Formula, Question, LetterValue, FormulaSolverState } from '../common/types';
 import { parseValueList } from './utils/value-parser';
 import { ensureFormulaFragments } from './utils/formula-fragments';
@@ -35,6 +40,12 @@ export class FormulaSolverWidget extends ReactWidget {
     @inject(PreferenceService)
     protected readonly preferenceService!: PreferenceService;
 
+    @inject(FormulaSolverPipeline)
+    protected readonly pipeline!: FormulaSolverPipeline;
+
+    @inject(AnsweringContextCache)
+    protected readonly answeringContextCache!: AnsweringContextCache;
+
     @inject(FormulaSolverAIService) @optional()
     protected readonly formulaSolverAIService?: FormulaSolverAIService;
 
@@ -47,8 +58,35 @@ export class FormulaSolverWidget extends ReactWidget {
         loading: false
     };
 
-    // Méthode de résolution : 'algorithm' ou 'ai'
-    protected resolutionMethod: 'algorithm' | 'ai' = 'algorithm';
+    // Configuration des étapes (initialisée depuis les préférences, modifiable à la volée)
+    protected stepConfig: FormulaSolverStepConfig = {
+        formulaDetectionMethod: 'algorithm',
+        questionsMethod: 'algorithm',
+        answersMode: 'manual',
+        aiProfileForFormula: 'fast',
+        aiProfileForQuestions: 'fast',
+        aiProfileForAnswers: 'fast'
+    };
+
+    protected answersEngine: AnswersEngine = 'ai';
+    protected webSearchEnabled: boolean = true;
+    protected webMaxResults: number = 5;
+
+    // Profil IA par question (override)
+    protected perQuestionProfiles: Map<string, FormulaSolverAiProfile> = new Map();
+
+    // --- IA: contexte & prompts (visualisation / overrides) ---
+    protected answeringContextOpen: boolean = false;
+    protected answeringContextUseOverride: boolean = false;
+    protected answeringContextJson: string = '';
+    protected answeringContextJsonError?: string;
+    protected answeringContextOverride?: PreparedAnsweringContext;
+    protected answeringAdditionalInstructions: string = '';
+    protected perLetterExtraInfo: Map<string, string> = new Map();
+
+    // Aide utilisateur pour l'extraction IA des questions
+    protected questionsAiHintOpen: boolean = false;
+    protected questionsAiUserHint: string = '';
 
     // Type de calcul global pour les valeurs
     protected globalValueType: 'value' | 'checksum' | 'reduced' | 'length' | 'custom' = 'value';
@@ -194,9 +232,52 @@ export class FormulaSolverWidget extends ReactWidget {
      * Charge les préférences utilisateur
      */
     protected loadPreferences(): void {
-        // Pour l'instant, garder la valeur par défaut (algorithm)
-        // Les préférences peuvent être ajoutées plus tard si nécessaire
-        this.resolutionMethod = 'algorithm';
+        const legacyDefaultMethod = this.preferenceService.get('geoApp.formulaSolver.defaultMethod', 'algorithm') as string;
+
+        const formulaMethod = (this.preferenceService.get(
+            'geoApp.formulaSolver.formulaDetection.defaultMethod',
+            legacyDefaultMethod
+        ) as FormulaDetectionMethod) || 'algorithm';
+
+        const questionsMethod = (this.preferenceService.get(
+            'geoApp.formulaSolver.questions.defaultMethod',
+            'algorithm'
+        ) as QuestionsMethod) || 'algorithm';
+
+        const answersMode = (this.preferenceService.get(
+            'geoApp.formulaSolver.answers.defaultMode',
+            'manual'
+        ) as AnswersMode) || 'manual';
+
+        const aiProfileForFormula = (this.preferenceService.get(
+            'geoApp.formulaSolver.ai.defaultProfile.formulaDetection',
+            'fast'
+        ) as FormulaSolverAiProfile) || 'fast';
+
+        const aiProfileForQuestions = (this.preferenceService.get(
+            'geoApp.formulaSolver.ai.defaultProfile.questions',
+            'fast'
+        ) as FormulaSolverAiProfile) || 'fast';
+
+        const aiProfileForAnswers = (this.preferenceService.get(
+            'geoApp.formulaSolver.ai.defaultProfile.answers',
+            'fast'
+        ) as FormulaSolverAiProfile) || 'fast';
+
+        this.webSearchEnabled = Boolean(this.preferenceService.get('geoApp.formulaSolver.ai.webSearchEnabled', true));
+        this.webMaxResults = Number(this.preferenceService.get('geoApp.formulaSolver.ai.maxWebResults', 5) || 5);
+
+        this.stepConfig = {
+            formulaDetectionMethod: formulaMethod,
+            questionsMethod,
+            answersMode,
+            aiProfileForFormula,
+            aiProfileForQuestions,
+            aiProfileForAnswers
+        };
+
+        // Par défaut, on laisse l'utilisateur choisir IA vs Web depuis l'UI.
+        this.answersEngine = 'ai';
     }
 
     /**
@@ -237,6 +318,7 @@ export class FormulaSolverWidget extends ReactWidget {
             this.updateState({
                 geocacheId: geocache.id,
                 gcCode: geocache.gc_code,
+                geocacheName: geocache.name,
                 text: geocache.description,
                 originLat: geocache.latitude,
                 originLon: geocache.longitude
@@ -495,15 +577,72 @@ export class FormulaSolverWidget extends ReactWidget {
         this.bruteForceMode = false;
         this.bruteForceResults = [];
 
-        // Router vers la bonne méthode selon le toggle
-        console.log(`[FORMULA-SOLVER] 🎯 Méthode de résolution sélectionnée: ${this.resolutionMethod.toUpperCase()}`);
+        this.updateState({
+            loading: true,
+            error: undefined,
+            formulas: [],
+            selectedFormula: undefined,
+            questions: [],
+            values: new Map<string, LetterValue>(),
+            result: undefined,
+            currentStep: 'detect'
+        });
 
-        if (this.resolutionMethod === 'ai') {
-            console.log('[FORMULA-SOLVER] 🤖 Appel de la résolution IA');
-            await this.solveWithAI(text, requestId);
-        } else {
-            console.log('[FORMULA-SOLVER] ⚙️ Appel de la résolution algorithmique');
-            await this.detectFormulasWithAlgorithm(text, requestId);
+        try {
+            const method = this.stepConfig.formulaDetectionMethod;
+            console.log(`[FORMULA-SOLVER] 🎯 Étape Formule: ${method}`);
+
+            const detection = await this.pipeline.detectFormula({
+                text,
+                geocacheId: this.state.geocacheId,
+                method,
+                aiProfile: this.stepConfig.aiProfileForFormula
+            });
+
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
+
+            if (method === 'manual' && detection.formulas.length === 0) {
+                this.messageService.info('Mode manuel: utilisez "Formule manuelle" pour ajouter une formule.');
+                this.updateState({ loading: false });
+                return;
+            }
+
+            if (detection.formulas.length === 0) {
+                this.messageService.info('Aucune formule détectée dans le texte');
+                this.updateState({
+                    loading: false,
+                    formulas: [],
+                    selectedFormula: undefined,
+                    currentStep: 'detect',
+                    questions: [],
+                    values: new Map<string, LetterValue>(),
+                    result: undefined
+                });
+                return;
+            }
+
+            const enrichedFormulas = this.annotateFormulas(detection.formulas);
+            this.messageService.info(`${enrichedFormulas.length} formule(s) détectée(s)`);
+            this.updateState({
+                loading: false,
+                formulas: enrichedFormulas,
+                selectedFormula: enrichedFormulas[0],
+                currentStep: 'questions',
+                questions: [],
+                values: new Map<string, LetterValue>(),
+                result: undefined
+            });
+
+            await this.runQuestionsStep(enrichedFormulas[0]);
+        } catch (error) {
+            if (requestId !== this.detectionRequestId) {
+                return;
+            }
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.messageService.error(`Erreur : ${message}`);
+            this.updateState({ loading: false, error: message });
         }
     }
 
@@ -571,8 +710,6 @@ export class FormulaSolverWidget extends ReactWidget {
     protected async solveWithAI(text: string, requestId: number): Promise<void> {
         if (!this.formulaSolverAIService) {
             this.messageService.error('Service IA non disponible. Vérifiez la configuration.');
-            this.resolutionMethod = 'algorithm';
-            this.update();
             return;
         }
 
@@ -732,13 +869,28 @@ export class FormulaSolverWidget extends ReactWidget {
      * Extrait les questions pour une formule
      */
     protected async extractQuestions(formula: Formula): Promise<void> {
+        // Backward-compat: l'ancien code appelait extractQuestions().
+        // La logique est désormais déléguée au pipeline rejouable.
+        await this.runQuestionsStep(formula);
+    }
+
+    protected async runQuestionsStep(
+        formula: Formula,
+        options?: { method?: QuestionsMethod; aiProfile?: FormulaSolverAiProfile }
+    ): Promise<void> {
         const requestId = ++this.questionsRequestId;
-        console.log('[FORMULA-SOLVER] extractQuestions (regex) start', {
+        const method = options?.method ?? this.stepConfig.questionsMethod;
+        const aiProfile = options?.aiProfile ?? this.stepConfig.aiProfileForQuestions;
+
+        console.log('[FORMULA-SOLVER] runQuestionsStep start', {
             requestId,
-            letters: this.extractLettersFromFormula(formula),
+            method,
             geocacheId: this.state.geocacheId,
             gcCode: this.state.gcCode
         });
+
+        // Conserver les valeurs déjà saisies si la lettre existe toujours
+        const previousValues = new Map(this.state.values);
 
         this.updateState({
             loading: true,
@@ -749,36 +901,46 @@ export class FormulaSolverWidget extends ReactWidget {
         });
 
         try {
-            // Extraire les lettres de la formule
-            const letters = this.extractLettersFromFormula(formula);
-            
-            if (letters.length === 0) {
-                this.messageService.warn('Aucune variable détectée dans la formule');
-                this.updateState({ loading: false });
-                return;
-            }
-
-            // Extraire les questions
-            const questionsMap = await this.formulaSolverService.extractQuestions({
+            const discovery = await this.pipeline.discoverQuestions({
                 text: this.state.text || '',
-                letters,
-                method: 'regex'
+                formula,
+                method,
+                aiProfile,
+                userHint: method === 'ai' ? this.questionsAiUserHint : undefined
             });
 
             if (requestId !== this.questionsRequestId) {
                 return;
             }
 
-            // Convertir en tableau de Questions
+            const letters = Array.from(discovery.questionsByLetter.keys());
+            if (letters.length === 0) {
+                this.messageService.warn('Aucune variable détectée dans la formule');
+                this.updateState({ loading: false });
+                return;
+            }
+
             const questions: Question[] = letters.map(letter => ({
                 letter,
-                question: questionsMap.get(letter) || ''
+                question: discovery.questionsByLetter.get(letter) || ''
             }));
 
-            this.messageService.info(`Questions extraites pour ${letters.length} variable(s)`);
+            const values = new Map<string, LetterValue>();
+            for (const letter of letters) {
+                const existing = previousValues.get(letter);
+                if (existing) {
+                    values.set(letter, existing);
+                }
+
+                if (!this.perQuestionProfiles.has(letter)) {
+                    this.perQuestionProfiles.set(letter, this.stepConfig.aiProfileForAnswers);
+                }
+            }
+
             this.updateState({
                 loading: false,
                 questions,
+                values,
                 currentStep: 'values'
             });
         } catch (error) {
@@ -788,6 +950,197 @@ export class FormulaSolverWidget extends ReactWidget {
             const message = error instanceof Error ? error.message : 'Erreur inconnue';
             this.messageService.error(`Erreur : ${message}`);
             this.updateState({ loading: false, error: message });
+        }
+    }
+
+    protected getQuestionsByLetter(): Map<string, string> {
+        return new Map<string, string>(
+            (this.state.questions || []).map(q => [q.letter, q.question || ''])
+        );
+    }
+
+    protected buildQuestionsRecord(source?: Map<string, string>): Record<string, string> {
+        const map = source ?? this.getQuestionsByLetter();
+        const obj: Record<string, string> = {};
+        map.forEach((v, k) => { obj[k] = v || ''; });
+        return obj;
+    }
+
+    protected async refreshAnsweringContext(forceRebuild: boolean = false): Promise<void> {
+        try {
+            const questions = this.buildQuestionsRecord(this.getQuestionsByLetter());
+            const ctx = await this.answeringContextCache.getOrBuild({
+                geocacheId: this.state.geocacheId,
+                geocacheCode: this.state.gcCode,
+                geocacheTitle: this.state.geocacheName,
+                text: this.state.text || '',
+                questionsByLetter: questions,
+                targetLetters: Object.keys(questions),
+                profile: this.stepConfig.aiProfileForAnswers,
+                forceRebuild
+            });
+
+            this.answeringContextJson = JSON.stringify(ctx, null, 2);
+            this.answeringContextJsonError = undefined;
+            this.answeringContextOverride = ctx;
+            this.update();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.answeringContextJsonError = message;
+            this.update();
+        }
+    }
+
+    protected parseAnsweringContextOverrideFromJson(): void {
+        const raw = (this.answeringContextJson || '').trim();
+        if (!raw) {
+            this.answeringContextOverride = undefined;
+            this.answeringContextJsonError = undefined;
+            return;
+        }
+
+        try {
+            const parsed = JSON.parse(raw) as PreparedAnsweringContext;
+            if (!parsed || typeof parsed !== 'object') {
+                throw new Error('JSON invalide');
+            }
+            if (typeof (parsed as any).geocache_summary !== 'string') {
+                throw new Error('Champ manquant: geocache_summary (string)');
+            }
+            if (!Array.isArray((parsed as any).global_rules)) {
+                throw new Error('Champ manquant: global_rules (array)');
+            }
+            if (!(parsed as any).per_letter_rules || typeof (parsed as any).per_letter_rules !== 'object') {
+                throw new Error('Champ manquant: per_letter_rules (object)');
+            }
+
+            this.answeringContextOverride = parsed;
+            this.answeringContextJsonError = undefined;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.answeringContextJsonError = message;
+        }
+    }
+
+    protected async answerAllQuestions(options?: { overwrite?: boolean }): Promise<void> {
+        const overwrite = Boolean(options?.overwrite);
+
+        if (this.stepConfig.answersMode === 'manual') {
+            this.messageService.info('Mode réponses manuel: aucune action IA/Web.');
+            return;
+        }
+
+        if (this.answersEngine === 'backend-web-search' && !this.webSearchEnabled) {
+            this.messageService.warn('La recherche web est désactivée dans les préférences.');
+            return;
+        }
+
+        const questionsByLetter = this.getQuestionsByLetter();
+        if (questionsByLetter.size === 0) {
+            this.messageService.warn('Aucune question à résoudre.');
+            return;
+        }
+
+        this.updateState({ loading: true, error: undefined });
+        try {
+            const allQuestionsByLetter = this.getQuestionsByLetter();
+            const result = await this.pipeline.answerQuestions({
+                text: this.state.text || '',
+                questionsByLetter,
+                allQuestionsByLetter,
+                geocacheId: this.state.geocacheId,
+                geocacheTitle: this.state.geocacheName,
+                geocacheCode: this.state.gcCode,
+                preparedContextOverride: this.answeringContextUseOverride ? this.answeringContextOverride : undefined,
+                additionalInstructions: this.answeringAdditionalInstructions,
+                perLetterExtraInfo: Object.fromEntries(this.perLetterExtraInfo.entries()),
+                mode: this.stepConfig.answersMode,
+                engine: this.answersEngine,
+                aiProfile: this.stepConfig.aiProfileForAnswers,
+                perQuestionProfile: this.perQuestionProfiles,
+                webMaxResults: this.webMaxResults,
+                webContext: (this.state.text || '').substring(0, 200)
+            });
+
+            result.answersByLetter.forEach((answer, letter) => {
+                const existing = this.state.values.get(letter);
+                const shouldFill = overwrite || !existing || !existing.rawValue || existing.rawValue.trim() === '';
+                if (!shouldFill) {
+                    return;
+                }
+
+                if (answer && answer.trim()) {
+                    const type = existing?.type || this.globalValueType;
+                    this.updateValue(letter, answer, type);
+                }
+            });
+
+            const filled = Array.from(result.answersByLetter.values()).filter(v => v && v.trim()).length;
+            this.messageService.info(`Réponses obtenues: ${filled}/${questionsByLetter.size}`);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            console.error('[FORMULA-SOLVER] Erreur answerAllQuestions:', error);
+            this.messageService.error(`Erreur réponses: ${message}`);
+            this.updateState({ error: message });
+        } finally {
+            this.updateState({ loading: false });
+        }
+    }
+
+    protected async answerSingleQuestion(letter: string, options?: { overwrite?: boolean }): Promise<void> {
+        const overwrite = Boolean(options?.overwrite);
+        const question = this.state.questions.find(q => q.letter === letter)?.question || '';
+        if (!question) {
+            this.messageService.warn('Aucune question à résoudre pour cette lettre.');
+            return;
+        }
+
+        if (this.stepConfig.answersMode === 'manual') {
+            this.messageService.info('Mode réponses manuel: aucune action IA/Web.');
+            return;
+        }
+
+        if (this.answersEngine === 'backend-web-search' && !this.webSearchEnabled) {
+            this.messageService.warn('La recherche web est désactivée dans les préférences.');
+            return;
+        }
+
+        this.updateState({ loading: true, error: undefined });
+        try {
+            const questionsByLetter = new Map<string, string>([[letter, question]]);
+            const allQuestionsByLetter = this.getQuestionsByLetter();
+            const result = await this.pipeline.answerQuestions({
+                text: this.state.text || '',
+                questionsByLetter,
+                allQuestionsByLetter,
+                geocacheId: this.state.geocacheId,
+                geocacheTitle: this.state.geocacheName,
+                geocacheCode: this.state.gcCode,
+                preparedContextOverride: this.answeringContextUseOverride ? this.answeringContextOverride : undefined,
+                additionalInstructions: this.answeringAdditionalInstructions,
+                perLetterExtraInfo: Object.fromEntries(this.perLetterExtraInfo.entries()),
+                mode: 'ai-per-question',
+                engine: this.answersEngine,
+                aiProfile: this.stepConfig.aiProfileForAnswers,
+                perQuestionProfile: this.perQuestionProfiles,
+                webMaxResults: this.webMaxResults,
+                webContext: (this.state.text || '').substring(0, 200)
+            });
+
+            const answer = result.answersByLetter.get(letter) || '';
+            const existing = this.state.values.get(letter);
+            const shouldFill = overwrite || !existing || !existing.rawValue || existing.rawValue.trim() === '';
+            if (shouldFill && answer.trim()) {
+                const type = existing?.type || this.globalValueType;
+                this.updateValue(letter, answer, type);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            console.error('[FORMULA-SOLVER] Erreur answerSingleQuestion:', error);
+            this.messageService.error(`Erreur réponse: ${message}`);
+            this.updateState({ error: message });
+        } finally {
+            this.updateState({ loading: false });
         }
     }
 
@@ -1225,8 +1578,8 @@ export class FormulaSolverWidget extends ReactWidget {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <h2 style={{ marginTop: 0, marginBottom: 0 }}>Formula Solver</h2>
                     
-                    {/* Toggle Algorithme / IA */}
-                    {this.renderMethodToggle()}
+                    {/* Configuration des étapes (méthodes + profils) */}
+                    {this.renderStepConfigPanel()}
                 </div>
                 
                 {/* Étape 1 : Détection de formule */}
@@ -1257,71 +1610,218 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
-     * Render du toggle de méthode de résolution
+     * Render du panneau de configuration des étapes (méthodes + profils)
      */
-    protected renderMethodToggle(): React.ReactNode {
-        const isAI = this.resolutionMethod === 'ai';
-        const hasAIService = !!this.formulaSolverAIService;
+    protected renderStepConfigPanel(): React.ReactNode {
+        const profileOptions: Array<{ id: FormulaSolverAiProfile; label: string }> = [
+            { id: 'fast', label: 'Fast' },
+            { id: 'strong', label: 'Strong' },
+            { id: 'web', label: 'Web' }
+        ];
+
+        const selectStyle: React.CSSProperties = {
+            padding: '6px 8px',
+            border: '1px solid var(--theia-dropdown-border)',
+            borderRadius: '3px',
+            backgroundColor: 'var(--theia-dropdown-background)',
+            color: 'var(--theia-dropdown-foreground)',
+            fontSize: '12px'
+        };
 
         return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '12px', opacity: 0.8 }}>Méthode:</span>
-                <div 
-                    style={{
-                        display: 'flex',
-                        backgroundColor: 'var(--theia-input-background)',
-                        border: '1px solid var(--theia-input-border)',
-                        borderRadius: '4px',
-                        overflow: 'hidden'
-                    }}
-                >
-                    <button
-                        style={{
-                            padding: '6px 12px',
-                            border: 'none',
-                            backgroundColor: !isAI ? 'var(--theia-button-background)' : 'transparent',
-                            color: !isAI ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
-                            cursor: 'pointer',
-                            fontSize: '12px',
-                            fontWeight: !isAI ? 'bold' : 'normal',
-                            transition: 'all 0.2s'
-                        }}
-                        onClick={() => {
-                            this.resolutionMethod = 'algorithm';
+            <div style={{
+                display: 'flex',
+                alignItems: 'stretch',
+                gap: '10px',
+                flexWrap: 'wrap'
+            }}>
+                <div style={{
+                    display: 'flex',
+                    gap: '10px',
+                    padding: '10px',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    alignItems: 'center',
+                    flexWrap: 'wrap'
+                }}>
+                    <strong style={{ fontSize: '12px' }}>Formule</strong>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.formulaDetectionMethod}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, formulaDetectionMethod: e.target.value as FormulaDetectionMethod };
                             this.update();
                         }}
-                        title="Utilise l'algorithme de détection classique"
+                        title="Méthode de l'étape Formule"
                     >
-                        Algorithme
-                    </button>
-                    <button
-                        style={{
-                            padding: '6px 12px',
-                            border: 'none',
-                            backgroundColor: isAI ? 'var(--theia-button-background)' : 'transparent',
-                            color: isAI ? 'var(--theia-button-foreground)' : 'var(--theia-foreground)',
-                            cursor: hasAIService ? 'pointer' : 'not-allowed',
-                            fontSize: '12px',
-                            fontWeight: isAI ? 'bold' : 'normal',
-                            opacity: hasAIService ? 1 : 0.5,
-                            transition: 'all 0.2s'
+                        <option value="algorithm">Algorithme</option>
+                        <option value="ai">IA</option>
+                        <option value="manual">Manuel</option>
+                    </select>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.aiProfileForFormula}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, aiProfileForFormula: e.target.value as FormulaSolverAiProfile };
+                            this.update();
                         }}
-                        onClick={() => {
-                            if (hasAIService) {
-                                this.resolutionMethod = 'ai';
-                                this.update();
-                            } else {
-                                this.messageService.warn('Service IA non disponible. Vérifiez la configuration.');
-                            }
-                        }}
-                        disabled={!hasAIService}
-                        title={hasAIService ? "Utilise l'agent IA pour résoudre la formule" : "Service IA non disponible"}
+                        disabled={this.stepConfig.formulaDetectionMethod !== 'ai'}
+                        title="Profil IA pour l'étape Formule"
                     >
-                        IA 🤖
-                    </button>
+                        {profileOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
                 </div>
+
+                <div style={{
+                    display: 'flex',
+                    gap: '10px',
+                    padding: '10px',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    alignItems: 'center',
+                    flexWrap: 'wrap'
+                }}>
+                    <strong style={{ fontSize: '12px' }}>Questions</strong>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.questionsMethod}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, questionsMethod: e.target.value as QuestionsMethod };
+                            this.update();
+                        }}
+                        title="Méthode de l'étape Questions"
+                    >
+                        <option value="algorithm">Algorithme</option>
+                        <option value="ai">IA</option>
+                        <option value="none">Aucune</option>
+                    </select>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.aiProfileForQuestions}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, aiProfileForQuestions: e.target.value as FormulaSolverAiProfile };
+                            this.update();
+                        }}
+                        disabled={this.stepConfig.questionsMethod !== 'ai'}
+                        title="Profil IA pour l'étape Questions"
+                    >
+                        {profileOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                </div>
+
+                <div style={{
+                    display: 'flex',
+                    gap: '10px',
+                    padding: '10px',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--theia-editor-background)',
+                    alignItems: 'center',
+                    flexWrap: 'wrap'
+                }}>
+                    <strong style={{ fontSize: '12px' }}>Réponses</strong>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.answersMode}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, answersMode: e.target.value as AnswersMode };
+                            this.update();
+                        }}
+                        title="Mode de l'étape Réponses"
+                    >
+                        <option value="manual">Manuel</option>
+                        <option value="ai-bulk">IA (en masse)</option>
+                        <option value="ai-per-question">IA (par question)</option>
+                    </select>
+                    <select
+                        style={selectStyle}
+                        value={this.answersEngine}
+                        onChange={e => {
+                            this.answersEngine = e.target.value as AnswersEngine;
+                            this.update();
+                        }}
+                        disabled={this.stepConfig.answersMode === 'manual'}
+                        title="Moteur de réponse (IA ou recherche web backend)"
+                    >
+                        <option value="ai">IA</option>
+                        <option value="backend-web-search">Recherche web (backend)</option>
+                    </select>
+                    <select
+                        style={selectStyle}
+                        value={this.stepConfig.aiProfileForAnswers}
+                        onChange={e => {
+                            this.stepConfig = { ...this.stepConfig, aiProfileForAnswers: e.target.value as FormulaSolverAiProfile };
+                            this.update();
+                        }}
+                        disabled={this.stepConfig.answersMode === 'manual' || this.answersEngine !== 'ai'}
+                        title="Profil IA pour l'étape Réponses"
+                    >
+                        {profileOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                        <input
+                            type="checkbox"
+                            checked={this.webSearchEnabled}
+                            onChange={e => {
+                                this.webSearchEnabled = e.target.checked;
+                                this.update();
+                            }}
+                        />
+                        Web
+                    </label>
+                    <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={this.webMaxResults}
+                        onChange={e => {
+                            const parsed = parseInt(e.target.value, 10);
+                            this.webMaxResults = isNaN(parsed) ? 5 : Math.max(1, Math.min(10, parsed));
+                            this.update();
+                        }}
+                        style={{ ...selectStyle, width: '70px' }}
+                        title="Nombre max de résultats web"
+                        disabled={!this.webSearchEnabled}
+                    />
+                </div>
+
+                <button
+                    style={{
+                        padding: '10px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--theia-panel-border)',
+                        backgroundColor: 'var(--theia-button-secondaryBackground)',
+                        color: 'var(--theia-button-secondaryForeground)',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                    }}
+                    onClick={() => void this.saveCurrentConfigAsDefault()}
+                    title="Enregistre ces choix comme comportement par défaut (préférences)."
+                >
+                    Sauver comme défaut
+                </button>
             </div>
         );
+    }
+
+    protected async saveCurrentConfigAsDefault(): Promise<void> {
+        try {
+            await this.preferenceService.set('geoApp.formulaSolver.formulaDetection.defaultMethod', this.stepConfig.formulaDetectionMethod, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.questions.defaultMethod', this.stepConfig.questionsMethod, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.answers.defaultMode', this.stepConfig.answersMode, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.ai.defaultProfile.formulaDetection', this.stepConfig.aiProfileForFormula, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.ai.defaultProfile.questions', this.stepConfig.aiProfileForQuestions, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.ai.defaultProfile.answers', this.stepConfig.aiProfileForAnswers, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.ai.webSearchEnabled', this.webSearchEnabled, PreferenceScope.User);
+            await this.preferenceService.set('geoApp.formulaSolver.ai.maxWebResults', this.webMaxResults, PreferenceScope.User);
+            this.messageService.info('Préférences Formula Solver sauvegardées.');
+        } catch (error) {
+            console.error('[FORMULA-SOLVER] Erreur sauvegarde préférences:', error);
+            this.messageService.error('Impossible de sauvegarder les préférences Formula Solver.');
+        }
     }
 
     protected renderDetectionStep(): React.ReactNode {
@@ -1487,6 +1987,290 @@ export class FormulaSolverWidget extends ReactWidget {
                 }}>
                     <h3 style={{ marginTop: 0 }}>2. Questions pour les variables</h3>
 
+                    <div style={{
+                        display: 'flex',
+                        gap: '8px',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        marginBottom: '12px'
+                    }}>
+                        <button
+                            style={{
+                                padding: '6px 10px',
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                            onClick={() => void this.runQuestionsStep(this.state.selectedFormula!)}
+                            disabled={this.state.loading}
+                            title="Relance l'étape Questions avec la méthode choisie"
+                        >
+                            Rejouer questions
+                        </button>
+
+                        <button
+                            style={{
+                                padding: '6px 10px',
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                            onClick={() => void this.runQuestionsStep(this.state.selectedFormula!, { method: 'algorithm' })}
+                            disabled={this.state.loading}
+                            title="Relance l'extraction des questions via regex (backend)"
+                        >
+                            Questions (Regex)
+                        </button>
+
+                        <button
+                            style={{
+                                padding: '6px 10px',
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                            onClick={() => void this.runQuestionsStep(this.state.selectedFormula!, { method: 'ai' })}
+                            disabled={this.state.loading}
+                            title="Relance l'extraction des questions via IA"
+                        >
+                            Questions (IA)
+                        </button>
+
+                        <button
+                            style={{
+                                marginLeft: 'auto',
+                                padding: '6px 10px',
+                                backgroundColor: 'transparent',
+                                color: 'var(--theia-foreground)',
+                                border: '1px solid var(--theia-panel-border)',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                            }}
+                            onClick={() => {
+                                this.questionsAiHintOpen = !this.questionsAiHintOpen;
+                                this.update();
+                            }}
+                            title="Afficher/masquer l'aide utilisateur pour l'IA (extraction questions)"
+                        >
+                            Aide IA (questions)
+                        </button>
+
+                        {this.stepConfig.answersMode !== 'manual' && (
+                            <>
+                                <button
+                                    style={{
+                                        padding: '6px 10px',
+                                        backgroundColor: 'var(--theia-button-background)',
+                                        color: 'var(--theia-button-foreground)',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '12px'
+                                    }}
+                                    onClick={() => void this.answerAllQuestions({ overwrite: false })}
+                                    disabled={this.state.loading}
+                                    title="Remplit automatiquement les champs vides"
+                                >
+                                    Répondre (auto)
+                                </button>
+                                <button
+                                    style={{
+                                        padding: '6px 10px',
+                                        backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                        color: 'var(--theia-button-secondaryForeground)',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '12px'
+                                    }}
+                                    onClick={() => void this.answerAllQuestions({ overwrite: true })}
+                                    disabled={this.state.loading}
+                                    title="Écrase les champs existants"
+                                >
+                                    Répondre (écraser)
+                                </button>
+                            </>
+                        )}
+                    </div>
+
+                    {this.questionsAiHintOpen && (
+                        <div style={{
+                            padding: '10px',
+                            backgroundColor: 'var(--theia-input-background)',
+                            border: '1px solid var(--theia-panel-border)',
+                            borderRadius: '4px',
+                            marginBottom: '12px'
+                        }}>
+                            <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                                Indice (optionnel) pour l’IA lors de l’extraction des questions
+                            </div>
+                            <textarea
+                                value={this.questionsAiUserHint}
+                                onChange={e => {
+                                    this.questionsAiUserHint = e.target.value;
+                                    this.update();
+                                }}
+                                placeholder="Ex: Le listing est sous la forme 'A = ...' / 'B = ...'. Ne renvoie pas des numéros, renvoie la consigne textuelle."
+                                style={{
+                                    width: '100%',
+                                    minHeight: '70px',
+                                    padding: '8px 10px',
+                                    fontFamily: 'var(--theia-code-font-family)',
+                                    backgroundColor: 'var(--theia-editor-background)',
+                                    color: 'var(--theia-foreground)',
+                                    border: '1px solid var(--theia-input-border)',
+                                    borderRadius: '4px'
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    <div style={{
+                        padding: '10px',
+                        backgroundColor: 'var(--theia-editor-background)',
+                        border: '1px solid var(--theia-panel-border)',
+                        borderRadius: '4px',
+                        marginBottom: '12px'
+                    }}>
+                        <button
+                            style={{
+                                width: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: 0,
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--theia-foreground)',
+                                cursor: 'pointer',
+                                fontWeight: 'bold'
+                            }}
+                            onClick={() => {
+                                this.answeringContextOpen = !this.answeringContextOpen;
+                                this.update();
+                            }}
+                            title={this.answeringContextOpen ? 'Replier' : 'Déplier'}
+                        >
+                            <span>IA : Contexte & consignes de réponse</span>
+                            <span className={`codicon ${this.answeringContextOpen ? 'codicon-chevron-down' : 'codicon-chevron-right'}`} />
+                        </button>
+
+                        {this.answeringContextOpen && (
+                            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <button
+                                        style={{
+                                            padding: '6px 10px',
+                                            backgroundColor: 'var(--theia-button-background)',
+                                            color: 'var(--theia-button-foreground)',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '12px'
+                                        }}
+                                        disabled={this.state.loading}
+                                        onClick={() => void this.refreshAnsweringContext(false)}
+                                        title="Construit (ou relit du cache) le contexte IA"
+                                    >
+                                        Charger / rafraîchir
+                                    </button>
+                                    <button
+                                        style={{
+                                            padding: '6px 10px',
+                                            backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                            color: 'var(--theia-button-secondaryForeground)',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            fontSize: '12px'
+                                        }}
+                                        disabled={this.state.loading}
+                                        onClick={() => void this.refreshAnsweringContext(true)}
+                                        title="Force le recalcul du contexte IA (ignore le cache)"
+                                    >
+                                        Forcer recalcul
+                                    </button>
+
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={this.answeringContextUseOverride}
+                                            onChange={e => {
+                                                this.answeringContextUseOverride = e.target.checked;
+                                                this.update();
+                                            }}
+                                        />
+                                        Utiliser mon contexte (override)
+                                    </label>
+                                </div>
+
+                                <div>
+                                    <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                                        Contexte IA (JSON) – modifiable
+                                    </div>
+                                    <textarea
+                                        value={this.answeringContextJson}
+                                        onChange={e => {
+                                            this.answeringContextJson = e.target.value;
+                                            this.parseAnsweringContextOverrideFromJson();
+                                            this.update();
+                                        }}
+                                        placeholder='{"geocache_summary":"","global_rules":[],"per_letter_rules":{}}'
+                                        style={{
+                                            width: '100%',
+                                            minHeight: '160px',
+                                            padding: '8px 10px',
+                                            fontFamily: 'var(--theia-code-font-family)',
+                                            backgroundColor: 'var(--theia-input-background)',
+                                            color: 'var(--theia-input-foreground)',
+                                            border: `1px solid ${this.answeringContextJsonError ? 'var(--theia-errorForeground)' : 'var(--theia-input-border)'}`,
+                                            borderRadius: '4px'
+                                        }}
+                                    />
+                                    {this.answeringContextJsonError && (
+                                        <div style={{ marginTop: '6px', color: 'var(--theia-errorForeground)', fontSize: '12px' }}>
+                                            ⚠️ {this.answeringContextJsonError}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div>
+                                    <div style={{ fontSize: '12px', fontWeight: 'bold', marginBottom: '6px' }}>
+                                        Instructions supplémentaires (ajoutées à chaque question)
+                                    </div>
+                                    <textarea
+                                        value={this.answeringAdditionalInstructions}
+                                        onChange={e => {
+                                            this.answeringAdditionalInstructions = e.target.value;
+                                            this.update();
+                                        }}
+                                        placeholder="Ex: Respecte la casse exacte, conserve les accents, ne mets pas d'article, etc."
+                                        style={{
+                                            width: '100%',
+                                            minHeight: '70px',
+                                            padding: '8px 10px',
+                                            fontFamily: 'var(--theia-code-font-family)',
+                                            backgroundColor: 'var(--theia-input-background)',
+                                            color: 'var(--theia-input-foreground)',
+                                            border: '1px solid var(--theia-input-border)',
+                                            borderRadius: '4px'
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     {this.state.questions.length === 0 ? (
                         <div style={{ color: 'var(--theia-descriptionForeground)' }}>
                             Aucune question trouvée. Lancez la détection pour extraire les questions.
@@ -1501,6 +2285,7 @@ export class FormulaSolverWidget extends ReactWidget {
                                 {this.state.questions.map(question => {
                                     const value = this.state.values.get(question.letter);
                                     const hasValue = value && value.rawValue.trim() !== '';
+                                    const perQuestionProfile = this.perQuestionProfiles.get(question.letter) || this.stepConfig.aiProfileForAnswers;
 
                                     return (
                                         <div key={question.letter} style={{
@@ -1527,7 +2312,78 @@ export class FormulaSolverWidget extends ReactWidget {
                                                 <div style={{ flex: 1 }}>
                                                     <strong>{question.question || 'Question inconnue'}</strong>
                                                 </div>
+
+                                                {this.stepConfig.answersMode !== 'manual' && (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                        <select
+                                                            value={perQuestionProfile}
+                                                            onChange={e => {
+                                                                this.perQuestionProfiles.set(question.letter, e.target.value as FormulaSolverAiProfile);
+                                                                this.update();
+                                                            }}
+                                                            disabled={this.answersEngine !== 'ai'}
+                                                            title="Profil IA pour cette question"
+                                                            style={{
+                                                                padding: '6px 8px',
+                                                                border: '1px solid var(--theia-dropdown-border)',
+                                                                borderRadius: '3px',
+                                                                backgroundColor: 'var(--theia-dropdown-background)',
+                                                                color: 'var(--theia-dropdown-foreground)',
+                                                                fontSize: '12px'
+                                                            }}
+                                                        >
+                                                            <option value="fast">Fast</option>
+                                                            <option value="strong">Strong</option>
+                                                            <option value="web">Web</option>
+                                                        </select>
+                                                        <button
+                                                            style={{
+                                                                padding: '6px 10px',
+                                                                backgroundColor: 'var(--theia-button-background)',
+                                                                color: 'var(--theia-button-foreground)',
+                                                                border: 'none',
+                                                                borderRadius: '4px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px'
+                                                            }}
+                                                            onClick={() => void this.answerSingleQuestion(question.letter, { overwrite: false })}
+                                                            disabled={this.state.loading}
+                                                            title="Résout uniquement cette question (remplit si vide)"
+                                                        >
+                                                            Répondre
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
+
+                                            {this.stepConfig.answersMode !== 'manual' && (
+                                                <div style={{ marginBottom: '8px' }}>
+                                                    <textarea
+                                                        value={this.perLetterExtraInfo.get(question.letter) || ''}
+                                                        onChange={e => {
+                                                            const value = e.target.value;
+                                                            if (!value.trim()) {
+                                                                this.perLetterExtraInfo.delete(question.letter);
+                                                            } else {
+                                                                this.perLetterExtraInfo.set(question.letter, value);
+                                                            }
+                                                            this.update();
+                                                        }}
+                                                        placeholder="Info complémentaire (optionnel) pour aider l'IA à répondre à cette lettre (ex: consignes, détails, observation sur place...)"
+                                                        style={{
+                                                            width: '100%',
+                                                            minHeight: '44px',
+                                                            padding: '6px 8px',
+                                                            fontFamily: 'var(--theia-code-font-family)',
+                                                            fontSize: '12px',
+                                                            backgroundColor: 'var(--theia-input-background)',
+                                                            color: 'var(--theia-input-foreground)',
+                                                            border: '1px solid var(--theia-input-border)',
+                                                            borderRadius: '4px'
+                                                        }}
+                                                    />
+                                                </div>
+                                            )}
 
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                                 <input

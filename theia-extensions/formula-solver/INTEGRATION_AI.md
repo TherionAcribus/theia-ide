@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-Le Formula Solver intègre maintenant un agent IA spécialisé pour résoudre automatiquement les formules de géocaching Mystery. L'utilisateur peut choisir entre la méthode algorithmique classique et la résolution assistée par IA via un simple toggle dans l'interface.
+Le Formula Solver supporte désormais un flux **modulaire et rejouable** : l’utilisateur peut choisir, pour chaque étape (Formule → Questions → Réponses), une méthode (algorithme / IA / manuel) et un **profil LLM** (fast/strong/web), puis rejouer une étape à tout moment sans perdre le reste.
 
 ## Architecture
 
@@ -18,110 +18,96 @@ Fonctionnalités:
 - Parsing et scoring des résultats
 - Extraction de la meilleure réponse
 
-#### 2. Endpoints AI
+#### 2. Endpoints AI / Web
 **Fichier**: `gc-backend/gc_backend/blueprints/formula_solver.py`
 
-Nouveaux endpoints optimisés pour les tools de l'agent:
+Endpoints utilisés par GeoApp pour la recherche web (DuckDuckGo) :
 
-- `POST /api/formula-solver/ai/detect-formula` - Détection enrichie de formule
-- `POST /api/formula-solver/ai/find-questions` - Recherche de questions
-- `POST /api/formula-solver/ai/search-answer` - Recherche web
+- `POST /api/formula-solver/ai/search-answer` - Recherche web (1 question)
+- `POST /api/formula-solver/ai/search-answers` - Recherche web batch (N questions)
 - `POST /api/formula-solver/ai/suggest-calculation-type` - Suggestion de type de calcul
 
 ### Frontend (Theia)
 
-#### 1. Tool Functions
-**Fichier**: `src/browser/formula-solver-tools.ts`
+#### 1. Profils LLM (agents internes)
+**Fichier**: `src/browser/geoapp-formula-solver-agents.ts`
 
-Enregistre 5 tools pour l'agent:
+Agents enregistrés (configurables côté Theia AI) :
 
-1. `detect_formula` - Détection de formule GPS
-2. `find_questions_for_variables` - Recherche de questions
-3. `search_answer_online` - Recherche web
-4. `calculate_variable_value` - Calcul de valeur (checksum, longueur, etc.)
-5. `calculate_final_coordinates` - Calcul coordonnées finales
+- `geoapp-formula-solver-fast`
+- `geoapp-formula-solver-strong`
+- `geoapp-formula-solver-web`
 
-#### 2. Agent Formula Solver
-**Fichier**: `src/browser/formula-solver-agent.ts`
+Le service LLM sélectionne le modèle via `LanguageModelRegistry.selectLanguageModel({ agent: <agentId>, purpose: 'formula-solving', identifier: 'default/universal' })`.
 
-Agent IA spécialisé avec:
-- ID: `formula-solver`
-- Prompt système détaillé expliquant le processus de résolution
-- Utilisation des 5 tools ci-dessus
+#### 2. Services & pipeline
+- `src/browser/formula-solver-llm-service.ts` : appels LLM (JSON strict + nettoyage “thinking”).
+- `src/browser/formula-solver-service.ts` : API backend (base URL via `geoApp.backend.apiBaseUrl`) + web search (single + batch).
+- `src/browser/formula-solver-pipeline.ts` : orchestrateur rejouable (stratégies algo/IA/none/manual).
+- `src/browser/strategies/*` : implémentations de stratégies par étape.
 
-#### 3. Service d'appel de l'agent
-**Fichier**: `src/browser/formula-solver-ai-service.ts`
-
-Service pour interagir avec l'agent:
-- Méthode `solveWithAI(text, geocacheId?)` 
-- Vérification de disponibilité de l'IA
-- Parsing des résultats structurés
-
-#### 4. Widget UI
+#### 3. Widget UI
 **Fichier**: `src/browser/formula-solver-widget.tsx`
 
-Modifications:
-- Toggle "Algorithme / IA" en haut du widget
-- Méthode `solveWithAI()` pour résolution IA
-- Méthode `detectFormulasWithAlgorithm()` pour méthode classique
-- Sauvegarde de la préférence de méthode
+Le widget expose un panneau de configuration par étape (méthode + profil) et des actions “Rejouer” + “Répondre (auto/écraser)” (en masse ou par question).
 
-#### 5. Module DI
+#### 4. Module DI
 **Fichier**: `src/browser/formula-solver-frontend-module.ts`
 
 Enregistrement de:
-- `FormulaSolverAIService`
-- `FormulaSolverAgent` (comme `Agent`)
-- `FormulaSolverToolsManager` (comme `FrontendApplicationContribution`)
+- `GeoAppFormulaSolverAgentsContribution` (agents fast/strong/web)
+- `FormulaSolverLLMService` (sélection modèle + parsing)
+- `FormulaSolverPipeline` + stratégies
 
 ### Préférences
 
 **Fichier**: `shared/preferences/geo-preferences-schema.json`
 
-Nouvelles préférences:
-- `geoApp.formulaSolver.defaultMethod` - "algorithm" ou "ai"
+Préférences principales:
+- `geoApp.formulaSolver.formulaDetection.defaultMethod` - `algorithm | ai | manual`
+- `geoApp.formulaSolver.questions.defaultMethod` - `none | algorithm | ai`
+- `geoApp.formulaSolver.answers.defaultMode` - `manual | ai-bulk | ai-per-question`
+- `geoApp.formulaSolver.ai.defaultProfile.*` - `fast | strong | web` (par étape)
 - `geoApp.formulaSolver.ai.webSearchEnabled` - Autoriser recherche web
 - `geoApp.formulaSolver.ai.maxWebResults` - Nombre max de résultats web
 
+Compatibilité: `geoApp.formulaSolver.defaultMethod` reste supportée comme fallback.
+
 ## Flux de Résolution avec IA
 
-1. **Utilisateur** active le mode IA et colle une description de géocache
-2. **Widget** appelle `FormulaSolverAIService.solveWithAI(text)`
-3. **Service** vérifie que l'agent est disponible
-4. **Service** envoie une requête à l'agent avec le texte
-5. **Agent** utilise ses tools dans l'ordre:
-   - `detect_formula` → trouve la formule
-   - `find_questions_for_variables` → trouve les questions
-   - Pour chaque question, `search_answer_online` → cherche la réponse
-   - Pour chaque réponse, `calculate_variable_value` → calcule la valeur
-   - `calculate_final_coordinates` → calcule les coordonnées finales
-6. **Service** parse la réponse et retourne les résultats structurés
-7. **Widget** affiche les résultats (formule, questions, réponses, coordonnées)
+1. **Utilisateur** colle une description de géocache
+2. **Utilisateur** choisit (ou garde) les méthodes/profils par étape
+3. **Widget** exécute l’étape Formule (algo/IA/manuel)
+4. **Widget** exécute l’étape Questions (algo/IA/aucune) et affiche les champs
+5. **Utilisateur** répond manuellement OU lance une résolution IA/Web (en masse ou par question)
+6. **Calcul** des coordonnées via l’algorithme (backend `/calculate`)
 
 ## Utilisation
 
 ### Pour l'Utilisateur
 
 1. Ouvrir le widget Formula Solver
-2. Cliquer sur le toggle "IA 🤖" en haut à droite
-3. Coller la description de la géocache
-4. Cliquer sur "Détecter la formule"
-5. L'agent IA traite automatiquement toutes les étapes
-6. Les résultats s'affichent au fur et à mesure
+2. Coller la description de la géocache
+3. Cliquer sur "Détecter la formule"
+4. Ajuster les méthodes/profils et rejouer les étapes si nécessaire (Questions / Réponses)
 
 ### Configuration
 
-La méthode par défaut est configurable dans les préférences:
+Exemple (méthodes par défaut):
 ```json
 {
-  "geoApp.formulaSolver.defaultMethod": "algorithm"
+  "geoApp.formulaSolver.formulaDetection.defaultMethod": "algorithm",
+  "geoApp.formulaSolver.questions.defaultMethod": "algorithm",
+  "geoApp.formulaSolver.answers.defaultMode": "manual"
 }
 ```
 
-Pour activer l'IA par défaut:
+Exemple (profils IA):
 ```json
 {
-  "geoApp.formulaSolver.defaultMethod": "ai"
+  "geoApp.formulaSolver.ai.defaultProfile.formulaDetection": "fast",
+  "geoApp.formulaSolver.ai.defaultProfile.questions": "fast",
+  "geoApp.formulaSolver.ai.defaultProfile.answers": "strong"
 }
 ```
 

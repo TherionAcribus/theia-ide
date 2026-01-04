@@ -65,6 +65,13 @@ export class PreferenceSyncService implements FrontendApplicationContribution {
             return;
         }
 
+        // IMPORTANT: éviter de pousser des valeurs "undefined" vers le backend.
+        // Cela arrive lors de certaines réconciliations de préférences (ex: reset, scope changes)
+        // et le backend valide strictement les types -> 400 en rafale.
+        if (event.newValue === undefined || event.newValue === null) {
+            return;
+        }
+
         if (event.preferenceName === 'geoApp.backend.apiBaseUrl') {
             this.apiClient.setBaseUrl(String(event.newValue || 'http://localhost:8000'));
             return;

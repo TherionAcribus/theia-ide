@@ -4,7 +4,7 @@ import Feature from 'ol/Feature';
 import Map from 'ol/Map';
 import { Point, Circle, LineString, Polygon } from 'ol/geom';
 import Geometry from 'ol/geom/Geometry';
-import { Style, Fill, Stroke } from 'ol/style';
+import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
 import { createClusterSource } from './map-clustering';
 import { createClusterStyle } from './map-geocache-style';
 import { createGeocacheStyleFromSprite, createWaypointStyleFromSprite, createDetectedCoordinateStyle, GeocacheFeatureProperties, GeocacheStyleOptions } from './map-geocache-style-sprite';
@@ -175,54 +175,89 @@ export class MapLayerManager {
             return;
         }
 
-        const b = overlay.bounds;
-        const minLon = b.minLon;
-        const maxLon = b.maxLon;
-        const minLat = b.minLat;
-        const maxLat = b.maxLat;
-
-        let geometry: Geometry | undefined;
-        if (overlay.kind === 'point') {
-            const centerLon = (minLon + maxLon) / 2;
-            const centerLat = (minLat + maxLat) / 2;
-            geometry = new Point(lonLatToMapCoordinate(centerLon, centerLat));
-        } else if (overlay.kind === 'line-lat') {
-            const lat = (minLat + maxLat) / 2;
-            geometry = new LineString([
-                lonLatToMapCoordinate(minLon, lat),
-                lonLatToMapCoordinate(maxLon, lat)
-            ]);
-        } else if (overlay.kind === 'line-lon') {
-            const lon = (minLon + maxLon) / 2;
-            geometry = new LineString([
-                lonLatToMapCoordinate(lon, minLat),
-                lonLatToMapCoordinate(lon, maxLat)
-            ]);
-        } else {
-            // bbox
-            const coords = [
-                lonLatToMapCoordinate(minLon, minLat),
-                lonLatToMapCoordinate(maxLon, minLat),
-                lonLatToMapCoordinate(maxLon, maxLat),
-                lonLatToMapCoordinate(minLon, maxLat),
-                lonLatToMapCoordinate(minLon, minLat)
-            ];
-            geometry = new Polygon([coords]);
+        // 1) Cercle de contrainte (ex: 2 miles autour des coords fictives)
+        if (overlay.circle) {
+            const center = lonLatToMapCoordinate(overlay.circle.centerLon, overlay.circle.centerLat);
+            // EPSG:3857 est une projection: 1 “mètre carte” ne correspond pas à 1m au sol.
+            // Pour avoir un rayon “au sol” ~radiusMeters, on compense par le facteur 1/cos(lat).
+            const latRad = (overlay.circle.centerLat * Math.PI) / 180;
+            const scale = Math.max(0.2, Math.cos(latRad)); // garde-fou
+            const projectedRadius = overlay.circle.radiusMeters / scale;
+            const circleGeom = new Circle(center, projectedRadius);
+            const circleFeature = new Feature({ geometry: circleGeom });
+            circleFeature.setProperties({
+                isFormulaSolverPreview: true,
+                isFormulaSolverPreviewCircle: true,
+                previewRole: 'circle',
+                gcCode: overlay.gcCode,
+                geocacheId: overlay.geocacheId
+            });
+            this.formulaSolverPreviewVectorSource.addFeature(circleFeature);
         }
 
-        if (!geometry) {
-            return;
-        }
+        // 2) Candidate(s): brut (rouge si hors zone) + clippé (bleu)
+        const raw = overlay.candidateRaw;
+        const clipped = overlay.candidateClipped;
 
-        const feature = new Feature({ geometry });
-        feature.setProperties({
-            isFormulaSolverPreview: true,
-            kind: overlay.kind,
-            formatted: overlay.formatted,
-            gcCode: overlay.gcCode,
-            geocacheId: overlay.geocacheId
-        });
-        this.formulaSolverPreviewVectorSource.addFeature(feature);
+        const addCandidateFeature = (candidate: any, role: 'candidateRaw' | 'candidateClipped') => {
+            const b = candidate.bounds;
+            const minLon = b.minLon;
+            const maxLon = b.maxLon;
+            const minLat = b.minLat;
+            const maxLat = b.maxLat;
+
+            let geometry: Geometry | undefined;
+            if (candidate.kind === 'point') {
+                const centerLon = (minLon + maxLon) / 2;
+                const centerLat = (minLat + maxLat) / 2;
+                geometry = new Point(lonLatToMapCoordinate(centerLon, centerLat));
+            } else if (candidate.kind === 'line-lat') {
+                const lat = (minLat + maxLat) / 2;
+                geometry = new LineString([
+                    lonLatToMapCoordinate(minLon, lat),
+                    lonLatToMapCoordinate(maxLon, lat)
+                ]);
+            } else if (candidate.kind === 'line-lon') {
+                const lon = (minLon + maxLon) / 2;
+                geometry = new LineString([
+                    lonLatToMapCoordinate(lon, minLat),
+                    lonLatToMapCoordinate(lon, maxLat)
+                ]);
+            } else {
+                const coords = [
+                    lonLatToMapCoordinate(minLon, minLat),
+                    lonLatToMapCoordinate(maxLon, minLat),
+                    lonLatToMapCoordinate(maxLon, maxLat),
+                    lonLatToMapCoordinate(minLon, maxLat),
+                    lonLatToMapCoordinate(minLon, minLat)
+                ];
+                geometry = new Polygon([coords]);
+            }
+
+            if (!geometry) {
+                return;
+            }
+
+            const feature = new Feature({ geometry });
+            feature.setProperties({
+                isFormulaSolverPreview: true,
+                isFormulaSolverPreviewCircle: false,
+                previewRole: role,
+                kind: candidate.kind,
+                formatted: candidate.formatted,
+                gcCode: overlay.gcCode,
+                geocacheId: overlay.geocacheId
+            });
+            this.formulaSolverPreviewVectorSource.addFeature(feature);
+        };
+
+        // Afficher d'abord le clippé (bleu), puis le brut (rouge) au-dessus (dashed).
+        if (clipped) {
+            addCandidateFeature(clipped, 'candidateClipped');
+        }
+        if (raw) {
+            addCandidateFeature(raw, 'candidateRaw');
+        }
     }
 
     clearFormulaSolverPreviewOverlay(): void {
@@ -230,14 +265,46 @@ export class MapLayerManager {
     }
 
     private createFormulaSolverPreviewStyle(feature: Feature<Geometry>): Style {
-        // Style volontairement léger (pas de fill opaque)
+        const isCircle = Boolean((feature as any).get('isFormulaSolverPreviewCircle'));
+        const role = String((feature as any).get('previewRole') || '');
+
+        const isRaw = role === 'candidateRaw';
+        const isClipped = role === 'candidateClipped';
+
+        const strokeColor = isCircle
+            ? 'rgba(255, 165, 0, 0.9)'
+            : (isRaw ? 'rgba(220, 20, 60, 0.95)' : 'rgba(0, 122, 204, 0.9)');
+        const fillColor = isCircle
+            ? 'rgba(255, 165, 0, 0.04)'
+            : (isRaw ? 'rgba(220, 20, 60, 0.02)' : 'rgba(0, 122, 204, 0.08)');
+
+        const geometry = feature.getGeometry();
+        const isPoint = geometry instanceof Point;
+
+        // Pour les points, on utilise un style "marker" explicite (sinon c'est ambigu / parfois invisible).
+        if (isPoint) {
+            return new Style({
+                image: new CircleStyle({
+                    radius: 6,
+                    fill: new Fill({ color: fillColor }),
+                    stroke: new Stroke({
+                        color: strokeColor,
+                        width: 2,
+                        lineDash: isRaw ? [6, 4] : undefined
+                    })
+                })
+            });
+        }
+
+        // Polygones / lignes / cercles: style léger (pas de fill opaque)
         return new Style({
             stroke: new Stroke({
-                color: 'rgba(0, 122, 204, 0.9)',
-                width: 2
+                color: strokeColor,
+                width: 2,
+                lineDash: isRaw ? [6, 4] : undefined
             }),
             fill: new Fill({
-                color: 'rgba(0, 122, 204, 0.08)'
+                color: fillColor
             })
         });
     }

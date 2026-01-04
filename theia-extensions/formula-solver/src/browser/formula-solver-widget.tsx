@@ -297,8 +297,24 @@ export class FormulaSolverWidget extends ReactWidget {
             return;
         }
 
+        const originLat = this.state.originLat;
+        const originLon = this.state.originLon;
+        const hasOrigin = typeof originLat === 'number' && typeof originLon === 'number' && isFinite(originLat) && isFinite(originLon);
+        const radiusMeters = 2 * 1609.344; // 2 miles
+
         const formula = this.state.selectedFormula;
         if (!formula) {
+            // Si on connaît l'origine, on peut au moins afficher le cercle de contrainte
+            if (hasOrigin) {
+                window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay', {
+                    detail: {
+                        gcCode: this.state.gcCode,
+                        geocacheId: this.state.geocacheId,
+                        circle: { centerLat: originLat, centerLon: originLon, radiusMeters }
+                    }
+                }));
+                return;
+            }
             window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
             return;
         }
@@ -308,45 +324,65 @@ export class FormulaSolverWidget extends ReactWidget {
         const n = preview.north;
         const e = preview.east;
 
-        if (n.minDecimalDegrees === undefined || n.maxDecimalDegrees === undefined ||
-            e.minDecimalDegrees === undefined || e.maxDecimalDegrees === undefined) {
-            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
-            return;
-        }
+        const canBuildCandidate = !(n.minDecimalDegrees === undefined || n.maxDecimalDegrees === undefined ||
+            e.minDecimalDegrees === undefined || e.maxDecimalDegrees === undefined);
 
-        const bounds = {
-            minLat: n.minDecimalDegrees,
-            maxLat: n.maxDecimalDegrees,
-            minLon: e.minDecimalDegrees,
-            maxLon: e.maxDecimalDegrees
+        const candidateBounds = canBuildCandidate ? {
+            minLat: n.minDecimalDegrees!,
+            maxLat: n.maxDecimalDegrees!,
+            minLon: e.minDecimalDegrees!,
+            maxLon: e.maxDecimalDegrees!
+        } : undefined;
+
+        const makeKind = (b: { minLat: number; maxLat: number; minLon: number; maxLon: number }): 'point' | 'bbox' | 'line-lat' | 'line-lon' => {
+            const latSpan = Math.abs(b.maxLat - b.minLat);
+            const lonSpan = Math.abs(b.maxLon - b.minLon);
+            const eps = 1e-9;
+            if (latSpan < eps && lonSpan < eps) {
+                return 'point';
+            }
+            if (latSpan < eps) {
+                return 'line-lat';
+            }
+            if (lonSpan < eps) {
+                return 'line-lon';
+            }
+            return 'bbox';
         };
-
-        const latSpan = Math.abs(bounds.maxLat - bounds.minLat);
-        const lonSpan = Math.abs(bounds.maxLon - bounds.minLon);
-        const eps = 1e-9;
-
-        let kind: 'point' | 'bbox' | 'line-lat' | 'line-lon' = 'bbox';
-        if (latSpan < eps && lonSpan < eps) {
-            kind = 'point';
-        } else if (latSpan < eps) {
-            kind = 'line-lat';
-        } else if (lonSpan < eps) {
-            kind = 'line-lon';
-        } else {
-            kind = 'bbox';
-        }
 
         const formatted = (n.status === 'valid' && e.status === 'valid')
             ? `${n.display} ${e.display}`
             : undefined;
 
+        let candidateRaw: any | undefined;
+        let candidateClipped: any | undefined;
+
+        if (candidateBounds) {
+            candidateRaw = { kind: makeKind(candidateBounds), bounds: candidateBounds, formatted };
+
+            if (hasOrigin) {
+                const clippedBounds = intersectBoundsWithCircleBBox(candidateBounds, originLat, originLon, radiusMeters);
+                if (clippedBounds) {
+                    // On calcule le kind sur la zone clippée (peut devenir ligne/point)
+                    candidateClipped = { kind: makeKind(clippedBounds), bounds: clippedBounds, formatted };
+                }
+            } else {
+                candidateClipped = undefined;
+            }
+        }
+
+        if (!candidateRaw && !candidateClipped && !hasOrigin) {
+            window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay-clear'));
+            return;
+        }
+
         window.dispatchEvent(new CustomEvent('geoapp-map-formula-solver-preview-overlay', {
             detail: {
-                kind,
-                bounds,
-                formatted,
                 gcCode: this.state.gcCode,
-                geocacheId: this.state.geocacheId
+                geocacheId: this.state.geocacheId,
+                circle: hasOrigin ? { centerLat: originLat, centerLon: originLon, radiusMeters } : undefined,
+                candidateRaw,
+                candidateClipped
             }
         }));
     }
@@ -2708,4 +2744,38 @@ export class FormulaSolverWidget extends ReactWidget {
         );
     }
 
+}
+
+function intersectBoundsWithCircleBBox(
+    bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number },
+    centerLat: number,
+    centerLon: number,
+    radiusMeters: number
+): { minLat: number; maxLat: number; minLon: number; maxLon: number } | undefined {
+    // Approximation suffisante pour 2 miles: conversion mètres -> degrés
+    const latRad = (centerLat * Math.PI) / 180;
+    const metersPerDegreeLat = 111_320;
+    const metersPerDegreeLon = Math.max(1, metersPerDegreeLat * Math.cos(latRad));
+
+    const dLat = radiusMeters / metersPerDegreeLat;
+    const dLon = radiusMeters / metersPerDegreeLon;
+
+    const circleBBox = {
+        minLat: centerLat - dLat,
+        maxLat: centerLat + dLat,
+        minLon: centerLon - dLon,
+        maxLon: centerLon + dLon
+    };
+
+    const clipped = {
+        minLat: Math.max(bounds.minLat, circleBBox.minLat),
+        maxLat: Math.min(bounds.maxLat, circleBBox.maxLat),
+        minLon: Math.max(bounds.minLon, circleBBox.minLon),
+        maxLon: Math.min(bounds.maxLon, circleBBox.maxLon)
+    };
+
+    if (clipped.minLat > clipped.maxLat || clipped.minLon > clipped.maxLon) {
+        return undefined;
+    }
+    return clipped;
 }

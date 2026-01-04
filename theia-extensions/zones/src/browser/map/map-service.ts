@@ -42,15 +42,35 @@ export interface DetectedCoordinateHighlight {
 
 export type FormulaSolverPreviewOverlayKind = 'point' | 'bbox' | 'line-lat' | 'line-lon';
 
-export interface FormulaSolverPreviewOverlay {
+export interface FormulaSolverPreviewCircle {
+    centerLat: number;
+    centerLon: number;
+    radiusMeters: number;
+}
+
+export interface FormulaSolverPreviewBounds {
+    minLat: number;
+    maxLat: number;
+    minLon: number;
+    maxLon: number;
+}
+
+export interface FormulaSolverPreviewCandidate {
     kind: FormulaSolverPreviewOverlayKind;
-    bounds: {
-        minLat: number;
-        maxLat: number;
-        minLon: number;
-        maxLon: number;
-    };
+    bounds: FormulaSolverPreviewBounds;
     formatted?: string;
+}
+
+export interface FormulaSolverPreviewOverlay {
+    circle?: FormulaSolverPreviewCircle;
+    /**
+     * Candidate "brut" (avant contrainte 2 miles). Sert à visualiser quand on est hors zone.
+     */
+    candidateRaw?: FormulaSolverPreviewCandidate;
+    /**
+     * Candidate "clippé" (dans la contrainte 2 miles), si calculable.
+     */
+    candidateClipped?: FormulaSolverPreviewCandidate;
     gcCode?: string;
     geocacheId?: number;
 }
@@ -75,12 +95,30 @@ interface DetectedCoordinateHighlightEventDetail {
 }
 
 interface FormulaSolverPreviewOverlayEventDetail {
-    kind?: FormulaSolverPreviewOverlayKind;
-    bounds?: {
-        minLat?: number;
-        maxLat?: number;
-        minLon?: number;
-        maxLon?: number;
+    circle?: {
+        centerLat?: number;
+        centerLon?: number;
+        radiusMeters?: number;
+    };
+    candidateRaw?: {
+        kind?: FormulaSolverPreviewOverlayKind;
+        bounds?: {
+            minLat?: number;
+            maxLat?: number;
+            minLon?: number;
+            maxLon?: number;
+        };
+        formatted?: string;
+    };
+    candidateClipped?: {
+        kind?: FormulaSolverPreviewOverlayKind;
+        bounds?: {
+            minLat?: number;
+            maxLat?: number;
+            minLon?: number;
+            maxLon?: number;
+        };
+        formatted?: string;
     };
     formatted?: string;
     gcCode?: string;
@@ -197,35 +235,63 @@ export class MapService {
         const customEvent = event as CustomEvent<FormulaSolverPreviewOverlayEventDetail>;
         const detail = customEvent.detail;
 
-        const kind = detail?.kind;
-        const b = detail?.bounds;
-        if (!kind || !b) {
-            console.warn('[MapService] Preview overlay ignoré: kind/bounds manquants', detail);
+        const overlay: FormulaSolverPreviewOverlay = {
+            gcCode: detail?.gcCode,
+            geocacheId: detail?.geocacheId
+        };
+
+        const c = detail?.circle;
+        if (c && typeof c.centerLat === 'number' && typeof c.centerLon === 'number' && typeof c.radiusMeters === 'number') {
+            if (isFinite(c.centerLat) && isFinite(c.centerLon) && isFinite(c.radiusMeters) && c.radiusMeters > 0) {
+                overlay.circle = {
+                    centerLat: c.centerLat,
+                    centerLon: c.centerLon,
+                    radiusMeters: c.radiusMeters
+                };
+            }
+        }
+
+        const parseCandidate = (candidate: any, label: string): FormulaSolverPreviewCandidate | undefined => {
+            const kind = candidate?.kind;
+            const b = candidate?.bounds;
+            if (!kind || !b) {
+                return undefined;
+            }
+            const minLat = b.minLat;
+            const maxLat = b.maxLat;
+            const minLon = b.minLon;
+            const maxLon = b.maxLon;
+            if ([minLat, maxLat, minLon, maxLon].some(v => typeof v !== 'number' || !isFinite(v as number))) {
+                console.warn(`[MapService] Preview overlay ignoré: ${label}.bounds invalides`, b);
+                return undefined;
+            }
+            return {
+                kind,
+                bounds: {
+                    minLat: Math.min(minLat as number, maxLat as number),
+                    maxLat: Math.max(minLat as number, maxLat as number),
+                    minLon: Math.min(minLon as number, maxLon as number),
+                    maxLon: Math.max(minLon as number, maxLon as number)
+                },
+                formatted: candidate.formatted
+            };
+        };
+
+        const raw = parseCandidate(detail?.candidateRaw, 'candidateRaw');
+        const clipped = parseCandidate(detail?.candidateClipped, 'candidateClipped');
+        if (raw) {
+            overlay.candidateRaw = raw;
+        }
+        if (clipped) {
+            overlay.candidateClipped = clipped;
+        }
+
+        if (!overlay.circle && !overlay.candidateRaw && !overlay.candidateClipped) {
+            console.warn('[MapService] Preview overlay ignoré: ni circle ni candidate valides', detail);
             return;
         }
 
-        const minLat = b.minLat;
-        const maxLat = b.maxLat;
-        const minLon = b.minLon;
-        const maxLon = b.maxLon;
-
-        if ([minLat, maxLat, minLon, maxLon].some(v => typeof v !== 'number' || !isFinite(v as number))) {
-            console.warn('[MapService] Preview overlay ignoré: bounds invalides', b);
-            return;
-        }
-
-        this.setFormulaSolverPreviewOverlay({
-            kind,
-            bounds: {
-                minLat: Math.min(minLat as number, maxLat as number),
-                maxLat: Math.max(minLat as number, maxLat as number),
-                minLon: Math.min(minLon as number, maxLon as number),
-                maxLon: Math.max(minLon as number, maxLon as number)
-            },
-            formatted: detail.formatted,
-            gcCode: detail.gcCode,
-            geocacheId: detail.geocacheId
-        });
+        this.setFormulaSolverPreviewOverlay(overlay);
     };
 
     private handleFormulaSolverPreviewOverlayClearEvent = (): void => {

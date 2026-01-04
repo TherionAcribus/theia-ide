@@ -37,9 +37,11 @@ const FRAGMENT_STATUS_LABEL: Record<FragmentStatus, string> = {
     invalid: 'Invalide'
 };
 
-export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula, values, onPartialCalculate }) => {
-    const formulaWithFragments = ensureFormulaFragments(formula);
-    const fragments = formulaWithFragments.fragments;
+const InnerFormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula, values, onPartialCalculate }) => {
+    const fragments = React.useMemo(() => {
+        const withFragments = ensureFormulaFragments(formula);
+        return withFragments.fragments;
+    }, [formula.id, formula.north, formula.east]);
 
     // Calculer les fragments avec les valeurs actuelles
     const valueMap = React.useMemo(() => {
@@ -58,6 +60,13 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
             east: updateFragmentsWithCalculations(fragments.east, valueMap)
         };
     }, [fragments, valueMap]);
+
+    const canEvaluate = React.useCallback((fragment: FormulaFragment): boolean => {
+        if (!fragment?.variables?.length) {
+            return true;
+        }
+        return fragment.variables.every(letter => valueMap.has(letter));
+    }, [valueMap]);
 
     const collectLettersFromFragments = (axisFragments?: CoordinateFragments, fallback?: string): string[] => {
         if (!axisFragments) {
@@ -112,11 +121,15 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         const decimalValues: string[] = [];
         for (const decimal of axisFragments.decimals) {
             if (decimal.cleaned) {
-                const result = evaluateExpression(decimal.cleaned, valueMap);
-                if (!isNaN(result)) {
-                    decimalValues.push(result.toString());
-                } else {
+                if (!canEvaluate(decimal)) {
                     decimalValues.push('?');
+                } else {
+                    const result = evaluateExpression(decimal.cleaned, valueMap);
+                    if (!isNaN(result)) {
+                        decimalValues.push(result.toString());
+                    } else {
+                        decimalValues.push('?');
+                    }
                 }
             } else {
                 decimalValues.push('?');
@@ -269,11 +282,15 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         // Pour les décimales, afficher le résultat calculé
         let displayValue = fragment.raw || '—';
         if (fragment.kind === 'decimal' && fragment.cleaned) {
-            const result = evaluateExpression(fragment.cleaned, valueMap);
-            if (!isNaN(result)) {
-                displayValue = result.toString();
-            } else {
+            if (!canEvaluate(fragment)) {
                 displayValue = '?';
+            } else {
+                const result = evaluateExpression(fragment.cleaned, valueMap);
+                if (!isNaN(result)) {
+                    displayValue = result.toString();
+                } else {
+                    displayValue = '?';
+                }
             }
         }
 
@@ -413,3 +430,7 @@ export const FormulaPreviewComponent: React.FC<FormulaPreviewProps> = ({ formula
         </div>
     );
 };
+
+// Évite les recalculs/évaluations à chaque re-render du widget parent.
+// On ne rerender que si la formule ou les valeurs changent (référence).
+export const FormulaPreviewComponent = React.memo(InnerFormulaPreviewComponent);

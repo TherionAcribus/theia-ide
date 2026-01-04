@@ -55,6 +55,19 @@ export function parseValueList(input: string): ParsedValue {
     }
 
     const values: number[] = [];
+
+    // Cas spécial: "*" seul => toutes les valeurs 0..9
+    // (doc: `*` - Toutes les valeurs (0-9))
+    if (!content) {
+        for (let i = 0; i <= 9; i++) {
+            values.push(i);
+        }
+        return {
+            raw: input,
+            values,
+            isList: true
+        };
+    }
     
     // Détecter le type de pattern
     

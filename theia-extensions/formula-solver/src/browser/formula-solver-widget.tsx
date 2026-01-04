@@ -23,7 +23,8 @@ import {
     DetectedFormulasComponent,
     // QuestionFieldsComponent,
     ResultDisplayComponent,
-    FormulaPreviewComponent
+    FormulaPreviewComponent,
+    BruteForceComponent
 } from './components';
 
 @injectable()
@@ -1325,6 +1326,84 @@ export class FormulaSolverWidget extends ReactWidget {
     }
 
     /**
+     * Exécute le brute force depuis une liste de combinaisons prédéfinies
+     */
+    protected async executeBruteForceFromCombinations(combinations: Array<Record<string, number>>): Promise<void> {
+        if (!this.state.selectedFormula) {
+            this.messageService.error('Aucune formule sélectionnée');
+            return;
+        }
+
+        if (combinations.length === 0) {
+            this.messageService.warn('Aucune combinaison à tester');
+            return;
+        }
+
+        if (combinations.length > 1000) {
+            this.messageService.warn(`${combinations.length} combinaisons détectées. Limité à 1000 pour éviter les calculs trop longs.`);
+            combinations = combinations.slice(0, 1000);
+        }
+
+        this.bruteForceMode = true;
+        this.bruteForceResults = [];
+        this.updateState({ loading: true, error: undefined });
+
+        this.messageService.info(`Calcul de ${combinations.length} combinaisons...`);
+
+        try {
+            const results: Array<{ id: string; label: string; values: Record<string, number>; coordinates?: any }> = [];
+
+            // Calculer chaque combinaison
+            for (const combination of combinations) {
+                try {
+                    const result = await this.formulaSolverService.calculateCoordinates({
+                        northFormula: this.state.selectedFormula.north,
+                        eastFormula: this.state.selectedFormula.east,
+                        values: combination
+                    });
+
+                    if (result.status === 'success' && result.coordinates) {
+                        // Générer un ID unique basé sur les valeurs
+                        const id = Object.entries(combination)
+                            .map(([k, v]) => `${k}${v}`)
+                            .join('-');
+
+                        const label = `Solution ${results.length + 1}`;
+
+                        results.push({
+                            id,
+                            label,
+                            values: combination,
+                            coordinates: result.coordinates
+                        });
+                    }
+                } catch (error) {
+                    // Ignorer les erreurs de calcul individuelles
+                    console.warn('[FORMULA-SOLVER] Erreur pour combinaison', combination, error);
+                }
+            }
+
+            this.bruteForceResults = results;
+            this.updateState({ loading: false });
+
+            // Afficher tous les points sur la carte (uniquement ceux avec coordonnées)
+            const validResults = results.filter((r): r is { id: string; label: string; values: Record<string, number>; coordinates: any } =>
+                r.coordinates !== undefined
+            );
+            this.showAllResultsOnMap(validResults);
+
+            this.messageService.info(
+                `${results.length} résultat${results.length > 1 ? 's' : ''} calculé${results.length > 1 ? 's' : ''} avec succès !`
+            );
+
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            this.messageService.error(`Erreur brute force : ${message}`);
+            this.updateState({ loading: false, error: message });
+        }
+    }
+
+    /**
      * Exécute le brute force automatiquement depuis les champs remplis
      */
     protected async executeBruteForceFromFields(): Promise<void> {
@@ -2591,7 +2670,16 @@ export class FormulaSolverWidget extends ReactWidget {
                         this.tryAutoCalculate();
                     }}
                 />
-                
+
+                {/* Mode Brute Force */}
+                {!this.bruteForceMode && (
+                    <BruteForceComponent
+                        letters={this.extractLettersFromFormula(this.state.selectedFormula)}
+                        values={this.state.values}
+                        onBruteForceExecute={(combinations) => this.executeBruteForceFromCombinations(combinations)}
+                    />
+                )}
+
                 {/* Résultat du calcul normal */}
                 {!this.bruteForceMode && this.state.result && this.state.result.status === 'success' && (
                     <ResultDisplayComponent

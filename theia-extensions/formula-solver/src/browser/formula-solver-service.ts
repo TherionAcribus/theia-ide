@@ -107,9 +107,8 @@ export class FormulaSolverServiceImpl implements FormulaSolverService {
             north_formula: params.northFormula,
             east_formula: params.eastFormula,
             values: params.values,
-            origin: params.originLat !== undefined && params.originLon !== undefined
-                ? { latitude: params.originLat, longitude: params.originLon }
-                : undefined
+            origin_lat: params.originLat,
+            origin_lon: params.originLon
         });
         return response.data;
     }

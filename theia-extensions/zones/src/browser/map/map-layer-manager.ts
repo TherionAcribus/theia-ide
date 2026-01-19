@@ -269,7 +269,6 @@ export class MapLayerManager {
         const role = String((feature as any).get('previewRole') || '');
 
         const isRaw = role === 'candidateRaw';
-        const isClipped = role === 'candidateClipped';
 
         const strokeColor = isCircle
             ? 'rgba(255, 165, 0, 0.9)'

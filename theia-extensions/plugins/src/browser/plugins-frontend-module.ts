@@ -66,13 +66,10 @@ export default new ContainerModule(bind => {
     });
 
     // Contributions
+    // bindViewContribution already registers command and menu contributions
     bindViewContribution(bind, PluginsBrowserContribution);
-    bind(CommandContribution).toService(PluginsBrowserContribution);
-    bind(MenuContribution).toService(PluginsBrowserContribution);
     
     bindViewContribution(bind, PluginExecutorContribution);
-    bind(CommandContribution).toService(PluginExecutorContribution);
-    bind(MenuContribution).toService(PluginExecutorContribution);
     
     bind(FrontendApplicationContribution).to(PluginsFrontendApplicationContribution).inSingletonScope();
     bind(PluginToolsManager).toSelf().inSingletonScope();

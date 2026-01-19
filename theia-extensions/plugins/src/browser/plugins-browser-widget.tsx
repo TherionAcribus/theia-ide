@@ -20,7 +20,7 @@ import { PluginExecutorContribution } from './plugins-contribution';
 export class PluginsBrowserWidget extends ReactWidget {
     
     static readonly ID = 'mysterai-plugins-browser';
-    static readonly LABEL = 'Plugins';
+    static readonly LABEL = 'Plugin List';
     
     @inject(PluginsService)
     protected readonly pluginsService!: PluginsService;

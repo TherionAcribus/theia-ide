@@ -50,10 +50,8 @@ export default new ContainerModule(bind => {
         return manager;
     });
 
-    // Bind la contribution (commandes, menus, vue)
+    // Bind la contribution (bindViewContribution gère déjà commandes/menus)
     bindViewContribution(bind, AlphabetsListContribution);
     bind(FrontendApplicationContribution).toService(AlphabetsListContribution);
-    bind(CommandContribution).toService(AlphabetsListContribution);
-    bind(MenuContribution).toService(AlphabetsListContribution);
 });
 

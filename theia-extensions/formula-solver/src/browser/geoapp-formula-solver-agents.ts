@@ -8,16 +8,18 @@ import { injectable, inject } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { Agent, AgentService, LanguageModelRequirement } from '@theia/ai-core';
 
-export type FormulaSolverAiProfile = 'fast' | 'strong' | 'web';
+export type FormulaSolverAiProfile = 'local' | 'fast' | 'strong' | 'web';
 
+export const GeoAppFormulaSolverLocalAgentId = 'geoapp-formula-solver-local';
 export const GeoAppFormulaSolverFastAgentId = 'geoapp-formula-solver-fast';
 export const GeoAppFormulaSolverStrongAgentId = 'geoapp-formula-solver-strong';
 export const GeoAppFormulaSolverWebAgentId = 'geoapp-formula-solver-web';
 
 export const FormulaSolverAgentIdsByProfile: Record<FormulaSolverAiProfile, string> = {
+    local: GeoAppFormulaSolverLocalAgentId,
     fast: GeoAppFormulaSolverFastAgentId,
     strong: GeoAppFormulaSolverStrongAgentId,
-    web: GeoAppFormulaSolverWebAgentId
+    web: GeoAppFormulaSolverWebAgentId,
 };
 
 const languageModelRequirements: LanguageModelRequirement[] = [
@@ -44,8 +46,15 @@ function buildAgent(options: { id: string; name: string; description: string; ta
 const geoAppFormulaSolverFastAgent = buildAgent({
     id: GeoAppFormulaSolverFastAgentId,
     name: 'GeoApp Formula Solver (Fast)',
-    description: 'Agent interne utilisé par GeoApp pour des tâches simples et économiques (idéalement modèle local) : détection/extraction rapides.',
+    description: 'Agent interne utilisé par GeoApp pour des tâches simples et économiques (petit modèle).',
     tags: ['GeoApp', 'FormulaSolver', 'Fast']
+});
+
+const geoAppFormulaSolverLocalAgent = buildAgent({
+    id: GeoAppFormulaSolverLocalAgentId,
+    name: 'GeoApp Formula Solver (Local)',
+    description: 'Agent interne utilisé par GeoApp via un LLM local (LMStudio / Ollama). Idéal pour du traitement rapide et sans coût cloud.',
+    tags: ['GeoApp', 'FormulaSolver', 'Local']
 });
 
 const geoAppFormulaSolverStrongAgent = buildAgent({
@@ -70,6 +79,7 @@ export class GeoAppFormulaSolverAgentsContribution implements FrontendApplicatio
 
     async onStart(): Promise<void> {
         const agents = [
+            geoAppFormulaSolverLocalAgent,
             geoAppFormulaSolverFastAgent,
             geoAppFormulaSolverStrongAgent,
             geoAppFormulaSolverWebAgent

@@ -2,7 +2,7 @@
 
 ## Vue d'ensemble
 
-Le Formula Solver supporte désormais un flux **modulaire et rejouable** : l’utilisateur peut choisir, pour chaque étape (Formule → Questions → Réponses), une méthode (algorithme / IA / manuel) et un **profil LLM** (fast/strong/web), puis rejouer une étape à tout moment sans perdre le reste.
+Le Formula Solver supporte désormais un flux **modulaire et rejouable** : l’utilisateur peut choisir, pour chaque étape (Formule → Questions → Réponses), une méthode (algorithme / IA / manuel) et un **profil LLM** (local/fast/strong/web), puis rejouer une étape à tout moment sans perdre le reste.
 
 ## Architecture
 
@@ -34,6 +34,7 @@ Endpoints utilisés par GeoApp pour la recherche web (DuckDuckGo) :
 
 Agents enregistrés (configurables côté Theia AI) :
 
+- `geoapp-formula-solver-local`
 - `geoapp-formula-solver-fast`
 - `geoapp-formula-solver-strong`
 - `geoapp-formula-solver-web`
@@ -55,7 +56,7 @@ Le widget expose un panneau de configuration par étape (méthode + profil) et d
 **Fichier**: `src/browser/formula-solver-frontend-module.ts`
 
 Enregistrement de:
-- `GeoAppFormulaSolverAgentsContribution` (agents fast/strong/web)
+- `GeoAppFormulaSolverAgentsContribution` (agents local/fast/strong/web)
 - `FormulaSolverLLMService` (sélection modèle + parsing)
 - `FormulaSolverPipeline` + stratégies
 
@@ -67,7 +68,7 @@ Préférences principales:
 - `geoApp.formulaSolver.formulaDetection.defaultMethod` - `algorithm | ai | manual`
 - `geoApp.formulaSolver.questions.defaultMethod` - `none | algorithm | ai`
 - `geoApp.formulaSolver.answers.defaultMode` - `manual | ai-bulk | ai-per-question`
-- `geoApp.formulaSolver.ai.defaultProfile.*` - `fast | strong | web` (par étape)
+- `geoApp.formulaSolver.ai.defaultProfile.*` - `local | fast | strong | web` (par étape)
 - `geoApp.formulaSolver.ai.webSearchEnabled` - Autoriser recherche web
 - `geoApp.formulaSolver.ai.maxWebResults` - Nombre max de résultats web
 

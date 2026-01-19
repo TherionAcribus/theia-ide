@@ -1809,6 +1809,7 @@ export class FormulaSolverWidget extends ReactWidget {
      */
     protected renderStepConfigPanel(): React.ReactNode {
         const profileOptions: Array<{ id: FormulaSolverAiProfile; label: string }> = [
+            { id: 'local', label: 'Local (LMStudio/Ollama)' },
             { id: 'fast', label: 'Fast' },
             { id: 'strong', label: 'Strong' },
             { id: 'web', label: 'Web' }
@@ -2609,6 +2610,7 @@ export class FormulaSolverWidget extends ReactWidget {
                                                                 fontSize: '12px'
                                                             }}
                                                         >
+                                                            <option value="local">Local</option>
                                                             <option value="fast">Fast</option>
                                                             <option value="strong">Strong</option>
                                                             <option value="web">Web</option>

@@ -78,7 +78,7 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
         const valueFontSize = Math.max(10, Math.round(fontSize * 0.35));
         const valueLineHeightPx = Math.round(valueFontSize * 1.2);
 
-        const symbolStyle: React.CSSProperties = {
+        const symbolStyle = {
             width: `${baseSize * scale}px`,
             height: `${(baseSize + (shouldShowValue ? valueLineHeightPx + 6 : 0)) * scale}px`,
             display: 'flex',
@@ -94,13 +94,13 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
             transition: 'all 0.2s',
             userSelect: 'none',
             margin: '0px'
-        };
+        } as React.CSSProperties;
 
         const symbolContent = fontFamily ? (
             <span style={{
                 fontFamily: `"${fontFamily}", monospace`,
                 fontSize: `${fontSize * scale}px`
-            }}>
+            } as React.CSSProperties}>
                 {char}
             </span>
         ) : imagePath ? (
@@ -111,7 +111,7 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
                     maxWidth: '80%',
                     maxHeight: '80%',
                     objectFit: 'contain'
-                }}
+                } as React.CSSProperties}
             />
         ) : (
             <span>{char}</span>
@@ -133,18 +133,20 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
                 {shouldShowValue && (
                     <span
                         style={{
-                            marginTop: `${2 * scale}px`,
-                            fontSize: `${valueFontSize * scale}px`,
+                            marginTop: `${2 * scale}px` as unknown as React.CSSProperties['marginTop'],
+                            fontSize: `${valueFontSize * scale}px` as unknown as React.CSSProperties['fontSize'],
                             lineHeight: 1,
-                            fontFamily: 'var(--theia-ui-font-family)',
-                            color: 'var(--theia-descriptionForeground)',
-                            opacity: 0.95,
+                            fontFamily: 'var(--theia-ui-font-family)' as unknown as React.CSSProperties['fontFamily'],
+                            color: 'var(--theia-descriptionForeground)' as unknown as React.CSSProperties['color'],
+                            fontWeight: 400,
+                            textAlign: 'center',
+                            width: '100%',
+                            display: 'block',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
-                            maxWidth: '100%',
-                            padding: `0 ${4 * scale}px`
-                        }}
+                            padding: '0 2px'
+                        } as React.CSSProperties}
                         title={valueText}
                     >
                         {valueText}
@@ -152,15 +154,17 @@ export class SymbolItem extends React.Component<SymbolItemProps> {
                 )}
                 {showIndex && (
                     <div style={{
-                        position: 'absolute',
-                        bottom: '2px',
-                        right: '4px',
-                        fontSize: '10px',
-                        color: 'var(--theia-descriptionForeground)',
-                        backgroundColor: 'var(--theia-badge-background)',
-                        padding: '1px 4px',
-                        borderRadius: '2px'
-                    }}>
+                        position: 'absolute' as unknown as React.CSSProperties['position'],
+                        bottom: '2px' as unknown as React.CSSProperties['bottom'],
+                        right: '4px' as unknown as React.CSSProperties['right'],
+                        fontSize: `${Math.max(10, Math.round(fontSize * 0.3)) * scale}px` as unknown as React.CSSProperties['fontSize'],
+                        color: 'var(--theia-descriptionForeground)' as unknown as React.CSSProperties['color'],
+                        fontWeight: 'bold' as unknown as React.CSSProperties['fontWeight'],
+                        backgroundColor: 'var(--theia-editor-background)' as unknown as React.CSSProperties['backgroundColor'],
+                        padding: '1px 3px' as unknown as React.CSSProperties['padding'],
+                        borderRadius: '2px' as unknown as React.CSSProperties['borderRadius'],
+                        lineHeight: 1
+                    } as React.CSSProperties}>
                         {index + 1}
                     </div>
                 )}

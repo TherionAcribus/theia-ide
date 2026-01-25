@@ -1440,6 +1440,13 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
             }
 
             this.showBookmarkListDialog = false;
+
+            // Rafraîchir le panneau des zones pour mettre à jour les compteurs
+            const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
+            if (zonesWidget && typeof zonesWidget.refresh === 'function') {
+                await zonesWidget.refresh();
+            }
+
             await this.load();
         } catch (e) {
             console.error('Import bookmark list error', e);
@@ -1526,10 +1533,17 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
             }
 
             this.showPocketQueryDialog = false;
+
+            // Rafraîchir le panneau des zones pour mettre à jour les compteurs
+            const zonesWidget = this.widgetManager.getWidgets('zones.tree.widget')[0] as any;
+            if (zonesWidget && typeof zonesWidget.refresh === 'function') {
+                await zonesWidget.refresh();
+            }
+
             await this.load();
         } catch (e) {
             console.error('Import pocket query error', e);
-            this.messages.error('Erreur lors de l\'import de la Pocket Query');
+            this.messages.error('Erreur lors de l\'import de la pocket query');
             if (onProgress) {
                 onProgress(0, 'Erreur lors de l\'import');
             }

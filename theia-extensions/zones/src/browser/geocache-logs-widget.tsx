@@ -8,6 +8,8 @@ import * as React from 'react';
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
+import { LanguageModelRegistry, LanguageModelService, UserRequest, getTextOfResponse, getJsonOfResponse, isLanguageModelParsedResponse } from '@theia/ai-core';
+import { GeoAppLogsAnalyzerAgentId } from './geoapp-logs-analyzer-agent';
 
 /**
  * Interface représentant un log de géocache
@@ -323,11 +325,15 @@ export class GeocacheLogsWidget extends ReactWidget {
     protected totalCount = 0;
     protected isLoading = false;
     protected isRefreshing = false;
+    protected isAnalyzing = false;
+    protected analysisResult?: string;
     protected offset = 0;
     protected limit = 25;
 
     constructor(
-        @inject(MessageService) protected readonly messages: MessageService
+        @inject(MessageService) protected readonly messages: MessageService,
+        @inject(LanguageModelRegistry) protected readonly languageModelRegistry: LanguageModelRegistry,
+        @inject(LanguageModelService) protected readonly languageModelService: LanguageModelService
     ) {
         super();
         this.id = GeocacheLogsWidget.ID;
@@ -382,6 +388,7 @@ export class GeocacheLogsWidget extends ReactWidget {
         this.logs = [];
         this.offset = 0;
         this.totalCount = 0;
+        this.analysisResult = undefined;
         
         this.title.label = params.gcCode ? `Logs - ${params.gcCode}` : 'Logs';
         
@@ -472,6 +479,139 @@ export class GeocacheLogsWidget extends ReactWidget {
         }
     }
 
+    /**
+     * Récupère les détails de la géocache (pour obtenir le hint)
+     */
+    protected async fetchGeocacheDetails(): Promise<{ hint?: string; hint_raw?: string }> {
+        if (!this.geocacheId) {
+            return {};
+        }
+
+        try {
+            const url = `${this.backendBaseUrl}/api/geocaches/${this.geocacheId}`;
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            return {
+                hint: data.hint_html || data.hint_raw,
+                hint_raw: data.hint_raw
+            };
+        } catch (error) {
+            console.error('[GeocacheLogsWidget] Failed to fetch geocache details:', error);
+            return {};
+        }
+    }
+
+    /**
+     * Analyse les logs avec l'IA pour extraire des informations utiles
+     */
+    protected async analyzeLogs(): Promise<void> {
+        if (!this.geocacheId || this.isAnalyzing) {
+            return;
+        }
+
+        if (this.logs.length === 0) {
+            this.messages.warn('Aucun log à analyser');
+            return;
+        }
+
+        this.isAnalyzing = true;
+        this.analysisResult = undefined;
+        this.update();
+
+        try {
+            const languageModel = await this.languageModelRegistry.selectLanguageModel({
+                agent: GeoAppLogsAnalyzerAgentId,
+                purpose: 'chat',
+                identifier: 'default/universal'
+            });
+
+            if (!languageModel) {
+                this.messages.error('Aucun modèle IA n\'est configuré pour l\'analyse (vérifie la configuration IA de Theia)');
+                return;
+            }
+
+            // Récupérer le hint
+            const geocacheDetails = await this.fetchGeocacheDetails();
+            const hint = geocacheDetails.hint_raw || geocacheDetails.hint || '';
+
+            // Préparer les logs pour l'analyse (limiter à 50 pour éviter un contexte trop long)
+            const logsToAnalyze = this.logs.slice(0, 50).map(log => ({
+                type: log.log_type,
+                author: log.author,
+                date: log.date,
+                text: log.text,
+                is_favorite: log.is_favorite
+            }));
+
+            const prompt = `Tu es un assistant pour géocacheurs. Analyse les logs suivants et le hint (indice) d'une géocache.
+
+Ton objectif est d'extraire et de résumer les informations UTILES pour un géocacheur qui veut trouver cette cache :
+- Indices ou conseils mentionnés par les trouveurs
+- Avertissements (cache difficile d'accès, terrain dangereux, besoin d'équipement spécial, etc.)
+- Informations sur l'état de la cache (endommagée, humide, pleine, etc.)
+- Conseils pratiques (meilleur moment pour y aller, parking, discrétion, etc.)
+- Informations sur la difficulté réelle vs. la difficulté annoncée
+
+NE MENTIONNE PAS :
+- Les simples "TFTC" ou remerciements sans information
+- Les logs qui ne contiennent aucune information utile
+- Les détails personnels des géocacheurs
+
+Formate ta réponse en sections claires avec des puces. Sois concis et pertinent.
+
+HINT (indice officiel) :
+${hint || 'Aucun hint fourni'}
+
+LOGS (${logsToAnalyze.length} logs récents) :
+${JSON.stringify(logsToAnalyze, null, 2)}`;
+
+            const request: UserRequest = {
+                messages: [
+                    { actor: 'user', type: 'text', text: prompt },
+                ],
+                agentId: GeoAppLogsAnalyzerAgentId,
+                requestId: `geoapp-logs-analyzer-${Date.now()}`,
+                sessionId: `geoapp-logs-analyzer-session-${Date.now()}`,
+            };
+
+            const response = await this.languageModelService.sendRequest(languageModel, request);
+            let analysisText = '';
+            
+            if (isLanguageModelParsedResponse(response)) {
+                analysisText = JSON.stringify(response.parsed);
+            } else {
+                try {
+                    analysisText = await getTextOfResponse(response);
+                } catch {
+                    const jsonResponse = await getJsonOfResponse(response) as any;
+                    analysisText = typeof jsonResponse === 'string' ? jsonResponse : String(jsonResponse);
+                }
+            }
+
+            analysisText = (analysisText || '').toString().trim();
+
+            if (!analysisText) {
+                this.messages.warn('Analyse IA: réponse vide');
+                return;
+            }
+
+            this.analysisResult = analysisText;
+            this.messages.info('Analyse des logs terminée');
+            
+        } catch (error) {
+            console.error('[GeocacheLogsWidget] Failed to analyze logs:', error);
+            this.messages.error(`Impossible d'analyser les logs: ${error}`);
+        } finally {
+            this.isAnalyzing = false;
+            this.update();
+        }
+    }
+
     protected render(): React.ReactNode {
         const hasMore = this.logs.length < this.totalCount;
         
@@ -511,27 +651,49 @@ export class GeocacheLogsWidget extends ReactWidget {
                         )}
                     </div>
                     
-                    {/* Bouton rafraîchir */}
+                    {/* Boutons d'action */}
                     {this.geocacheId && (
-                        <button
-                            onClick={() => this.refreshLogs()}
-                            disabled={this.isRefreshing}
-                            style={{
-                                padding: '8px 16px',
-                                background: 'var(--theia-button-background)',
-                                color: 'var(--theia-button-foreground)',
-                                border: 'none',
-                                borderRadius: 4,
-                                cursor: this.isRefreshing ? 'wait' : 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8
-                            }}
-                            title="Récupérer les logs depuis Geocaching.com"
-                        >
-                            <i className={`fa ${this.isRefreshing ? 'fa-spinner fa-spin' : 'fa-sync-alt'}`} />
-                            {this.isRefreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                                onClick={() => this.analyzeLogs()}
+                                disabled={this.isAnalyzing || this.logs.length === 0}
+                                style={{
+                                    padding: '8px 16px',
+                                    background: 'var(--theia-button-background)',
+                                    color: 'var(--theia-button-foreground)',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: (this.isAnalyzing || this.logs.length === 0) ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    opacity: this.logs.length === 0 ? 0.5 : 1
+                                }}
+                                title="Analyser les logs avec l'IA pour extraire des informations utiles"
+                            >
+                                <i className={`fa ${this.isAnalyzing ? 'fa-spinner fa-spin' : 'fa-brain'}`} />
+                                {this.isAnalyzing ? 'Analyse...' : 'Analyser avec IA'}
+                            </button>
+                            <button
+                                onClick={() => this.refreshLogs()}
+                                disabled={this.isRefreshing}
+                                style={{
+                                    padding: '8px 16px',
+                                    background: 'var(--theia-button-background)',
+                                    color: 'var(--theia-button-foreground)',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: this.isRefreshing ? 'wait' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8
+                                }}
+                                title="Récupérer les logs depuis Geocaching.com"
+                            >
+                                <i className={`fa ${this.isRefreshing ? 'fa-spinner fa-spin' : 'fa-sync-alt'}`} />
+                                {this.isRefreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
+                            </button>
+                        </div>
                     )}
                 </div>
                 
@@ -551,15 +713,71 @@ export class GeocacheLogsWidget extends ReactWidget {
                         <p>Sélectionnez une géocache pour voir ses logs</p>
                     </div>
                 ) : (
-                    /* Liste des logs */
-                    <div style={{ flex: 1, overflow: 'auto' }}>
-                        <LogsList 
-                            logs={this.logs}
-                            isLoading={this.isLoading}
-                            onLoadMore={this.loadMore}
-                            hasMore={hasMore}
-                        />
-                    </div>
+                    <>
+                        {/* Résultat de l'analyse IA */}
+                        {this.analysisResult && (
+                            <div style={{
+                                background: 'var(--theia-editor-background)',
+                                border: '2px solid var(--theia-focusBorder)',
+                                borderRadius: 6,
+                                padding: 16,
+                                marginBottom: 16,
+                                flexShrink: 0
+                            }}>
+                                <div style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    marginBottom: 12
+                                }}>
+                                    <h4 style={{
+                                        margin: 0,
+                                        fontSize: 14,
+                                        fontWeight: 'bold',
+                                        color: 'var(--theia-focusBorder)'
+                                    }}>
+                                        <i className="fa fa-brain" style={{ marginRight: 8 }} />
+                                        Analyse IA des Logs
+                                    </h4>
+                                    <button
+                                        onClick={() => {
+                                            this.analysisResult = undefined;
+                                            this.update();
+                                        }}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: 'var(--theia-foreground)',
+                                            cursor: 'pointer',
+                                            padding: 4,
+                                            opacity: 0.7
+                                        }}
+                                        title="Fermer l'analyse"
+                                    >
+                                        <i className="fa fa-times" />
+                                    </button>
+                                </div>
+                                <div style={{
+                                    whiteSpace: 'pre-wrap',
+                                    fontSize: 13,
+                                    lineHeight: 1.6,
+                                    color: 'var(--theia-foreground)'
+                                }}>
+                                    {this.analysisResult}
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Liste des logs */}
+                        <div style={{ flex: 1, overflow: 'auto' }}>
+                            <LogsList 
+                                logs={this.logs}
+                                isLoading={this.isLoading}
+                                onLoadMore={this.loadMore}
+                                hasMore={hasMore}
+                            />
+                        </div>
+                    </>
                 )}
             </div>
         );

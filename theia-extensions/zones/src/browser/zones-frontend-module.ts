@@ -24,6 +24,7 @@ import { CheckerToolsManager } from './checker-tools-manager';
 import { GeoAppChatAgent } from './geoapp-chat-agent';
 import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { GeoAppTranslateDescriptionAgentContribution } from './geoapp-translate-description-agent';
+import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agent';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 
 export default new ContainerModule(bind => {
@@ -140,6 +141,9 @@ export default new ContainerModule(bind => {
 
     bind(GeoAppTranslateDescriptionAgentContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(GeoAppTranslateDescriptionAgentContribution);
+
+    bind(GeoAppLogsAnalyzerAgentContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppLogsAnalyzerAgentContribution);
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);

@@ -18,6 +18,7 @@ import { GeocacheTabsManager } from './geocache-tabs-manager';
 interface SerializedZoneGeocachesState {
     zoneId: number;
     zoneName?: string;
+    lastAccessTimestamp?: number;
 }
 
 type ImportAroundCenter =
@@ -45,6 +46,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
     protected moveSelectedDialog: { geocacheIds: number[] } | null = null;
 
     protected interactionTimerId: number | undefined;
+    private lastAccessTimestamp: number = Date.now();
 
     protected readonly handleGeocacheLogSubmitted = (event: CustomEvent<{ geocacheId: number; found?: boolean }>): void => {
         const detail = event?.detail;
@@ -254,9 +256,11 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         if (!this.zoneId) {
             return undefined;
         }
+        this.lastAccessTimestamp = Date.now();
         const state: SerializedZoneGeocachesState = {
             zoneId: this.zoneId,
-            zoneName: this.zoneName
+            zoneName: this.zoneName,
+            lastAccessTimestamp: this.lastAccessTimestamp
         };
         return state;
     }
@@ -265,6 +269,9 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         const state = oldState as Partial<SerializedZoneGeocachesState> | undefined;
         if (!state || typeof state.zoneId !== 'number') {
             return;
+        }
+        if (state.lastAccessTimestamp && typeof state.lastAccessTimestamp === 'number') {
+            this.lastAccessTimestamp = state.lastAccessTimestamp;
         }
         this.setZone({ zoneId: state.zoneId, zoneName: state.zoneName });
     }
@@ -663,6 +670,7 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         console.log('[ZoneGeocachesWidget] setZone', context);
         this.zoneId = context.zoneId;
         this.zoneName = context.zoneName;
+        this.lastAccessTimestamp = Date.now();
         this.title.label = `Géocaches - ${this.zoneName ?? this.zoneId}`;
         this.update();
         this.load();

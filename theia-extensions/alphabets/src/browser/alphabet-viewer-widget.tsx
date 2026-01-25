@@ -21,6 +21,7 @@ const PREF_AVAILABLE_SYMBOLS_SHOW_VALUE = 'geoApp.alphabets.availableSymbols.sho
 
 interface SerializedAlphabetViewerState {
     alphabetId?: string;
+    lastAccessTimestamp?: number;
 }
 
 @injectable()
@@ -95,6 +96,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
     private maxHistorySize: number = 50;
 
     private interactionTimerId: number | undefined;
+    private lastAccessTimestamp: number = Date.now();
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -264,8 +266,10 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
         if (!this.alphabetId) {
             return undefined;
         }
+        this.lastAccessTimestamp = Date.now();
         const state: SerializedAlphabetViewerState = {
-            alphabetId: this.alphabetId
+            alphabetId: this.alphabetId,
+            lastAccessTimestamp: this.lastAccessTimestamp
         };
         return state;
     }
@@ -274,6 +278,9 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
         const state = oldState as Partial<SerializedAlphabetViewerState> | undefined;
         if (!state || typeof state.alphabetId !== 'string') {
             return;
+        }
+        if (state.lastAccessTimestamp && typeof state.lastAccessTimestamp === 'number') {
+            this.lastAccessTimestamp = state.lastAccessTimestamp;
         }
         this.setAlphabet(state.alphabetId);
     }
@@ -343,6 +350,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
     public setAlphabet(alphabetId: string): void {
         console.log('AlphabetViewerWidget: setAlphabet called with:', alphabetId);
         this.alphabetId = alphabetId;
+        this.lastAccessTimestamp = Date.now();
         this.alphabet = null;
         this.enteredChars = [];
         this.history = [];

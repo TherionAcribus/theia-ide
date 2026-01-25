@@ -57,6 +57,7 @@ interface SerializedPluginExecutorState {
     pluginName?: string;
     gcCode?: string;
     autoExecute?: boolean;
+    lastAccessTimestamp?: number;
 }
 
 interface AddWaypointEventDetail {
@@ -237,7 +238,8 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
     protected readonly preferenceService!: PreferenceService;
 
     private config: PluginExecutorConfig | null = null;
-    private interactionTimerId: number | undefined;
+    protected interactionTimerId: number | undefined;
+    private lastAccessTimestamp: number = Date.now();
 
     private readonly handleContentClick = (): void => {
         this.emitInteraction('click');
@@ -338,10 +340,13 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
             return undefined;
         }
 
+        this.lastAccessTimestamp = Date.now();
+
         if (this.config.mode === 'plugin') {
             const state: SerializedPluginExecutorState = {
                 mode: 'plugin',
-                pluginName: this.config.pluginName
+                pluginName: this.config.pluginName,
+                lastAccessTimestamp: this.lastAccessTimestamp
             };
             return state;
         }
@@ -351,7 +356,8 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
                 mode: 'geocache',
                 gcCode: this.config.geocacheContext.gcCode,
                 pluginName: this.config.pluginName,
-                autoExecute: this.config.autoExecute === true
+                autoExecute: this.config.autoExecute === true,
+                lastAccessTimestamp: this.lastAccessTimestamp
             };
             return state;
         }
@@ -363,6 +369,10 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
         const state = oldState as Partial<SerializedPluginExecutorState> | undefined;
         if (!state || typeof state !== 'object' || !state.mode) {
             return;
+        }
+
+        if (state.lastAccessTimestamp && typeof state.lastAccessTimestamp === 'number') {
+            this.lastAccessTimestamp = state.lastAccessTimestamp;
         }
 
         if (state.mode === 'plugin' && typeof state.pluginName === 'string') {
@@ -386,6 +396,7 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
      * Utilisé quand l'utilisateur clique sur un plugin dans le panel
      */
     public initializePluginMode(pluginName: string): void {
+        this.lastAccessTimestamp = Date.now();
         this.config = {
             mode: 'plugin',
             pluginName,
@@ -402,15 +413,14 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
      * Initialise le widget en MODE GEOCACHE
      * Utilisé quand l'utilisateur clique "Analyser" depuis une géocache
      */
-    public initializeGeocacheMode(context: GeocacheContext, pluginName?: string, autoExecute: boolean = false): void {
-        console.log('[PluginExecutor] initializeGeocacheMode called with context:', context, 'pluginName:', pluginName, 'autoExecute:', autoExecute);
-        console.log('[PluginExecutor] Context description length:', context.description?.length);
+    public initializeGeocacheMode(context: GeocacheContext, pluginName?: string, autoExecute?: boolean): void {
+        this.lastAccessTimestamp = Date.now();
         this.config = {
             mode: 'geocache',
             geocacheContext: context,
-            pluginName: pluginName, // Plugin pré-sélectionné optionnel
+            pluginName,
             allowPluginChaining: true,  // Permet d'enchaîner les plugins
-            autoExecute: autoExecute
+            autoExecute: autoExecute === true
         };
         this.title.label = `Analyse: ${context.gcCode}`;
         this.title.iconClass = 'fa fa-search';

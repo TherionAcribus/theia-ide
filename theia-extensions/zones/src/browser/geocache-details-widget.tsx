@@ -63,6 +63,7 @@ interface GeocacheChatMetadata {
 
 interface SerializedGeocacheDetailsState {
     geocacheId?: number;
+    lastAccessTimestamp?: number;
 }
 
 /**
@@ -1171,6 +1172,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected descriptionVariantGeocacheId: number | undefined;
     protected isTranslatingDescription = false;
     protected isTranslatingAllContent = false;
+    protected lastAccessTimestamp: number = Date.now();
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -1586,6 +1588,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
+        this.lastAccessTimestamp = Date.now();
         this.notesCount = undefined;
         if (context.name) {
             this.title.label = `Géocache - ${context.name}`;
@@ -1849,8 +1852,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (!this.geocacheId) {
             return undefined;
         }
+        this.lastAccessTimestamp = Date.now();
         const state: SerializedGeocacheDetailsState = {
-            geocacheId: this.geocacheId
+            geocacheId: this.geocacheId,
+            lastAccessTimestamp: this.lastAccessTimestamp
         };
         return state;
     }
@@ -1859,6 +1864,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         const state = oldState as Partial<SerializedGeocacheDetailsState> | undefined;
         if (!state || typeof state.geocacheId !== 'number') {
             return;
+        }
+        if (state.lastAccessTimestamp && typeof state.lastAccessTimestamp === 'number') {
+            this.lastAccessTimestamp = state.lastAccessTimestamp;
         }
         this.setGeocache({ geocacheId: state.geocacheId });
     }

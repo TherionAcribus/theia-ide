@@ -8,6 +8,8 @@ import { ProgressService } from '@theia/core/lib/common/progress-service';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 import { GeocachesTable, Geocache } from './geocaches-table';
 import { ImportGpxDialog } from './import-gpx-dialog';
+import { ImportBookmarkListDialog } from './import-bookmark-list-dialog';
+import { ImportPocketQueryDialog } from './import-pocket-query-dialog';
 import { MoveGeocacheDialog } from './move-geocache-dialog';
 import { MapService } from './map/map-service';
 import { MapWidgetFactory } from './map/map-widget-factory';
@@ -36,6 +38,8 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
     protected loading = false;
     protected zones: Array<{ id: number; name: string }> = [];
     protected showImportDialog = false;
+    protected showBookmarkListDialog = false;
+    protected showPocketQueryDialog = false;
     protected isImporting = false;
     protected copySelectedDialog: { geocacheIds: number[] } | null = null;
     protected moveSelectedDialog: { geocacheIds: number[] } | null = null;
@@ -1362,6 +1366,178 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         }
     }
 
+    protected async handleImportBookmarkList(bookmarkCode: string, onProgress?: (percentage: number, message: string) => void): Promise<void> {
+        if (!this.zoneId) {
+            this.messages.error('Zone non définie');
+            return;
+        }
+
+        this.isImporting = true;
+        this.update();
+
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/import-bookmark-list`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bookmark_code: bookmarkCode,
+                    zone_id: this.zoneId
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+
+            if (reader) {
+                let done = false;
+                let lastMessage = '';
+
+                while (!done) {
+                    const { value, done: readerDone } = await reader.read();
+                    done = readerDone;
+
+                    if (value) {
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n').filter(line => line.trim());
+
+                        for (const line of lines) {
+                            try {
+                                const data = JSON.parse(line);
+
+                                if (data.error) {
+                                    this.messages.error(data.message || 'Erreur lors de l\'import');
+                                    if (onProgress) {
+                                        onProgress(0, 'Erreur lors de l\'import');
+                                    }
+                                    continue;
+                                }
+
+                                if (data.progress !== undefined) {
+                                    if (onProgress) {
+                                        onProgress(data.progress, data.message || '');
+                                    }
+                                }
+
+                                if (data.final_summary) {
+                                    lastMessage = data.message;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing progress data:', e);
+                            }
+                        }
+                    }
+                }
+
+                if (lastMessage) {
+                    this.messages.info(lastMessage);
+                } else {
+                    this.messages.info('Import terminé');
+                }
+            }
+
+            this.showBookmarkListDialog = false;
+            await this.load();
+        } catch (e) {
+            console.error('Import bookmark list error', e);
+            this.messages.error('Erreur lors de l\'import de la liste de favoris');
+            if (onProgress) {
+                onProgress(0, 'Erreur lors de l\'import');
+            }
+        } finally {
+            this.isImporting = false;
+        }
+    }
+
+    protected async handleImportPocketQuery(pqCode: string, onProgress?: (percentage: number, message: string) => void): Promise<void> {
+        if (!this.zoneId) {
+            this.messages.error('Zone non définie');
+            return;
+        }
+
+        this.isImporting = true;
+        this.update();
+
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/geocaches/import-pocket-query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pq_code: pqCode,
+                    zone_id: this.zoneId
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+
+            if (reader) {
+                let done = false;
+                let lastMessage = '';
+
+                while (!done) {
+                    const { value, done: readerDone } = await reader.read();
+                    done = readerDone;
+
+                    if (value) {
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n').filter(line => line.trim());
+
+                        for (const line of lines) {
+                            try {
+                                const data = JSON.parse(line);
+
+                                if (data.error) {
+                                    this.messages.error(data.message || 'Erreur lors de l\'import');
+                                    if (onProgress) {
+                                        onProgress(0, 'Erreur lors de l\'import');
+                                    }
+                                    continue;
+                                }
+
+                                if (data.progress !== undefined) {
+                                    if (onProgress) {
+                                        onProgress(data.progress, data.message || '');
+                                    }
+                                }
+
+                                if (data.final_summary) {
+                                    lastMessage = data.message;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing progress data:', e);
+                            }
+                        }
+                    }
+                }
+
+                if (lastMessage) {
+                    this.messages.info(lastMessage);
+                } else {
+                    this.messages.info('Import terminé');
+                }
+            }
+
+            this.showPocketQueryDialog = false;
+            await this.load();
+        } catch (e) {
+            console.error('Import pocket query error', e);
+            this.messages.error('Erreur lors de l\'import de la Pocket Query');
+            if (onProgress) {
+                onProgress(0, 'Erreur lors de l\'import');
+            }
+        } finally {
+            this.isImporting = false;
+        }
+    }
+
     /**
      * Ouvre une carte centrée sur une géocache spécifique.
      * Méthode publique utilisée par les autres extensions.
@@ -1510,6 +1686,40 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                         <button
                             className='theia-button secondary'
                             onClick={() => {
+                                this.showBookmarkListDialog = true;
+                                this.update();
+                            }}
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 4,
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)'
+                            }}
+                        >
+                            <span>⭐</span>
+                            <span>Importer Liste</span>
+                        </button>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => {
+                                this.showPocketQueryDialog = true;
+                                this.update();
+                            }}
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 4,
+                                backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                color: 'var(--theia-button-secondaryForeground)'
+                            }}
+                        >
+                            <span>💎</span>
+                            <span>Importer PQ</span>
+                        </button>
+                        <button
+                            className='theia-button secondary'
+                            onClick={() => {
                                 this.startImportAroundWizard();
                             }}
                         >
@@ -1565,6 +1775,32 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                         onImport={(file, updateExisting, onProgress) => this.handleImportGpx(file, updateExisting, onProgress)}
                         onCancel={() => {
                             this.showImportDialog = false;
+                            this.update();
+                        }}
+                        isImporting={this.isImporting}
+                    />
+                )}
+
+                {/* Import Bookmark List Dialog */}
+                {this.showBookmarkListDialog && this.zoneId && (
+                    <ImportBookmarkListDialog
+                        zoneId={this.zoneId}
+                        onImport={(bookmarkCode, onProgress) => this.handleImportBookmarkList(bookmarkCode, onProgress)}
+                        onCancel={() => {
+                            this.showBookmarkListDialog = false;
+                            this.update();
+                        }}
+                        isImporting={this.isImporting}
+                    />
+                )}
+
+                {/* Import Pocket Query Dialog */}
+                {this.showPocketQueryDialog && this.zoneId && (
+                    <ImportPocketQueryDialog
+                        zoneId={this.zoneId}
+                        onImport={(pqCode, onProgress) => this.handleImportPocketQuery(pqCode, onProgress)}
+                        onCancel={() => {
+                            this.showPocketQueryDialog = false;
                             this.update();
                         }}
                         isImporting={this.isImporting}

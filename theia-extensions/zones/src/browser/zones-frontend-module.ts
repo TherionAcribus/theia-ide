@@ -1,6 +1,6 @@
 import { ContainerModule } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution, WidgetFactory } from '@theia/core/lib/browser';
-import { CommandContribution } from '@theia/core/lib/common';
+import { CommandContribution, MenuContribution } from '@theia/core/lib/common';
 import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZonesFrontendContribution } from './zones-frontend-contribution';
 import { ZonesCommandContribution } from './zones-command-contribution';
@@ -26,6 +26,8 @@ import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { GeoAppTranslateDescriptionAgentContribution } from './geoapp-translate-description-agent';
 import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agent';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
+import { GeocachingAuthWidget } from './geocaching-auth-widget';
+import { ZonesMenuContribution } from './zones-menu-contribution';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -129,6 +131,10 @@ export default new ContainerModule(bind => {
     bind(CommandContribution).toService(ZonesCommandContribution);
     bind(FrontendApplicationContribution).toService(ZonesCommandContribution);
 
+    // Contribution pour les menus
+    bind(ZonesMenuContribution).toSelf().inSingletonScope();
+    bind(MenuContribution).toService(ZonesMenuContribution);
+
     // Batch Map Integration pour écouter les événements du plugin batch
     bind(BatchMapIntegration).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(BatchMapIntegration);
@@ -147,4 +153,11 @@ export default new ContainerModule(bind => {
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);
+
+    // Widget d'authentification Geocaching.com
+    bind(GeocachingAuthWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: GeocachingAuthWidget.ID,
+        createWidget: () => ctx.container.get(GeocachingAuthWidget)
+    })).inSingletonScope();
 });

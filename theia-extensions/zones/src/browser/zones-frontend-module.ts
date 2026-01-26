@@ -28,6 +28,7 @@ import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agen
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
 import { ZonesMenuContribution } from './zones-menu-contribution';
+import { GeoAppSidebarContribution } from './geoapp-sidebar-contribution';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -134,6 +135,11 @@ export default new ContainerModule(bind => {
     // Contribution pour les menus
     bind(ZonesMenuContribution).toSelf().inSingletonScope();
     bind(MenuContribution).toService(ZonesMenuContribution);
+
+    // Contribution pour la sidebar (icônes en bas de la barre latérale)
+    bind(GeoAppSidebarContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppSidebarContribution);
+    bind(MenuContribution).toService(GeoAppSidebarContribution);
 
     // Batch Map Integration pour écouter les événements du plugin batch
     bind(BatchMapIntegration).toSelf().inSingletonScope();

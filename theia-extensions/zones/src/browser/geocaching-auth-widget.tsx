@@ -64,6 +64,20 @@ export class GeocachingAuthWidget extends ReactWidget {
         return this.preferenceService.get<string>('geoApp.backend.apiBaseUrl', 'http://localhost:8000');
     }
 
+    protected dispatchAuthChangeEvent(): void {
+        // Émettre un événement personnalisé pour notifier les autres composants
+        const event = new CustomEvent('geoapp-auth-changed', {
+            detail: {
+                status: this.authState?.status,
+                isConnected: this.authState?.status === 'logged_in',
+                user: this.authState?.user
+            },
+            bubbles: true,
+            composed: true
+        });
+        window.dispatchEvent(event);
+    }
+
     protected async fetchAuthStatus(): Promise<void> {
         try {
             const baseUrl = this.getApiBaseUrl();
@@ -119,6 +133,8 @@ export class GeocachingAuthWidget extends ReactWidget {
                 this.authState = result;
                 this.password = ''; // Clear password for security
                 this.error = null;
+                // Émettre un événement pour notifier le changement d'état
+                this.dispatchAuthChangeEvent();
             } else {
                 this.error = result.error_message || 'Échec de la connexion';
                 this.authState = result;
@@ -153,6 +169,8 @@ export class GeocachingAuthWidget extends ReactWidget {
             if (result.success) {
                 this.authState = result;
                 this.error = null;
+                // Émettre un événement pour notifier le changement d'état
+                this.dispatchAuthChangeEvent();
             } else {
                 this.error = result.error_message || 'Échec de la connexion avec les cookies du navigateur';
                 this.authState = result;
@@ -181,6 +199,8 @@ export class GeocachingAuthWidget extends ReactWidget {
             this.authState = result;
             this.username = '';
             this.password = '';
+            // Émettre un événement pour notifier le changement d'état
+            this.dispatchAuthChangeEvent();
         } catch (err) {
             this.error = 'Erreur lors de la déconnexion';
             console.error('Logout failed:', err);

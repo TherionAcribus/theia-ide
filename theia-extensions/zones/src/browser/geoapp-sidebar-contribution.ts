@@ -29,7 +29,24 @@ export class GeoAppSidebarContribution implements FrontendApplicationContributio
     @postConstruct()
     protected init(): void {
         this.checkAuthStatus();
+        // Écouter les événements de changement d'authentification
+        window.addEventListener('geoapp-auth-changed', this.handleAuthChange.bind(this));
+        // Vérifier périodiquement aussi (backup)
         setInterval(() => this.checkAuthStatus(), 60000);
+    }
+
+    protected handleAuthChange(event: Event): void {
+        const customEvent = event as CustomEvent;
+        const { isConnected, user } = customEvent.detail;
+        
+        const wasConnected = this.isConnected;
+        this.isConnected = isConnected;
+        this.userAvatar = user?.avatar_url;
+        
+        // Mettre à jour l'icône immédiatement si l'état a changé
+        if (wasConnected !== this.isConnected) {
+            this.updateAuthIcon();
+        }
     }
 
     registerMenus(menus: MenuModelRegistry): void {
@@ -49,20 +66,22 @@ export class GeoAppSidebarContribution implements FrontendApplicationContributio
     }
 
     async onStart(app: FrontendApplication): Promise<void> {
-        await app.started;
-        
-        this.findSidebarBottomMenu();
-        
-        if (this.sidebarBottomMenu) {
-            this.addGeoAppMenus();
-        } else {
-            setTimeout(() => {
-                this.findSidebarBottomMenu();
-                if (this.sidebarBottomMenu) {
-                    this.addGeoAppMenus();
-                }
-            }, 1000);
-        }
+        // Attendre un peu que l'application soit initialisée
+        setTimeout(() => {
+            this.findSidebarBottomMenu();
+            
+            if (this.sidebarBottomMenu) {
+                this.addGeoAppMenus();
+            } else {
+                // Réessayer après un délai supplémentaire
+                setTimeout(() => {
+                    this.findSidebarBottomMenu();
+                    if (this.sidebarBottomMenu) {
+                        this.addGeoAppMenus();
+                    }
+                }, 2000);
+            }
+        }, 500);
     }
 
     protected findSidebarBottomMenu(): void {
@@ -83,7 +102,7 @@ export class GeoAppSidebarContribution implements FrontendApplicationContributio
 
         const preferencesMenu: SidebarMenu = {
             id: 'geoapp-preferences-menu',
-            iconClass: 'codicon codicon-settings-gear',
+            iconClass: 'fa fa-sliders',
             title: 'Préférences GeoApp',
             menuPath: GEOAPP_PREFERENCES_MENU,
             order: 0

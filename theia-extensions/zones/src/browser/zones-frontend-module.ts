@@ -29,13 +29,8 @@ import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
 import { ZonesMenuContribution } from './zones-menu-contribution';
 import { GeoAppSidebarContribution } from './geoapp-sidebar-contribution';
-import { LoadingStatusContribution } from './loading-status-contribution';
 
 export default new ContainerModule(bind => {
-    // Contribution pour afficher le statut de chargement (doit être enregistrée en premier)
-    bind(LoadingStatusContribution).toSelf().inSingletonScope();
-    bind(FrontendApplicationContribution).toService(LoadingStatusContribution);
-
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ZonesTreeWidget.ID,

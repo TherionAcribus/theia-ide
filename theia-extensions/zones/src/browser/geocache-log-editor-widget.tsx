@@ -32,6 +32,7 @@ interface GeocacheListItem {
     id: number;
     gc_code: string;
     name: string;
+    owner?: string;
     favorites_count?: number;
     logs_count?: number;
     placed_at?: string | null;
@@ -48,6 +49,32 @@ interface LogHistoryEntry {
     logType: LogTypeValue;
     perCacheLogType: Record<number, LogTypeValue>;
     perCacheFavorite: Record<number, boolean>;
+}
+
+interface LogTextPattern {
+    id: string;
+    name: string;
+    content: string;
+    isBuiltin: boolean;
+}
+
+interface PatternSuggestion {
+    id: string;
+    label: string;
+    description: string;
+    insertText: string;
+}
+
+function findPatternTokenStart(beforeCaret: string): number | null {
+    const idx = beforeCaret.lastIndexOf('@');
+    if (idx === -1) {
+        return null;
+    }
+    const prev = beforeCaret[idx - 1];
+    if (idx > 0 && prev && !/\s/.test(prev)) {
+        return null;
+    }
+    return idx;
 }
 
 const GeocacheLogEditorGeocachesTable: React.FC<{
@@ -401,6 +428,21 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
     protected totalFavoritePoints: number = 0;
     protected isFetchingFavoritePoints = false;
+    protected userFindsCount: number = 0;
+
+    protected readonly logPatternsStorageKey = 'geoApp.logs.patterns.v1';
+    protected customPatterns: LogTextPattern[] = [];
+    protected isLoadingPatterns = false;
+    protected showPatternManager = false;
+    protected editingPattern: LogTextPattern | null = null;
+    protected patternNameInput = '';
+    protected patternContentInput = '';
+
+    protected patternAutocompleteOpen = false;
+    protected patternAutocompleteSuggestions: PatternSuggestion[] = [];
+    protected patternAutocompleteActiveIndex = 0;
+    protected patternAutocompleteReplaceRange: { start: number; end: number } | null = null;
+    protected patternAutocompleteTargetGeocacheId: number | null = null;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -949,6 +991,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         void this.loadGeocaches();
         void this.refreshLogHistory();
         void this.fetchFavoritePoints();
+        void this.loadPatterns();
         this.update();
     }
 
@@ -1229,6 +1272,12 @@ export class GeocacheLogEditorWidget extends ReactWidget {
             } else {
                 this.totalFavoritePoints = 0;
             }
+            const findsCount = authState?.user?.finds_count;
+            if (typeof findsCount === 'number') {
+                this.userFindsCount = findsCount;
+            } else {
+                this.userFindsCount = 0;
+            }
         } catch (e) {
             console.error('[GeocacheLogEditorWidget] fetchFavoritePoints error', e);
             this.totalFavoritePoints = 0;
@@ -1257,6 +1306,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     id: data.id as number,
                     gc_code: (data.gc_code || '').toString(),
                     name: (data.name || '').toString(),
+                    owner: (data.owner || '').toString() || undefined,
                     favorites_count: typeof data.favorites_count === 'number' ? (data.favorites_count as number) : undefined,
                     logs_count: typeof data.logs_count === 'number' ? (data.logs_count as number) : undefined,
                     placed_at: (data.placed_at ?? null) as string | null,
@@ -1315,6 +1365,254 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         
         this.perCacheFavorite = { ...this.perCacheFavorite, [geocacheId]: nextValue };
         this.update();
+    }
+
+    protected getBuiltinPatterns(): LogTextPattern[] {
+        return [
+            { id: 'builtin-date', name: 'date', content: '', isBuiltin: true },
+            { id: 'builtin-cache_count', name: 'cache_count', content: '', isBuiltin: true },
+            { id: 'builtin-cache_name', name: 'cache_name', content: '', isBuiltin: true },
+            { id: 'builtin-cache_owner', name: 'cache_owner', content: '', isBuiltin: true },
+            { id: 'builtin-gc_code', name: 'gc_code', content: '', isBuiltin: true },
+        ];
+    }
+
+    protected getAllPatterns(): LogTextPattern[] {
+        return [...this.getBuiltinPatterns(), ...this.customPatterns];
+    }
+
+    protected async loadPatterns(): Promise<void> {
+        this.isLoadingPatterns = true;
+        this.update();
+
+        try {
+            let stored = await this.storageService.getData<LogTextPattern[]>(this.logPatternsStorageKey, []);
+            if (!Array.isArray(stored)) {
+                stored = [];
+            }
+            this.customPatterns = stored.filter(p => p && typeof p === 'object' && typeof p.id === 'string' && typeof p.name === 'string');
+        } catch (e) {
+            console.error('[GeocacheLogEditorWidget] loadPatterns error', e);
+            this.customPatterns = [];
+        } finally {
+            this.isLoadingPatterns = false;
+            this.update();
+        }
+    }
+
+    protected async savePatterns(): Promise<void> {
+        try {
+            await this.storageService.setData(this.logPatternsStorageKey, this.customPatterns);
+        } catch (e) {
+            console.error('[GeocacheLogEditorWidget] savePatterns error', e);
+        }
+    }
+
+    protected addPattern(name: string, content: string): void {
+        const trimmedName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        if (!trimmedName) {
+            this.messages.warn('Le nom du pattern est invalide');
+            return;
+        }
+        const existing = this.getAllPatterns().find(p => p.name === trimmedName);
+        if (existing) {
+            this.messages.warn(`Le pattern "@${trimmedName}" existe déjà`);
+            return;
+        }
+        const newPattern: LogTextPattern = {
+            id: this.generateId(),
+            name: trimmedName,
+            content: content.trim(),
+            isBuiltin: false,
+        };
+        this.customPatterns = [...this.customPatterns, newPattern];
+        void this.savePatterns();
+        this.patternNameInput = '';
+        this.patternContentInput = '';
+        this.update();
+    }
+
+    protected updatePattern(patternId: string, name: string, content: string): void {
+        const trimmedName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        if (!trimmedName) {
+            this.messages.warn('Le nom du pattern est invalide');
+            return;
+        }
+        const existing = this.getAllPatterns().find(p => p.name === trimmedName && p.id !== patternId);
+        if (existing) {
+            this.messages.warn(`Le pattern "@${trimmedName}" existe déjà`);
+            return;
+        }
+        this.customPatterns = this.customPatterns.map(p =>
+            p.id === patternId ? { ...p, name: trimmedName, content: content.trim() } : p
+        );
+        void this.savePatterns();
+        this.editingPattern = null;
+        this.patternNameInput = '';
+        this.patternContentInput = '';
+        this.update();
+    }
+
+    protected deletePattern(patternId: string): void {
+        this.customPatterns = this.customPatterns.filter(p => p.id !== patternId);
+        void this.savePatterns();
+        this.update();
+    }
+
+    protected getCacheCountForIndex(geocacheIndex: number): number {
+        const foundCountBefore = this.geocaches.slice(0, geocacheIndex).filter(gc => {
+            const logType = this.perCacheLogType[gc.id] ?? this.logType;
+            return logType === 'found';
+        }).length;
+        return this.userFindsCount + foundCountBefore + 1;
+    }
+
+    protected resolvePatternValue(patternName: string, geocacheId: number | null): string {
+        const geocacheIndex = geocacheId !== null ? this.geocaches.findIndex(gc => gc.id === geocacheId) : -1;
+        const geocache = geocacheIndex >= 0 ? this.geocaches[geocacheIndex] : null;
+
+        switch (patternName) {
+            case 'date': {
+                const d = new Date(this.logDate);
+                return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            }
+            case 'cache_count':
+                if (geocacheIndex >= 0) {
+                    return String(this.getCacheCountForIndex(geocacheIndex));
+                }
+                return String(this.userFindsCount + 1);
+            case 'cache_name':
+                return geocache?.name ?? '[cache_name]';
+            case 'cache_owner':
+                return geocache?.owner ?? '[cache_owner]';
+            case 'gc_code':
+                return geocache?.gc_code ?? '[gc_code]';
+            default: {
+                const custom = this.customPatterns.find(p => p.name === patternName);
+                return custom?.content ?? `@${patternName}`;
+            }
+        }
+    }
+
+    protected refreshPatternAutocomplete(value: string, textArea: HTMLTextAreaElement, geocacheId: number | null): void {
+        const caret = textArea.selectionStart ?? value.length;
+        const before = value.slice(0, caret);
+        const tokenStart = findPatternTokenStart(before);
+
+        if (tokenStart === null) {
+            this.patternAutocompleteOpen = false;
+            this.update();
+            return;
+        }
+
+        const fragment = before.slice(tokenStart + 1);
+        if (fragment.includes(' ') || fragment.includes('\n')) {
+            this.patternAutocompleteOpen = false;
+            this.update();
+            return;
+        }
+
+        const prefix = fragment.toLowerCase();
+        const suggestions: PatternSuggestion[] = [];
+
+        for (const pattern of this.getAllPatterns()) {
+            if (!prefix || pattern.name.startsWith(prefix) || pattern.name.includes(prefix)) {
+                const resolvedValue = this.resolvePatternValue(pattern.name, geocacheId);
+                suggestions.push({
+                    id: pattern.id,
+                    label: `@${pattern.name}`,
+                    description: pattern.isBuiltin ? `→ ${resolvedValue}` : pattern.content.slice(0, 50),
+                    insertText: resolvedValue,
+                });
+            }
+        }
+
+        if (suggestions.length === 0) {
+            this.patternAutocompleteOpen = false;
+            this.update();
+            return;
+        }
+
+        this.patternAutocompleteReplaceRange = { start: tokenStart, end: caret };
+        this.patternAutocompleteSuggestions = suggestions;
+        this.patternAutocompleteActiveIndex = 0;
+        this.patternAutocompleteTargetGeocacheId = geocacheId;
+        this.patternAutocompleteOpen = true;
+        this.update();
+    }
+
+    protected applyPatternSuggestion(suggestion: PatternSuggestion): void {
+        const range = this.patternAutocompleteReplaceRange;
+        if (!range) {
+            return;
+        }
+
+        const geocacheId = this.patternAutocompleteTargetGeocacheId;
+
+        if (geocacheId === null) {
+            const current = this.globalText;
+            const next = current.slice(0, range.start) + suggestion.insertText + current.slice(range.end);
+            this.globalText = next;
+            const newPos = range.start + suggestion.insertText.length;
+            this.patternAutocompleteOpen = false;
+            this.update();
+            requestAnimationFrame(() => {
+                if (this.globalTextArea) {
+                    this.globalTextArea.focus();
+                    this.globalTextArea.setSelectionRange(newPos, newPos);
+                }
+            });
+        } else {
+            const current = this.perCacheText[geocacheId] ?? '';
+            const next = current.slice(0, range.start) + suggestion.insertText + current.slice(range.end);
+            this.perCacheText = { ...this.perCacheText, [geocacheId]: next };
+            const newPos = range.start + suggestion.insertText.length;
+            this.patternAutocompleteOpen = false;
+            this.update();
+            requestAnimationFrame(() => {
+                const textArea = this.perCacheTextAreas[geocacheId];
+                if (textArea) {
+                    textArea.focus();
+                    textArea.setSelectionRange(newPos, newPos);
+                }
+            });
+        }
+    }
+
+    protected handleTextAreaKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>, geocacheId: number | null): void {
+        if (!this.patternAutocompleteOpen) {
+            return;
+        }
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            this.patternAutocompleteActiveIndex = Math.min(
+                this.patternAutocompleteActiveIndex + 1,
+                this.patternAutocompleteSuggestions.length - 1
+            );
+            this.update();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            this.patternAutocompleteActiveIndex = Math.max(this.patternAutocompleteActiveIndex - 1, 0);
+            this.update();
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            const suggestion = this.patternAutocompleteSuggestions[this.patternAutocompleteActiveIndex];
+            if (suggestion) {
+                e.preventDefault();
+                this.applyPatternSuggestion(suggestion);
+            }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.patternAutocompleteOpen = false;
+            this.update();
+        }
+    }
+
+    protected handleTextAreaBlur(): void {
+        window.setTimeout(() => {
+            this.patternAutocompleteOpen = false;
+            this.update();
+        }, 150);
     }
 
     protected setGlobalLogType(nextValue: LogTypeValue): void {
@@ -1686,8 +1984,132 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         <div style={{ opacity: 0.85 }}>
                             <strong>PF restants:</strong> <span style={{ color: this.getRemainingFavoritePoints() === 0 ? 'var(--theia-errorForeground)' : 'inherit' }}>{this.getRemainingFavoritePoints()}</span>
                         </div>
+                        <div style={{ opacity: 0.85 }}>
+                            <strong>Trouvailles:</strong> {this.userFindsCount}
+                        </div>
                     </div>
                 </div>
+
+                <details style={{ marginBottom: 8 }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+                        📝 Patterns de texte ({this.getAllPatterns().length}) - Tapez @ dans le texte pour les utiliser
+                    </summary>
+                    <div style={{ marginTop: 8, padding: 10, background: 'var(--theia-editor-background)', border: '1px solid var(--theia-panel-border)', borderRadius: 6 }}>
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Patterns intégrés</div>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11 }}>
+                                {this.getBuiltinPatterns().map(p => (
+                                    <span key={p.id} style={{ padding: '2px 6px', background: 'var(--theia-badge-background)', borderRadius: 3 }}>
+                                        @{p.name} → {this.resolvePatternValue(p.name, this.geocaches[0]?.id ?? null)}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Patterns personnalisés</div>
+                            {this.customPatterns.length === 0 && (
+                                <div style={{ fontSize: 11, opacity: 0.7 }}>Aucun pattern personnalisé</div>
+                            )}
+                            {this.customPatterns.length > 0 && (
+                                <div style={{ display: 'grid', gap: 6 }}>
+                                    {this.customPatterns.map(p => (
+                                        <div key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                                            <span style={{ padding: '2px 6px', background: 'var(--theia-badge-background)', borderRadius: 3, fontWeight: 600 }}>
+                                                @{p.name}
+                                            </span>
+                                            <span style={{ opacity: 0.8, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {p.content}
+                                            </span>
+                                            <button
+                                                className='theia-button secondary'
+                                                style={{ fontSize: 10, padding: '2px 6px' }}
+                                                onClick={() => {
+                                                    this.editingPattern = p;
+                                                    this.patternNameInput = p.name;
+                                                    this.patternContentInput = p.content;
+                                                    this.update();
+                                                }}
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button
+                                                className='theia-button secondary'
+                                                style={{ fontSize: 10, padding: '2px 6px' }}
+                                                onClick={() => this.deletePattern(p.id)}
+                                            >
+                                                🗑️
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div style={{ borderTop: '1px solid var(--theia-panel-border)', paddingTop: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                                {this.editingPattern ? 'Modifier le pattern' : 'Ajouter un pattern'}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr auto', gap: 8, alignItems: 'end' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 10, opacity: 0.8, marginBottom: 2 }}>Nom (sans @)</label>
+                                    <input
+                                        className='theia-input'
+                                        value={this.patternNameInput}
+                                        onChange={e => { this.patternNameInput = e.target.value; this.update(); }}
+                                        placeholder='mon_pattern'
+                                        style={{ width: '100%', fontSize: 11 }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: 10, opacity: 0.8, marginBottom: 2 }}>Contenu</label>
+                                    <input
+                                        className='theia-input'
+                                        value={this.patternContentInput}
+                                        onChange={e => { this.patternContentInput = e.target.value; this.update(); }}
+                                        placeholder='Texte à insérer...'
+                                        style={{ width: '100%', fontSize: 11 }}
+                                    />
+                                </div>
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                    {this.editingPattern ? (
+                                        <>
+                                            <button
+                                                className='theia-button primary'
+                                                style={{ fontSize: 11, padding: '4px 8px' }}
+                                                onClick={() => this.updatePattern(this.editingPattern!.id, this.patternNameInput, this.patternContentInput)}
+                                                disabled={!this.patternNameInput.trim() || !this.patternContentInput.trim()}
+                                            >
+                                                Enregistrer
+                                            </button>
+                                            <button
+                                                className='theia-button secondary'
+                                                style={{ fontSize: 11, padding: '4px 8px' }}
+                                                onClick={() => {
+                                                    this.editingPattern = null;
+                                                    this.patternNameInput = '';
+                                                    this.patternContentInput = '';
+                                                    this.update();
+                                                }}
+                                            >
+                                                Annuler
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <button
+                                            className='theia-button primary'
+                                            style={{ fontSize: 11, padding: '4px 8px' }}
+                                            onClick={() => this.addPattern(this.patternNameInput, this.patternContentInput)}
+                                            disabled={!this.patternNameInput.trim() || !this.patternContentInput.trim()}
+                                        >
+                                            Ajouter
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
 
                 {!this.isLoading && this.geocaches.length > 0 && (
                     <div style={{ background: 'var(--theia-editor-background)' }}>
@@ -1784,22 +2206,64 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                 &gt;
                             </button>
                         </div>
-                        <textarea
-                            className='theia-input'
-                            value={this.globalText}
-                            onChange={e => {
-                                const start = e.currentTarget.selectionStart;
-                                const end = e.currentTarget.selectionEnd;
-                                this.globalText = e.currentTarget.value;
-                                this.update();
-                                this.scheduleRestoreSelection({ type: 'global' }, start, end);
-                            }}
-                            onFocus={() => { this.activeEditor = { type: 'global' }; }}
-                            ref={el => { this.globalTextArea = el; }}
-                            disabled={this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id))}
-                            rows={10}
-                            style={{ width: '100%', resize: 'vertical' }}
-                        />
+                        <div style={{ position: 'relative' }}>
+                            <textarea
+                                className='theia-input'
+                                value={this.globalText}
+                                onChange={e => {
+                                    const start = e.currentTarget.selectionStart;
+                                    const end = e.currentTarget.selectionEnd;
+                                    this.globalText = e.currentTarget.value;
+                                    this.refreshPatternAutocomplete(e.currentTarget.value, e.currentTarget, null);
+                                    this.update();
+                                    this.scheduleRestoreSelection({ type: 'global' }, start, end);
+                                }}
+                                onKeyDown={e => this.handleTextAreaKeyDown(e, null)}
+                                onBlur={() => this.handleTextAreaBlur()}
+                                onFocus={() => { this.activeEditor = { type: 'global' }; }}
+                                ref={el => { this.globalTextArea = el; }}
+                                disabled={this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id))}
+                                rows={10}
+                                style={{ width: '100%', resize: 'vertical' }}
+                            />
+                            {this.patternAutocompleteOpen && this.patternAutocompleteTargetGeocacheId === null && this.patternAutocompleteSuggestions.length > 0 && (
+                                <div
+                                    style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: 0,
+                                        marginTop: 4,
+                                        width: 320,
+                                        maxHeight: 200,
+                                        overflowY: 'auto',
+                                        border: '1px solid var(--theia-panel-border)',
+                                        background: 'var(--theia-editor-background)',
+                                        borderRadius: 3,
+                                        zIndex: 10,
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.35)'
+                                    }}
+                                    onMouseDown={e => e.preventDefault()}
+                                >
+                                    {this.patternAutocompleteSuggestions.map((s, idx) => (
+                                        <div
+                                            key={s.id}
+                                            style={{
+                                                padding: '6px 8px',
+                                                cursor: 'pointer',
+                                                background: idx === this.patternAutocompleteActiveIndex
+                                                    ? 'var(--theia-list-activeSelectionBackground)'
+                                                    : 'transparent'
+                                            }}
+                                            onMouseEnter={() => { this.patternAutocompleteActiveIndex = idx; this.update(); }}
+                                            onClick={() => this.applyPatternSuggestion(s)}
+                                        >
+                                            <div style={{ fontSize: '0.9em', fontWeight: 600 }}>{s.label}</div>
+                                            <div style={{ fontSize: '0.8em', opacity: 0.7 }}>{s.description}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
                         <div style={{ marginTop: 10 }}>
                             {this.renderImagesSection('global', this.isLoading || this.isSubmitting || allSubmitted)}
@@ -1936,23 +2400,66 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                         &gt;
                                     </button>
                                 </div>
-                                <textarea
-                                    className='theia-input'
-                                    value={this.perCacheText[gc.id] ?? ''}
-                                    onChange={e => {
-                                        const start = e.currentTarget.selectionStart;
-                                        const end = e.currentTarget.selectionEnd;
-                                        this.perCacheText = { ...this.perCacheText, [gc.id]: e.target.value };
-                                        this.update();
-                                        this.scheduleRestoreSelection({ type: 'per-cache', geocacheId: gc.id }, start, end);
-                                    }}
-                                    onFocus={() => { this.activeEditor = { type: 'per-cache', geocacheId: gc.id }; }}
-                                    ref={el => { this.perCacheTextAreas = { ...this.perCacheTextAreas, [gc.id]: el }; }}
-                                    disabled={this.isGeocacheSubmittedOk(gc.id)}
-                                    rows={6}
-                                    style={{ width: '100%', resize: 'vertical', marginTop: 8 }}
-                                    placeholder='Texte (Markdown)'
-                                />
+                                <div style={{ position: 'relative', marginTop: 8 }}>
+                                    <textarea
+                                        className='theia-input'
+                                        value={this.perCacheText[gc.id] ?? ''}
+                                        onChange={e => {
+                                            const start = e.currentTarget.selectionStart;
+                                            const end = e.currentTarget.selectionEnd;
+                                            const newValue = e.target.value;
+                                            this.perCacheText = { ...this.perCacheText, [gc.id]: newValue };
+                                            this.refreshPatternAutocomplete(newValue, e.currentTarget, gc.id);
+                                            this.update();
+                                            this.scheduleRestoreSelection({ type: 'per-cache', geocacheId: gc.id }, start, end);
+                                        }}
+                                        onKeyDown={e => this.handleTextAreaKeyDown(e, gc.id)}
+                                        onBlur={() => this.handleTextAreaBlur()}
+                                        onFocus={() => { this.activeEditor = { type: 'per-cache', geocacheId: gc.id }; }}
+                                        ref={el => { this.perCacheTextAreas = { ...this.perCacheTextAreas, [gc.id]: el }; }}
+                                        disabled={this.isGeocacheSubmittedOk(gc.id)}
+                                        rows={6}
+                                        style={{ width: '100%', resize: 'vertical' }}
+                                        placeholder='Texte (Markdown) - Tapez @ pour insérer un pattern'
+                                    />
+                                    {this.patternAutocompleteOpen && this.patternAutocompleteTargetGeocacheId === gc.id && this.patternAutocompleteSuggestions.length > 0 && (
+                                        <div
+                                            style={{
+                                                position: 'absolute',
+                                                top: '100%',
+                                                left: 0,
+                                                marginTop: 4,
+                                                width: 320,
+                                                maxHeight: 200,
+                                                overflowY: 'auto',
+                                                border: '1px solid var(--theia-panel-border)',
+                                                background: 'var(--theia-editor-background)',
+                                                borderRadius: 3,
+                                                zIndex: 10,
+                                                boxShadow: '0 4px 12px rgba(0,0,0,0.35)'
+                                            }}
+                                            onMouseDown={e => e.preventDefault()}
+                                        >
+                                            {this.patternAutocompleteSuggestions.map((s, idx) => (
+                                                <div
+                                                    key={s.id}
+                                                    style={{
+                                                        padding: '6px 8px',
+                                                        cursor: 'pointer',
+                                                        background: idx === this.patternAutocompleteActiveIndex
+                                                            ? 'var(--theia-list-activeSelectionBackground)'
+                                                            : 'transparent'
+                                                    }}
+                                                    onMouseEnter={() => { this.patternAutocompleteActiveIndex = idx; this.update(); }}
+                                                    onClick={() => this.applyPatternSuggestion(s)}
+                                                >
+                                                    <div style={{ fontSize: '0.9em', fontWeight: 600 }}>{s.label}</div>
+                                                    <div style={{ fontSize: '0.8em', opacity: 0.7 }}>{s.description}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
 
                                 <details style={{ marginTop: 8 }}>
                                     <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Aperçu Markdown</summary>

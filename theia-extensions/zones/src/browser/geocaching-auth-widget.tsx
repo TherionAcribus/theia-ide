@@ -12,6 +12,10 @@ interface AuthState {
         avatar_url?: string;
         reference_code?: string;
         finds_count?: number;
+        hides_count?: number;
+        favorite_points?: number;
+        awarded_favorite_points?: number;
+        stats_last_updated?: string;
     } | null;
     error_message: string | null;
     last_check: string | null;
@@ -79,15 +83,23 @@ export class GeocachingAuthWidget extends ReactWidget {
     }
 
     protected async fetchAuthStatus(): Promise<void> {
+        console.log('[GeocachingAuth] fetchAuthStatus called');
         try {
             const baseUrl = this.getApiBaseUrl();
             const response = await fetch(`${baseUrl}/api/auth/status`);
             if (response.ok) {
                 this.authState = await response.json();
+                console.log('[GeocachingAuth] Auth status:', this.authState?.status, 'user:', this.authState?.user?.username);
                 this.update();
+                
+                // Si connecté, récupérer les stats en arrière-plan
+                if (this.authState?.status === 'logged_in') {
+                    console.log('[GeocachingAuth] User is logged in, fetching profile stats...');
+                    this.fetchProfileStatsQuietly();
+                }
             }
         } catch (err) {
-            console.error('Failed to fetch auth status:', err);
+            console.error('[GeocachingAuth] Failed to fetch auth status:', err);
         }
     }
 
@@ -135,6 +147,8 @@ export class GeocachingAuthWidget extends ReactWidget {
                 this.error = null;
                 // Émettre un événement pour notifier le changement d'état
                 this.dispatchAuthChangeEvent();
+                // Récupérer les stats du profil
+                this.fetchProfileStatsQuietly();
             } else {
                 this.error = result.error_message || 'Échec de la connexion';
                 this.authState = result;
@@ -171,6 +185,8 @@ export class GeocachingAuthWidget extends ReactWidget {
                 this.error = null;
                 // Émettre un événement pour notifier le changement d'état
                 this.dispatchAuthChangeEvent();
+                // Récupérer les stats du profil
+                this.fetchProfileStatsQuietly();
             } else {
                 this.error = result.error_message || 'Échec de la connexion avec les cookies du navigateur';
                 this.authState = result;
@@ -230,6 +246,65 @@ export class GeocachingAuthWidget extends ReactWidget {
         } finally {
             this.loading = false;
             this.update();
+        }
+    }
+
+    protected async refreshProfileStats(): Promise<void> {
+        this.loading = true;
+        this.error = null;
+        this.update();
+
+        try {
+            const baseUrl = this.getApiBaseUrl();
+            const response = await fetch(`${baseUrl}/api/auth/profile/refresh`, {
+                method: 'POST'
+            });
+            const result = await response.json();
+            
+            if (result.success && result.stats && this.authState?.user) {
+                // Mettre à jour les stats dans l'état local
+                this.authState.user.finds_count = result.stats.finds_count;
+                this.authState.user.hides_count = result.stats.hides_count;
+                this.authState.user.favorite_points = result.stats.favorite_points;
+                this.authState.user.awarded_favorite_points = result.stats.awarded_favorite_points;
+                this.authState.user.stats_last_updated = result.stats.stats_last_updated;
+            } else {
+                this.error = result.error_message || 'Impossible de rafraîchir les statistiques';
+            }
+        } catch (err) {
+            this.error = 'Erreur lors du rafraîchissement des stats';
+            console.error('Refresh stats failed:', err);
+        } finally {
+            this.loading = false;
+            this.update();
+        }
+    }
+
+    protected async fetchProfileStatsQuietly(): Promise<void> {
+        // Récupère les stats en arrière-plan sans bloquer l'UI
+        console.log('[GeocachingAuth] fetchProfileStatsQuietly called');
+        try {
+            const baseUrl = this.getApiBaseUrl();
+            const url = `${baseUrl}/api/auth/profile?force=true`;
+            console.log('[GeocachingAuth] Fetching profile stats from:', url);
+            const response = await fetch(url);
+            const result = await response.json();
+            console.log('[GeocachingAuth] Profile stats response:', result);
+            
+            if (result.success && result.stats && this.authState?.user) {
+                console.log('[GeocachingAuth] Updating user stats:', result.stats);
+                this.authState.user.finds_count = result.stats.finds_count;
+                this.authState.user.hides_count = result.stats.hides_count;
+                this.authState.user.favorite_points = result.stats.favorite_points;
+                this.authState.user.awarded_favorite_points = result.stats.awarded_favorite_points;
+                this.authState.user.stats_last_updated = result.stats.stats_last_updated;
+                this.update();
+                console.log('[GeocachingAuth] Stats updated and UI refreshed');
+            } else {
+                console.log('[GeocachingAuth] Stats not updated - success:', result.success, 'stats:', !!result.stats, 'user:', !!this.authState?.user);
+            }
+        } catch (err) {
+            console.error('[GeocachingAuth] Background fetch stats failed:', err);
         }
     }
 
@@ -328,7 +403,7 @@ export class GeocachingAuthWidget extends ReactWidget {
                                 style={{ width: '48px', height: '48px', borderRadius: '50%' }}
                             />
                         )}
-                        <div>
+                        <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: 'bold', fontSize: '1.1em' }}>{user.username}</div>
                             {user.user_type && (
                                 <div style={{ 
@@ -338,24 +413,22 @@ export class GeocachingAuthWidget extends ReactWidget {
                                     {user.user_type}
                                 </div>
                             )}
-                            {user.finds_count !== undefined && (
-                                <div style={{ fontSize: '0.9em', color: 'var(--theia-descriptionForeground)' }}>
-                                    {user.finds_count} trouvées
-                                </div>
-                            )}
                         </div>
                     </div>
                 )}
 
+                {/* Statistiques du profil */}
+                {user && this.renderProfileStats(user)}
+
                 <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                         className="theia-button"
-                        onClick={() => this.testConnection()}
+                        onClick={() => this.refreshProfileStats()}
                         disabled={this.loading}
                         style={{ flex: 1 }}
                     >
-                        <span className="codicon codicon-sync"></span>
-                        {this.loading ? ' Test en cours...' : ' Tester la connexion'}
+                        <span className="codicon codicon-refresh"></span>
+                        {this.loading ? ' Rafraîchissement...' : ' Rafraîchir les stats'}
                     </button>
                     <button
                         className="theia-button secondary"
@@ -366,6 +439,71 @@ export class GeocachingAuthWidget extends ReactWidget {
                         {' Déconnexion'}
                     </button>
                 </div>
+            </div>
+        );
+    }
+
+    protected renderProfileStats(user: any): React.ReactNode {
+
+        const stats = [
+            { 
+                icon: 'codicon-search', 
+                label: 'Trouvées', 
+                value: user.finds_count, 
+                color: 'var(--theia-charts-green)' 
+            },
+            { 
+                icon: 'codicon-heart', 
+                label: 'PF disponibles', 
+                value: user.awarded_favorite_points, 
+                color: 'var(--theia-charts-red)',
+                highlight: true
+            },
+        ];
+
+        return (
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '12px',
+                marginBottom: '16px'
+            }}>
+                {stats.map((stat, index) => (
+                    <div 
+                        key={index}
+                        style={{
+                            padding: '12px',
+                            backgroundColor: 'var(--theia-editor-background)',
+                            borderRadius: '4px',
+                            border: stat.highlight 
+                                ? '2px solid var(--theia-focusBorder)' 
+                                : '1px solid var(--theia-panel-border)',
+                            textAlign: 'center'
+                        }}
+                    >
+                        <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            gap: '4px',
+                            marginBottom: '4px',
+                            color: 'var(--theia-descriptionForeground)',
+                            fontSize: '0.85em'
+                        }}>
+                            <span className={`codicon ${stat.icon}`} style={{ color: stat.color }}></span>
+                            {stat.label}
+                        </div>
+                        <div style={{ 
+                            fontSize: '1.4em', 
+                            fontWeight: 'bold',
+                            color: stat.value !== undefined && stat.value !== null 
+                                ? 'var(--theia-foreground)' 
+                                : 'var(--theia-descriptionForeground)'
+                        }}>
+                            {stat.value !== undefined && stat.value !== null ? stat.value : '—'}
+                        </div>
+                    </div>
+                ))}
             </div>
         );
     }

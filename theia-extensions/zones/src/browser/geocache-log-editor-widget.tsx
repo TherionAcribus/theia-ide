@@ -59,8 +59,9 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
     perCacheSubmitReference: Record<number, string | undefined>;
     onToggleFavorite: (geocacheId: number, nextValue: boolean) => void;
     onToggleLogType: (geocacheId: number, nextValue: LogTypeValue) => void;
+    remainingFavoritePoints: number;
     maxHeight?: number;
-}> = ({ data, logType, perCacheLogType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, onToggleLogType, maxHeight = 220 }) => {
+}> = ({ data, logType, perCacheLogType, perCacheFavorite, perCacheSubmitStatus, perCacheSubmitReference, onToggleFavorite, onToggleLogType, remainingFavoritePoints, maxHeight = 220 }) => {
     const [sorting, setSorting] = React.useState<SortingState>([]);
 
     const columns = React.useMemo<ColumnDef<GeocacheListItem>[]>(() => {
@@ -277,13 +278,15 @@ const GeocacheLogEditorGeocachesTable: React.FC<{
                 cell: ({ row }) => {
                     const gc = row.original;
                     const currentLogType = perCacheLogType[gc.id] ?? logType;
-                    const disabled = currentLogType !== 'found' || perCacheSubmitStatus[gc.id] === 'ok';
+                    const isChecked = perCacheFavorite[gc.id] === true;
+                    const disabled = currentLogType !== 'found' || perCacheSubmitStatus[gc.id] === 'ok' || (!isChecked && remainingFavoritePoints <= 0);
                     return (
                         <input
                             type='checkbox'
-                            checked={perCacheFavorite[gc.id] === true}
+                            checked={isChecked}
                             onChange={e => onToggleFavorite(gc.id, e.target.checked)}
                             disabled={disabled}
+                            title={!isChecked && remainingFavoritePoints <= 0 ? 'Plus de PF disponibles' : ''}
                         />
                     );
                 },
@@ -395,6 +398,9 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected logHistory: LogHistoryEntry[] = [];
     protected logHistoryCursor: number = -1;
     protected isLoadingHistory = false;
+
+    protected totalFavoritePoints: number = 0;
+    protected isFetchingFavoritePoints = false;
 
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
@@ -942,6 +948,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
         void this.loadGeocaches();
         void this.refreshLogHistory();
+        void this.fetchFavoritePoints();
         this.update();
     }
 
@@ -1196,6 +1203,41 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         );
     }
 
+    protected getRemainingFavoritePoints(): number {
+        const usedCount = Object.values(this.perCacheFavorite).filter(v => v === true).length;
+        return Math.max(0, this.totalFavoritePoints - usedCount);
+    }
+
+    protected async fetchFavoritePoints(): Promise<void> {
+        if (this.isFetchingFavoritePoints) {
+            return;
+        }
+
+        this.isFetchingFavoritePoints = true;
+        this.update();
+
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/auth/status`, { credentials: 'include' });
+            if (!res.ok) {
+                console.warn('[GeocacheLogEditorWidget] Failed to fetch auth status');
+                return;
+            }
+            const authState = await res.json();
+            const awardedPoints = authState?.user?.awarded_favorite_points;
+            if (typeof awardedPoints === 'number') {
+                this.totalFavoritePoints = awardedPoints;
+            } else {
+                this.totalFavoritePoints = 0;
+            }
+        } catch (e) {
+            console.error('[GeocacheLogEditorWidget] fetchFavoritePoints error', e);
+            this.totalFavoritePoints = 0;
+        } finally {
+            this.isFetchingFavoritePoints = false;
+            this.update();
+        }
+    }
+
     protected async loadGeocaches(): Promise<void> {
         if (!this.geocacheIds.length || this.isLoading) {
             return;
@@ -1261,6 +1303,16 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     }
 
     protected toggleFavoriteForGeocacheId(geocacheId: number, nextValue: boolean): void {
+        const currentValue = this.perCacheFavorite[geocacheId] === true;
+        
+        if (nextValue && !currentValue) {
+            const remaining = this.getRemainingFavoritePoints();
+            if (remaining <= 0) {
+                this.messages.warn('Plus de PF disponibles');
+                return;
+            }
+        }
+        
         this.perCacheFavorite = { ...this.perCacheFavorite, [geocacheId]: nextValue };
         this.update();
     }
@@ -1621,11 +1673,21 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     </div>
                 </div>
 
-                {this.lastSubmitSummary && (
-                    <div style={{ opacity: 0.85, fontSize: 12 }}>
-                        Résultat: {this.lastSubmitSummary.ok} ok, {this.lastSubmitSummary.failed} échec(s)
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {this.lastSubmitSummary && (
+                        <div style={{ opacity: 0.85, fontSize: 12 }}>
+                            Résultat: {this.lastSubmitSummary.ok} ok, {this.lastSubmitSummary.failed} échec(s)
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 12 }}>
+                        <div style={{ opacity: 0.85 }}>
+                            <strong>PF disponibles:</strong> {this.totalFavoritePoints}
+                        </div>
+                        <div style={{ opacity: 0.85 }}>
+                            <strong>PF restants:</strong> <span style={{ color: this.getRemainingFavoritePoints() === 0 ? 'var(--theia-errorForeground)' : 'inherit' }}>{this.getRemainingFavoritePoints()}</span>
+                        </div>
                     </div>
-                )}
+                </div>
 
                 {!this.isLoading && this.geocaches.length > 0 && (
                     <div style={{ background: 'var(--theia-editor-background)' }}>
@@ -1638,6 +1700,7 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                             perCacheSubmitReference={this.perCacheSubmitReference}
                             onToggleFavorite={(geocacheId, nextValue) => this.toggleFavoriteForGeocacheId(geocacheId, nextValue)}
                             onToggleLogType={(geocacheId, nextValue) => this.setLogTypeForGeocacheId(geocacheId, nextValue)}
+                            remainingFavoritePoints={this.getRemainingFavoritePoints()}
                             maxHeight={220}
                         />
                     </div>
@@ -1834,7 +1897,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                                                 type='checkbox'
                                                 checked={this.perCacheFavorite[gc.id] === true}
                                                 onChange={e => this.toggleFavoriteForGeocacheId(gc.id, e.target.checked)}
-                                                disabled={this.getLogTypeForGeocacheId(gc.id) !== 'found'}
+                                                disabled={this.getLogTypeForGeocacheId(gc.id) !== 'found' || (!this.perCacheFavorite[gc.id] && this.getRemainingFavoritePoints() <= 0)}
+                                                title={!this.perCacheFavorite[gc.id] && this.getRemainingFavoritePoints() <= 0 ? 'Plus de PF disponibles' : ''}
                                             />
                                             Donner un PF
                                         </label>

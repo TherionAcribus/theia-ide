@@ -493,6 +493,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
     protected patternAutocompleteTargetGeocacheId: number | null = null;
     protected patternAutocompletePosition: { top: number; left: number } | null = null;
 
+    protected historyDropdownOpen = false;
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(StorageService) protected readonly storageService: StorageService,
@@ -592,32 +594,38 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         const safeLogType = entry.logType === 'found' || entry.logType === 'dnf' || entry.logType === 'note' ? entry.logType : this.logType;
 
         const perCacheValues = entry.perCacheText && typeof entry.perCacheText === 'object'
-            ? Object.values(entry.perCacheText).filter(v => typeof v === 'string') as string[]
-            : [];
+            ? entry.perCacheText as Record<number, string>
+            : {};
 
-        const templateText = (typeof entry.globalText === 'string' && entry.globalText.trim())
-            ? entry.globalText
-            : (perCacheValues.find(v => v.trim()) ?? '');
+        const perCacheLogTypeValues = entry.perCacheLogType && typeof entry.perCacheLogType === 'object'
+            ? entry.perCacheLogType as Record<number, LogTypeValue>
+            : {};
 
-        this.useSameTextForAll = true;
-        this.globalText = templateText;
+        const perCacheFavoriteValues = entry.perCacheFavorite && typeof entry.perCacheFavorite === 'object'
+            ? entry.perCacheFavorite as Record<number, boolean>
+            : {};
+
+        this.logDate = entry.logDate;
+        this.useSameTextForAll = entry.useSameTextForAll ?? false;
+        this.globalText = entry.globalText ?? '';
+        this.perCacheText = perCacheValues;
         this.logType = safeLogType;
+        this.perCacheLogType = perCacheLogTypeValues;
+        this.perCacheFavorite = perCacheFavoriteValues;
 
-        const nextPerCacheLogType: Record<number, LogTypeValue> = { ...this.perCacheLogType };
-        const nextPerCacheFavorite: Record<number, boolean> = { ...this.perCacheFavorite };
+        this.update();
+    }
 
-        for (const gc of this.geocaches) {
-            const cachedType = entry.perCacheLogType?.[gc.id];
-            if (cachedType === 'found' || cachedType === 'dnf' || cachedType === 'note') {
-                nextPerCacheLogType[gc.id] = cachedType;
-            }
-            const cachedFav = entry.perCacheFavorite?.[gc.id];
-            if (typeof cachedFav === 'boolean') {
-                nextPerCacheFavorite[gc.id] = cachedFav;
-            }
+    protected applyHistoryTextOnly(entry: LogHistoryEntry): void {
+        if (this.useSameTextForAll) {
+            this.globalText = entry.globalText ?? '';
+        } else {
+            const perCacheValues = entry.perCacheText && typeof entry.perCacheText === 'object'
+                ? entry.perCacheText as Record<number, string>
+                : {};
+            this.perCacheText = perCacheValues;
         }
-        this.perCacheLogType = nextPerCacheLogType;
-        this.perCacheFavorite = nextPerCacheFavorite;
+        this.historyDropdownOpen = false;
         this.update();
     }
 
@@ -2402,6 +2410,66 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                     <div>
                         <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 4 }}>Texte (Markdown)</label>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+                            <div style={{ position: 'relative' }}>
+                                <button
+                                    className='theia-button secondary'
+                                    style={{ fontSize: 12, padding: '2px 10px' }}
+                                    onClick={() => { this.historyDropdownOpen = !this.historyDropdownOpen; this.update(); }}
+                                    disabled={this.isLoading || this.isSubmitting || allSubmitted || this.logHistory.length === 0}
+                                    title='Réutiliser un log récent'
+                                >
+                                    📝 Logs récents ({this.logHistory.length})
+                                </button>
+                                {this.historyDropdownOpen && this.logHistory.length > 0 && (
+                                    <div
+                                        style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            left: 0,
+                                            marginTop: 4,
+                                            width: 400,
+                                            maxHeight: 300,
+                                            overflowY: 'auto',
+                                            border: '1px solid var(--theia-panel-border)',
+                                            background: 'var(--theia-editor-background)',
+                                            borderRadius: 3,
+                                            zIndex: 1000,
+                                            boxShadow: '0 4px 12px rgba(0,0,0,0.35)'
+                                        }}
+                                    >
+                                        <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--theia-panel-border)', fontSize: 11, fontWeight: 600, opacity: 0.8 }}>
+                                            Cliquez pour réutiliser le texte
+                                        </div>
+                                        {this.logHistory.map((entry, idx) => {
+                                            const date = new Date(entry.createdAt);
+                                            const dateStr = date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                                            const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                                            const preview = (entry.globalText ?? '').slice(0, 80);
+                                            return (
+                                                <div
+                                                    key={entry.id}
+                                                    style={{
+                                                        padding: '8px',
+                                                        cursor: 'pointer',
+                                                        borderBottom: idx < this.logHistory.length - 1 ? '1px solid var(--theia-panel-border)' : 'none',
+                                                        background: 'transparent'
+                                                    }}
+                                                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--theia-list-hoverBackground)'; }}
+                                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                                                    onClick={() => this.applyHistoryTextOnly(entry)}
+                                                >
+                                                    <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
+                                                        {dateStr} à {timeStr}
+                                                    </div>
+                                                    <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {preview || '(vide)'}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
                             <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>Markdown</span>
                             <button className='theia-button secondary' style={{ fontSize: 12, padding: '2px 10px' }} onClick={() => this.applyMarkdownWrap('**', '**', 'texte')} disabled={this.isLoading || this.isSubmitting || allSubmitted} title='Gras'>
                                 <strong>B</strong>

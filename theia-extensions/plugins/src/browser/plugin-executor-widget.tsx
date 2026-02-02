@@ -2005,7 +2005,9 @@ const PluginResultDisplay: React.FC<{
                                     ? {
                                         latitude: gpsCoordinates.ddm_lat || '',
                                         longitude: gpsCoordinates.ddm_lon || '',
-                                        formatted: gpsCoordinates.ddm || ''
+                                        formatted: gpsCoordinates.ddm || '',
+                                        decimal_latitude: gpsCoordinates.decimal_latitude,
+                                        decimal_longitude: gpsCoordinates.decimal_longitude
                                     }
                                     : undefined);
                             return (
@@ -2236,10 +2238,28 @@ const PluginResultDisplay: React.FC<{
                                                 )}
                                             </div>
                                             <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>
-                                                {resolvedCoordinates.formatted ||
-                                                 (resolvedCoordinates.latitude && resolvedCoordinates.longitude
-                                                  ? `${resolvedCoordinates.latitude} ${resolvedCoordinates.longitude}`
-                                                  : 'Coordonnées invalides')}
+                                                {(() => {
+                                                    // Priorité 1: formatted ou ddm
+                                                    if (resolvedCoordinates.formatted) {
+                                                        return resolvedCoordinates.formatted;
+                                                    }
+                                                    if ((resolvedCoordinates as any).ddm) {
+                                                        return (resolvedCoordinates as any).ddm;
+                                                    }
+                                                    // Priorité 2: ddm_lat + ddm_lon
+                                                    if ((resolvedCoordinates as any).ddm_lat && (resolvedCoordinates as any).ddm_lon) {
+                                                        return `${(resolvedCoordinates as any).ddm_lat} ${(resolvedCoordinates as any).ddm_lon}`;
+                                                    }
+                                                    // Priorité 3: decimal_latitude + decimal_longitude
+                                                    if ((resolvedCoordinates as any).decimal_latitude !== undefined && (resolvedCoordinates as any).decimal_longitude !== undefined) {
+                                                        return `${(resolvedCoordinates as any).decimal_latitude}, ${(resolvedCoordinates as any).decimal_longitude}`;
+                                                    }
+                                                    // Priorité 4: latitude + longitude (legacy)
+                                                    if (resolvedCoordinates.latitude && resolvedCoordinates.longitude) {
+                                                        return `${resolvedCoordinates.latitude} ${resolvedCoordinates.longitude}`;
+                                                    }
+                                                    return 'Coordonnées invalides';
+                                                })()}
                                             </div>
                                             {(() => {
                                                 const key = getCoordsKey(resolvedCoordinates);

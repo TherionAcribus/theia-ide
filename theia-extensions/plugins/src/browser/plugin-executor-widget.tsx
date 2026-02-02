@@ -181,6 +181,44 @@ const extractDecimalCoordinates = (
     return convertCombinedCoordsToDecimal(fallbackFormatted);
 };
 
+const deriveCoordinatesFromItem = (item: any): any | undefined => {
+    if (!item) {
+        return undefined;
+    }
+
+    if (item.coordinates) {
+        return {
+            ...item.coordinates,
+            decimal_latitude: item.coordinates.decimal_latitude ?? item.decimal_latitude ?? item.decimalLatitude,
+            decimal_longitude: item.coordinates.decimal_longitude ?? item.decimal_longitude ?? item.decimalLongitude
+        };
+    }
+
+    const metadata = item.metadata as any;
+    const gpsCoordinates = metadata?.gps_coordinates;
+    if (gpsCoordinates && gpsCoordinates.exist) {
+        return {
+            latitude: gpsCoordinates.ddm_lat || '',
+            longitude: gpsCoordinates.ddm_lon || '',
+            formatted: gpsCoordinates.ddm || '',
+            decimal_latitude: gpsCoordinates.decimal_latitude,
+            decimal_longitude: gpsCoordinates.decimal_longitude
+        };
+    }
+
+    if (typeof item.decimal_latitude === 'number' && typeof item.decimal_longitude === 'number') {
+        return {
+            latitude: item.decimal_latitude,
+            longitude: item.decimal_longitude,
+            formatted: item.coordinates?.formatted,
+            decimal_latitude: item.decimal_latitude,
+            decimal_longitude: item.decimal_longitude
+        };
+    }
+
+    return undefined;
+};
+
 /**
  * Configuration initiale du widget
  */
@@ -1837,6 +1875,7 @@ const PluginResultDisplay: React.FC<{
     const [verifyingCoordinates, setVerifyingCoordinates] = React.useState<Record<string, boolean>>({});
     const [detectingCoordinates, setDetectingCoordinates] = React.useState<Record<string, boolean>>({});
     const [manualDetectedCoordinates, setManualDetectedCoordinates] = React.useState<Record<string, { latitude?: string; longitude?: string; formatted?: string }>>({});
+    const dispatchedCoordinatesRef = React.useRef<Set<string>>(new Set());
 
     // Vérifications de sécurité
     if (!result) {
@@ -1950,6 +1989,56 @@ const PluginResultDisplay: React.FC<{
         return null;
     };
 
+    React.useEffect(() => {
+        dispatchedCoordinatesRef.current.clear();
+    }, [result, geocacheContext?.gcCode, geocacheContext?.geocacheId]);
+
+    React.useEffect(() => {
+        if (typeof window === 'undefined' || !geocacheContext) {
+            return;
+        }
+
+        sortedResults.forEach((item, index) => {
+            const itemKey = getItemKey(item, index);
+            const manualCoords = manualDetectedCoordinates[itemKey];
+            const resolvedCoordinates = manualCoords || deriveCoordinatesFromItem(item);
+            if (!resolvedCoordinates) {
+                return;
+            }
+
+            const gcCoords = buildGcCoords(resolvedCoordinates) || resolvedCoordinates.formatted;
+            const decimalCoords = extractDecimalCoordinates(resolvedCoordinates, gcCoords || undefined);
+            if (!decimalCoords) {
+                return;
+            }
+
+            const dispatchKey = `${itemKey}-${decimalCoords.latitude}-${decimalCoords.longitude}`;
+            if (dispatchedCoordinatesRef.current.has(dispatchKey)) {
+                return;
+            }
+
+            dispatchedCoordinatesRef.current.add(dispatchKey);
+
+            window.dispatchEvent(new CustomEvent('geoapp-map-highlight-coordinate', {
+                detail: {
+                    gcCode: geocacheContext.gcCode,
+                    geocacheId: geocacheContext.geocacheId,
+                    pluginName: result.plugin_info?.name || pluginName || 'Coordonnées détectées',
+                    coordinates: {
+                        latitude: decimalCoords.latitude,
+                        longitude: decimalCoords.longitude,
+                        formatted: resolvedCoordinates.formatted || gcCoords || `${decimalCoords.latitude}, ${decimalCoords.longitude}`
+                    },
+                    autoSaved: false,
+                    replaceExisting: false,
+                    waypointTitle: geocacheContext.name || pluginName || 'Coordonnée détectée',
+                    waypointNote: item.text_output,
+                    sourceResultText: item.text_output
+                }
+            }));
+        });
+    }, [sortedResults, manualDetectedCoordinates, geocacheContext, pluginName, result.plugin_info?.name]);
+
     console.log('PluginResultDisplay final render');
     console.log('result.status:', result.status);
     console.log('result.summary:', result.summary);
@@ -1995,21 +2084,9 @@ const PluginResultDisplay: React.FC<{
                     {sortedResults.map((item, index) => {
                         console.log(`Rendering result ${index}:`, item);
                         try {
-                            const gpsCoordinates = (item.metadata as any)?.gps_coordinates;
                             const itemKey = getItemKey(item, index);
                             const manualCoords = manualDetectedCoordinates[itemKey];
-                            const resolvedCoordinates =
-                                manualCoords ||
-                                item.coordinates ||
-                                (gpsCoordinates && gpsCoordinates.exist
-                                    ? {
-                                        latitude: gpsCoordinates.ddm_lat || '',
-                                        longitude: gpsCoordinates.ddm_lon || '',
-                                        formatted: gpsCoordinates.ddm || '',
-                                        decimal_latitude: gpsCoordinates.decimal_latitude,
-                                        decimal_longitude: gpsCoordinates.decimal_longitude
-                                    }
-                                    : undefined);
+                            const resolvedCoordinates = manualCoords || deriveCoordinatesFromItem(item);
                             return (
                                 <div 
                                     key={item.id || index} 

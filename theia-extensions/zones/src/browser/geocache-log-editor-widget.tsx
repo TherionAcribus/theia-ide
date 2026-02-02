@@ -1,9 +1,11 @@
-import * as React from 'react';
+import * as React from '@theia/core/shared/react';
 import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { StorageService } from '@theia/core/lib/browser';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+import { LanguageModelRegistry, LanguageModelService, UserRequest, getTextOfResponse, getJsonOfResponse, isLanguageModelParsedResponse } from '@theia/ai-core';
+import { GeoAppLogWriterAgentId } from './geoapp-log-writer-agent';
 import {
     useReactTable,
     getCoreRowModel,
@@ -495,8 +497,16 @@ export class GeocacheLogEditorWidget extends ReactWidget {
 
     protected historyDropdownOpen = false;
 
+    protected aiKeywords = '';
+    protected aiCustomInstructions = '';
+    protected aiExampleLogs = '';
+    protected isGeneratingAi = false;
+    protected showAiPanel = false;
+
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
+        @inject(LanguageModelRegistry) protected readonly languageModelRegistry: LanguageModelRegistry,
+        @inject(LanguageModelService) protected readonly languageModelService: LanguageModelService,
         @inject(StorageService) protected readonly storageService: StorageService,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
     ) {
@@ -1676,6 +1686,17 @@ export class GeocacheLogEditorWidget extends ReactWidget {
             width: '100%'
         };
 
+        const textareaMergedProps: React.TextareaHTMLAttributes<HTMLTextAreaElement> = {
+            ...restTextareaProps,
+            style: mergedTextareaStyle as React.CSSProperties & { [key: string]: string | number | undefined },
+            onFocus: e => {
+                onFocus?.(e);
+            },
+            onBlur: e => {
+                onBlur?.(e);
+            },
+        };
+
         return (
             <div
                 style={{
@@ -1686,15 +1707,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                 }}
             >
                 <textarea
-                    {...restTextareaProps}
-                    onFocus={e => {
-                        onFocus?.(e);
-                    }}
-                    onBlur={e => {
-                        onBlur?.(e);
-                    }}
+                    {...textareaMergedProps}
                     ref={textareaRef}
-                    style={mergedTextareaStyle}
                 />
                 <div
                     style={{
@@ -2132,6 +2146,224 @@ export class GeocacheLogEditorWidget extends ReactWidget {
         }
     }
 
+    protected async generateLogWithAi(): Promise<void> {
+        if (this.isGeneratingAi) {
+            return;
+        }
+
+        const keywords = (this.aiKeywords || '').trim();
+        if (!keywords) {
+            this.messages.warn('Veuillez entrer des mots-clés ou idées pour générer le log.');
+            return;
+        }
+
+        this.isGeneratingAi = true;
+        this.update();
+
+        try {
+            const languageModel = await this.languageModelRegistry.selectLanguageModel({
+                agent: GeoAppLogWriterAgentId,
+                purpose: 'chat',
+                identifier: 'default/universal'
+            });
+
+            if (!languageModel) {
+                this.messages.error('Aucun modèle IA n\'est configuré (vérifie la configuration IA de Theia)');
+                return;
+            }
+
+            const logTypeLabel = this.logType === 'found' ? 'trouvaille (Found it)'
+                : this.logType === 'dnf' ? 'non trouvée (Did Not Find)'
+                : 'note (Write note)';
+
+            const geocacheContext = this.geocaches.length > 0
+                ? `\n\nContexte des géocaches à loguer :\n${this.geocaches.slice(0, 5).map(gc => `- ${gc.gc_code}: "${gc.name}" (type: ${gc.cache_type || 'inconnu'}, owner: ${gc.owner || 'inconnu'})`).join('\n')}${this.geocaches.length > 5 ? `\n... et ${this.geocaches.length - 5} autre(s)` : ''}`
+                : '';
+
+            const customInstructions = (this.aiCustomInstructions || '').trim();
+            const exampleLogs = (this.aiExampleLogs || '').trim();
+
+            let prompt = `Tu es un rédacteur de logs de géocache. Génère un log de type "${logTypeLabel}" basé sur les mots-clés et idées suivants :
+
+**Mots-clés / idées :** ${keywords}
+${geocacheContext}`;
+
+            if (customInstructions) {
+                prompt += `\n\n**Instructions personnalisées de l'utilisateur :**\n${customInstructions}`;
+            }
+
+            if (exampleLogs) {
+                prompt += `\n\n**Exemples de logs de l'utilisateur (style à reproduire) :**\n${exampleLogs}`;
+            }
+
+            prompt += `\n\n**Règles importantes :**
+- Écris UNIQUEMENT le texte du log, sans introduction ni explication.
+- Le log doit être naturel et personnel, comme s'il était écrit par un géocacheur.
+- Adapte le ton au type de log (enthousiaste pour une trouvaille, déçu mais positif pour un DNF, informatif pour une note).
+- Tu peux utiliser du Markdown simple (gras, italique) si approprié.
+- Le log doit faire entre 2 et 6 phrases.
+- NE PAS inclure de signature ou de "TFTC" sauf si demandé dans les instructions.`;
+
+            const request: UserRequest = {
+                messages: [
+                    { actor: 'user', type: 'text', text: prompt },
+                ],
+                agentId: GeoAppLogWriterAgentId,
+                requestId: `geoapp-log-writer-${Date.now()}`,
+                sessionId: `geoapp-log-writer-session-${Date.now()}`,
+            };
+
+            const response = await this.languageModelService.sendRequest(languageModel, request);
+            let generatedText = '';
+
+            if (isLanguageModelParsedResponse(response)) {
+                generatedText = JSON.stringify(response.parsed);
+            } else {
+                try {
+                    generatedText = await getTextOfResponse(response);
+                } catch {
+                    const jsonResponse = await getJsonOfResponse(response) as any;
+                    generatedText = typeof jsonResponse === 'string' ? jsonResponse : String(jsonResponse);
+                }
+            }
+
+            generatedText = (generatedText || '').toString().trim();
+
+            generatedText = generatedText
+                .replace(/\[THINK\][\s\S]*?\[\/THINK\]/gi, '')
+                .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                .replace(/\[ANALYSIS\][\s\S]*?\[\/ANALYSIS\]/gi, '')
+                .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
+                .trim();
+
+            if (!generatedText) {
+                this.messages.warn('L\'IA n\'a pas généré de texte.');
+                return;
+            }
+
+            if (this.useSameTextForAll) {
+                this.globalText = generatedText;
+            } else {
+                const firstGeocacheId = this.geocaches[0]?.id;
+                if (firstGeocacheId !== undefined) {
+                    this.perCacheText = { ...this.perCacheText, [firstGeocacheId]: generatedText };
+                }
+            }
+
+            this.messages.info('Log généré par IA !');
+
+        } catch (error) {
+            console.error('[GeocacheLogEditorWidget] generateLogWithAi error', error);
+            this.messages.error(`Erreur lors de la génération IA: ${error}`);
+        } finally {
+            this.isGeneratingAi = false;
+            this.update();
+        }
+    }
+
+    protected renderAiGenerationPanel(allSubmitted: boolean): React.ReactNode {
+        return (
+            <details
+                open={this.showAiPanel}
+                onToggle={(e: React.SyntheticEvent<HTMLDetailsElement>) => {
+                    this.showAiPanel = (e.target as HTMLDetailsElement).open;
+                }}
+                style={{ marginBottom: 8 }}
+            >
+                <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+                    🤖 Génération de log par IA
+                </summary>
+                <div style={{
+                    marginTop: 8,
+                    padding: 12,
+                    background: 'var(--theia-editor-background)',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: 6,
+                    display: 'grid',
+                    gap: 12
+                }}>
+                    <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                            Mots-clés / Idées *
+                        </label>
+                        <input
+                            className='theia-input'
+                            value={this.aiKeywords}
+                            onChange={e => { this.aiKeywords = e.target.value; this.update(); }}
+                            placeholder='Ex: belle balade, vue magnifique, cache bien cachée, famille...'
+                            disabled={this.isGeneratingAi || allSubmitted}
+                            style={{ width: '100%', fontSize: 12 }}
+                        />
+                        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+                            Les idées principales pour le contenu du log
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                            Instructions personnalisées (optionnel)
+                        </label>
+                        <textarea
+                            className='theia-input'
+                            value={this.aiCustomInstructions}
+                            onChange={e => { this.aiCustomInstructions = e.target.value; this.update(); }}
+                            placeholder='Ex: Toujours terminer par TFTC, utiliser un ton humoristique, mentionner la météo...'
+                            disabled={this.isGeneratingAi || allSubmitted}
+                            rows={3}
+                            style={{ width: '100%', fontSize: 12, resize: 'vertical' }}
+                        />
+                        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+                            Instructions générales pour personnaliser le style de génération
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                            Exemples de logs (optionnel)
+                        </label>
+                        <textarea
+                            className='theia-input'
+                            value={this.aiExampleLogs}
+                            onChange={e => { this.aiExampleLogs = e.target.value; this.update(); }}
+                            placeholder="Colle ici 1 ou 2 exemples de logs que tu as déjà écrits pour que l'IA reproduise ton style..."
+                            disabled={this.isGeneratingAi || allSubmitted}
+                            rows={4}
+                            style={{ width: '100%', fontSize: 12, resize: 'vertical' }}
+                        />
+                        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+                            L'IA s'inspirera de ces exemples pour adopter ton style d'écriture
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button
+                            className='theia-button primary'
+                            onClick={() => { void this.generateLogWithAi(); }}
+                            disabled={this.isGeneratingAi || allSubmitted || !this.aiKeywords.trim()}
+                            style={{ fontSize: 12, padding: '6px 16px' }}
+                        >
+                            {this.isGeneratingAi ? (
+                                <>
+                                    <i className='fa fa-spinner fa-spin' style={{ marginRight: 6 }} />
+                                    Génération...
+                                </>
+                            ) : (
+                                <>
+                                    🤖 Générer le log
+                                </>
+                            )}
+                        </button>
+                        {this.isGeneratingAi && (
+                            <span style={{ fontSize: 12, opacity: 0.7 }}>
+                                L'IA rédige le log...
+                            </span>
+                        )}
+                    </div>
+                </div>
+            </details>
+        );
+    }
+
     protected render(): React.ReactNode {
         const allSubmitted = this.geocaches.length > 0 && this.geocaches.every(gc => this.isGeocacheSubmittedOk(gc.id));
         const canPrev = !this.isLoadingHistory && this.logHistory.length > 0 && (this.logHistoryCursor < this.logHistory.length - 1);
@@ -2340,6 +2572,8 @@ export class GeocacheLogEditorWidget extends ReactWidget {
                         </div>
                     </div>
                 </details>
+
+                {this.renderAiGenerationPanel(allSubmitted)}
 
                 {!this.isLoading && this.geocaches.length > 0 && (
                     <div style={{ background: 'var(--theia-editor-background)' }}>

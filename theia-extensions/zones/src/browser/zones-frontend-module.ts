@@ -25,6 +25,7 @@ import { GeoAppChatAgent } from './geoapp-chat-agent';
 import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { GeoAppTranslateDescriptionAgentContribution } from './geoapp-translate-description-agent';
 import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agent';
+import { GeoAppLogWriterAgentContribution } from './geoapp-log-writer-agent';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
 import { ZonesMenuContribution } from './zones-menu-contribution';
@@ -156,6 +157,9 @@ export default new ContainerModule(bind => {
 
     bind(GeoAppLogsAnalyzerAgentContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(GeoAppLogsAnalyzerAgentContribution);
+
+    bind(GeoAppLogWriterAgentContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppLogWriterAgentContribution);
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);

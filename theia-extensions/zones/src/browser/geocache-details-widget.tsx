@@ -1471,59 +1471,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
      * Ouvre le Plugin Executor avec le contexte de la géocache actuelle
      */
     protected analyzeWithPlugins = (): void => {
-        if (!this.data) {
-            this.messages.warn('Aucune géocache chargée');
+        const context = this.buildPluginExecutorContext();
+        if (!context) {
             return;
         }
 
-        // Créer le contexte de la géocache pour le plugin executor
-        console.log('[GeocacheDetailsWidget] 🔍 ANALYZE WITH PLUGINS DEBUG');
-        console.log('[GeocacheDetailsWidget] Raw description_html length:', this.data.description_html?.length);
-        
-        // Comme demandé, on passe le HTML brut pour analyse (commentaires, attributs cachés, etc.)
-        const descriptionHtml = this.getEffectiveDescriptionHtml(this.data, this.descriptionVariant);
-
-        const coordinatesRaw = this.data.coordinates_raw || this.data.original_coordinates_raw;
-        let contextCoordinates: GeocacheContext['coordinates'] = undefined;
-        if (coordinatesRaw) {
-            let lat = this.data.latitude;
-            let lon = this.data.longitude;
-
-            if (lat === undefined || lat === null || lon === undefined || lon === null) {
-                const raw = coordinatesRaw.replace(',', ' ');
-                const parts = raw.match(/([NS].*?)([EW].*)/i);
-                if (parts?.[1] && parts?.[2]) {
-                    const parsed = parseGCCoords(parts[1].trim(), parts[2].trim());
-                    if (parsed) {
-                        lat = parsed.lat;
-                        lon = parsed.lon;
-                    }
-                }
-            }
-
-            if (lat !== undefined && lat !== null && lon !== undefined && lon !== null) {
-                contextCoordinates = {
-                    latitude: lat,
-                    longitude: lon,
-                    coordinatesRaw
-                };
-            }
-        }
-
-        const context: GeocacheContext = {
-            geocacheId: this.data.id,
-            gcCode: this.data.gc_code || `GC${this.data.id}`,
-            name: this.data.name,
-            coordinates: contextCoordinates,
-            description: descriptionHtml,
-            hint: this.getDecodedHints(this.data),
-            difficulty: this.data.difficulty,
-            terrain: this.data.terrain,
-            waypoints: this.data.waypoints, // Ajout des waypoints
-            images: this.data.images,
-            checkers: this.data.checkers
-        };
-        
         console.log('[GeocacheDetailsWidget] Context sent to executor:', context);
 
         // Ouvrir le Plugin Executor avec ce contexte
@@ -1534,9 +1486,28 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
      * Ouvre le Plugin Executor spécifiquement pour l'analyse de page (analysis_web_page)
      */
     protected analyzePage = (): void => {
+        const context = this.buildPluginExecutorContext();
+        if (!context) {
+            return;
+        }
+
+        // Ouvrir directement avec analysis_web_page et exécution automatique
+        this.pluginExecutorContribution.openWithContext(context, 'analysis_web_page', true);
+    };
+
+    protected analyzeCode = (): void => {
+        const context = this.buildPluginExecutorContext();
+        if (!context) {
+            return;
+        }
+
+        this.pluginExecutorContribution.openWithContext(context, 'metasolver', true);
+    };
+
+    private buildPluginExecutorContext(): GeocacheContext | undefined {
         if (!this.data) {
             this.messages.warn('Aucune géocache chargée');
-            return;
+            return undefined;
         }
 
         const descriptionHtml = this.getEffectiveDescriptionHtml(this.data, this.descriptionVariant);
@@ -1568,7 +1539,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             }
         }
 
-        const context: GeocacheContext = {
+        return {
             geocacheId: this.data.id,
             gcCode: this.data.gc_code || `GC${this.data.id}`,
             name: this.data.name,
@@ -1581,10 +1552,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             images: this.data.images,
             checkers: this.data.checkers
         };
-
-        // Ouvrir directement avec analysis_web_page et exécution automatique
-        this.pluginExecutorContribution.openWithContext(context, 'analysis_web_page', true);
-    };
+    }
 
     setGeocache(context: { geocacheId: number; name?: string }): void {
         this.geocacheId = context.geocacheId;
@@ -2667,6 +2635,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                         title='Lancer l analyse complète de la page'
                                     >
                                         🔍 Analyse Page
+                                    </button>
+                                    <button
+                                        className='theia-button secondary'
+                                        onClick={this.analyzeCode}
+                                        style={{ fontSize: 12, padding: '4px 12px' }}
+                                        title='Analyser le texte avec Metasolver'
+                                    >
+                                        🧩 Analyse de Code
                                     </button>
                                     <button
                                         className='theia-button secondary'

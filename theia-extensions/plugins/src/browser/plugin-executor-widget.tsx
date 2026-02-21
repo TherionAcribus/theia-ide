@@ -1539,9 +1539,21 @@ const PluginExecutorComponent: React.FC<{
                         state.pluginDetails.input_schema,
                         state.formInputs,
                         handleInputChange,
-                        state.isExecuting
+                        state.isExecuting,
+                        state.pluginDetails.metadata
                     )}
                 </div>
+            )}
+
+            {/* Metasolver: panneau de prévisualisation des plugins éligibles */}
+            {state.pluginDetails && state.selectedPlugin === 'metasolver' && (
+                <MetasolverPresetPanel
+                    preset={state.formInputs.preset || 'all'}
+                    pluginList={state.formInputs.plugin_list || ''}
+                    backendBaseUrl={backendBaseUrl}
+                    onPluginListChange={(newList) => handleInputChange('plugin_list', newList)}
+                    disabled={state.isExecuting}
+                />
             )}
             
             {/* Options avancées : Brute-force et Scoring */}
@@ -1737,6 +1749,202 @@ const PluginExecutorComponent: React.FC<{
 };
 
 /**
+ * Panneau de prévisualisation des plugins éligibles pour le metasolver.
+ * Affiche la liste des plugins correspondant au preset sélectionné
+ * avec des checkboxes pour inclure/exclure des plugins individuels.
+ */
+interface MetasolverEligiblePlugin {
+    name: string;
+    description: string;
+    input_charset: string;
+    tags: string[];
+    priority: number;
+}
+
+const MetasolverPresetPanel: React.FC<{
+    preset: string;
+    pluginList: string;
+    backendBaseUrl: string;
+    onPluginListChange: (newList: string) => void;
+    disabled: boolean;
+}> = ({ preset, pluginList, backendBaseUrl, onPluginListChange, disabled }) => {
+    const [eligiblePlugins, setEligiblePlugins] = React.useState<MetasolverEligiblePlugin[]>([]);
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const [expanded, setExpanded] = React.useState(false);
+    const [excludedPlugins, setExcludedPlugins] = React.useState<Set<string>>(new Set());
+
+    // Charger les plugins éligibles quand le preset change
+    React.useEffect(() => {
+        const fetchEligible = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const res = await fetch(
+                    `${backendBaseUrl}/api/plugins/metasolver/eligible?preset=${encodeURIComponent(preset)}`,
+                    { credentials: 'include' }
+                );
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                const data = await res.json();
+                setEligiblePlugins(data.plugins || []);
+            } catch (err: any) {
+                setError(err?.message || 'Erreur de chargement');
+                setEligiblePlugins([]);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchEligible();
+    }, [preset, backendBaseUrl]);
+
+    // Réinitialiser les exclusions quand le preset change
+    React.useEffect(() => {
+        setExcludedPlugins(new Set());
+        onPluginListChange('');
+    }, [preset]);
+
+    // Quand l'utilisateur modifie les checkboxes, recalculer plugin_list
+    const handleTogglePlugin = React.useCallback((pluginName: string, checked: boolean) => {
+        setExcludedPlugins(prev => {
+            const next = new Set(prev);
+            if (checked) {
+                next.delete(pluginName);
+            } else {
+                next.add(pluginName);
+            }
+
+            // Si aucune exclusion, vider plugin_list (= utiliser le preset tel quel)
+            if (next.size === 0) {
+                onPluginListChange('');
+            } else {
+                // Construire la liste explicite des plugins inclus
+                const included = eligiblePlugins
+                    .filter(p => !next.has(p.name))
+                    .map(p => p.name);
+                onPluginListChange(included.join(', '));
+            }
+
+            return next;
+        });
+    }, [eligiblePlugins, onPluginListChange]);
+
+    const charsetIcons: Record<string, string> = {
+        letters: 'ABC',
+        digits: '123',
+        symbols: '#!@',
+        words: 'Mot',
+        mixed: 'Mix',
+    };
+
+    const includedCount = eligiblePlugins.length - excludedPlugins.size;
+
+    return (
+        <div className='plugin-form'>
+            <div
+                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setExpanded(!expanded)}
+            >
+                <h4 style={{ margin: 0, flex: 1 }}>
+                    🔌 Plugins du preset ({loading ? '...' : `${includedCount}/${eligiblePlugins.length}`})
+                </h4>
+                <span style={{ fontSize: '12px', opacity: 0.7 }}>
+                    {expanded ? '▲ Réduire' : '▼ Détails'}
+                </span>
+            </div>
+
+            {error && (
+                <div style={{ color: 'var(--theia-errorForeground)', fontSize: '12px', marginTop: '4px' }}>
+                    Erreur : {error}
+                </div>
+            )}
+
+            {!expanded && !loading && eligiblePlugins.length > 0 && (
+                <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
+                    {eligiblePlugins.slice(0, 8).map(p => p.name).join(', ')}
+                    {eligiblePlugins.length > 8 && ` +${eligiblePlugins.length - 8} autres`}
+                </div>
+            )}
+
+            {expanded && !loading && (
+                <div style={{ marginTop: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                    {eligiblePlugins.length === 0 && (
+                        <div style={{ fontSize: '13px', opacity: 0.7 }}>Aucun plugin éligible pour ce preset</div>
+                    )}
+                    {eligiblePlugins.map(plugin => {
+                        const isExcluded = excludedPlugins.has(plugin.name);
+                        return (
+                            <div
+                                key={plugin.name}
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    padding: '4px 6px',
+                                    borderBottom: '1px solid var(--theia-panel-border)',
+                                    opacity: isExcluded ? 0.5 : 1,
+                                    fontSize: '12px',
+                                    gap: '6px',
+                                }}
+                            >
+                                <input
+                                    type='checkbox'
+                                    checked={!isExcluded}
+                                    onChange={(e) => handleTogglePlugin(plugin.name, e.target.checked)}
+                                    disabled={disabled}
+                                    style={{ margin: 0 }}
+                                />
+                                <span style={{
+                                    display: 'inline-block',
+                                    width: '28px',
+                                    textAlign: 'center',
+                                    fontSize: '10px',
+                                    background: 'var(--theia-editor-background)',
+                                    borderRadius: '3px',
+                                    padding: '1px 2px',
+                                    fontWeight: 'bold',
+                                    flexShrink: 0,
+                                }}>
+                                    {charsetIcons[plugin.input_charset] || '?'}
+                                </span>
+                                <span style={{ fontWeight: 500, minWidth: '120px' }}>{plugin.name}</span>
+                                <span style={{ opacity: 0.7, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {plugin.description}
+                                </span>
+                                <span style={{
+                                    fontSize: '10px',
+                                    background: 'var(--theia-editor-background)',
+                                    borderRadius: '3px',
+                                    padding: '1px 4px',
+                                    flexShrink: 0,
+                                }}>
+                                    P{plugin.priority}
+                                </span>
+                            </div>
+                        );
+                    })}
+
+                    {excludedPlugins.size > 0 && (
+                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.7 }}>
+                            {excludedPlugins.size} plugin(s) exclu(s).
+                            <span
+                                style={{ cursor: 'pointer', textDecoration: 'underline', marginLeft: '6px' }}
+                                onClick={() => {
+                                    setExcludedPlugins(new Set());
+                                    onPluginListChange('');
+                                }}
+                            >
+                                Tout réactiver
+                            </span>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+/**
  * Génère le formulaire dynamique basé sur le schéma JSON
  * Filtre les champs techniques déjà gérés ailleurs (mode, text, input_text)
  */
@@ -1744,7 +1952,8 @@ function renderDynamicForm(
     schema: any,
     values: Record<string, any>,
     onChange: (key: string, value: any) => void,
-    disabled: boolean
+    disabled: boolean,
+    metadata?: any
 ): React.ReactNode {
     if (!schema?.properties) {
         return <div>Aucun paramètre requis</div>;
@@ -1760,10 +1969,14 @@ function renderDynamicForm(
         return <div style={{ fontSize: '13px', opacity: 0.7 }}>Aucun paramètre supplémentaire requis</div>;
     }
 
+    // Construire un map de labels pour les options de type select
+    const inputTypes = metadata?.input_types || {};
+
     return filteredEntries.map(([key, propSchema]) => {
         const prop = propSchema as any;
         const value = values[key];
         const isRequired = schema.required?.includes(key);
+        const metaField = inputTypes[key];
 
         return (
             <div key={key} className='form-field'>
@@ -1772,7 +1985,7 @@ function renderDynamicForm(
                     {isRequired && <span className='required'>*</span>}
                 </label>
                 {prop.description && <div className='field-description'>{prop.description}</div>}
-                {renderInputField(key, prop, value, onChange, disabled)}
+                {renderInputField(key, prop, value, onChange, disabled, metaField)}
             </div>
         );
     });
@@ -1786,10 +1999,22 @@ function renderInputField(
     schema: any,
     value: any,
     onChange: (key: string, value: any) => void,
-    disabled: boolean
+    disabled: boolean,
+    metaField?: any
 ): React.ReactNode {
-    // Enum -> Select
+    // Enum -> Select (with optional labels from metadata)
     if (schema.enum) {
+        // Build a value->label map from metadata options if available
+        const labelMap: Record<string, string> = {};
+        const metaOptions = metaField?.options;
+        if (Array.isArray(metaOptions)) {
+            for (const opt of metaOptions) {
+                if (typeof opt === 'object' && opt.value !== undefined) {
+                    labelMap[String(opt.value)] = opt.label || String(opt.value);
+                }
+            }
+        }
+
         return (
             <select
                 value={value || ''}
@@ -1797,7 +2022,7 @@ function renderInputField(
                 disabled={disabled}
             >
                 {schema.enum.map((option: string) => (
-                    <option key={option} value={option}>{option}</option>
+                    <option key={option} value={option}>{labelMap[option] || option}</option>
                 ))}
             </select>
         );

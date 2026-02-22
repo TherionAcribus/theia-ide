@@ -236,6 +236,32 @@ export interface PluginExecutorConfig {
 }
 
 /**
+ * Événement SSE streaming du metasolver
+ */
+interface StreamingEvent {
+    event: 'init' | 'plugin_start' | 'plugin_done' | 'plugin_error' | 'progress' | 'result' | 'error';
+    data: any;
+    timestamp: number;
+}
+
+interface StreamingProgress {
+    completed: number;
+    total: number;
+    percentage: number;
+    results_so_far: number;
+    failures_so_far: number;
+    elapsed_ms: number;
+}
+
+interface CoordsDetectionProgress {
+    current: number;
+    total: number;
+    found: number;
+    currentText: string;
+    phase: 'running' | 'done';
+}
+
+/**
  * État du composant d'exécution
  */
 interface ExecutorState {
@@ -256,6 +282,15 @@ interface ExecutorState {
     
     // Historique pour l'enchaînement (mode geocache)
     resultsHistory: PluginResult[];
+
+    // Streaming metasolver
+    streamingEvents: StreamingEvent[];
+    streamingProgress: StreamingProgress | null;
+    streamingVerbosity: 'minimal' | 'normal' | 'detailed';
+    isStreaming: boolean;
+
+    // Détection de coordonnées post-exécution
+    coordsDetectionProgress: CoordsDetectionProgress | null;
 }
 
 @injectable()
@@ -520,7 +555,12 @@ const PluginExecutorComponent: React.FC<{
             mode: config.mode,
             canSelectPlugin,
             canChangeMode,
-            resultsHistory: []
+            resultsHistory: [],
+            streamingEvents: [],
+            streamingProgress: null,
+            streamingVerbosity: 'normal',
+            isStreaming: false,
+            coordsDetectionProgress: null
         };
     });
     
@@ -555,7 +595,12 @@ const PluginExecutorComponent: React.FC<{
             mode: config.mode,
             canSelectPlugin,
             canChangeMode,
-            resultsHistory: []
+            resultsHistory: [],
+            streamingEvents: [],
+            streamingProgress: null,
+            streamingVerbosity: prev.streamingVerbosity,
+            isStreaming: false,
+            coordsDetectionProgress: null
         }));
         
         setIsLoadingInitial(config.mode === 'plugin' && !!config.pluginName);
@@ -764,7 +809,21 @@ const PluginExecutorComponent: React.FC<{
             return;
         }
         
-        console.log('[Coordinates Detection] Analyse de', result.results.length, 'résultat(s)');
+        const totalResults = result.results.length;
+        let foundCount = 0;
+        console.log('[Coordinates Detection] Analyse de', totalResults, 'résultat(s)');
+
+        // Signaler le début de la phase de détection de coordonnées
+        setState(prev => ({
+            ...prev,
+            coordsDetectionProgress: {
+                current: 0,
+                total: totalResults,
+                found: 0,
+                currentText: 'Initialisation…',
+                phase: 'running',
+            },
+        }));
         
         // Récupérer les coordonnées d'origine si en mode GEOCACHE
         const originCoords = config.mode === 'geocache' && config.geocacheContext?.coordinates 
@@ -775,10 +834,26 @@ const PluginExecutorComponent: React.FC<{
             : undefined;
         
         // Parcourir chaque résultat et détecter les coordonnées
-        for (const item of result.results) {
+        for (let itemIdx = 0; itemIdx < result.results.length; itemIdx++) {
+            const item = result.results[itemIdx];
             if (item.text_output) {
                 try {
-                    console.log('[Coordinates Detection] Analyse du texte:', item.text_output.substring(0, 50), '...');
+                    const textSnippet = item.text_output.length > 50
+                        ? item.text_output.substring(0, 50) + '…'
+                        : item.text_output;
+                    console.log('[Coordinates Detection] Analyse du texte:', textSnippet);
+
+                    // Mise à jour du progrès
+                    setState(prev => ({
+                        ...prev,
+                        coordsDetectionProgress: {
+                            current: itemIdx,
+                            total: totalResults,
+                            found: foundCount,
+                            currentText: textSnippet,
+                            phase: 'running',
+                        },
+                    }));
 
                     const writtenMode = state.formInputs.detect_written_coordinates === true;
                     const writtenLangMode = String(state.formInputs.written_coordinates_language || 'auto');
@@ -798,6 +873,7 @@ const PluginExecutorComponent: React.FC<{
                     });
                     
                     if (coords.exist) {
+                        foundCount++;
                         console.log('[Coordinates Detection] Coordonnées détectées!', coords);
                         item.coordinates = {
                             latitude: coords.ddm_lat || '',
@@ -849,6 +925,18 @@ const PluginExecutorComponent: React.FC<{
                 }
             }
         }
+
+        // Signaler la fin de la phase de détection de coordonnées
+        setState(prev => ({
+            ...prev,
+            coordsDetectionProgress: {
+                current: totalResults,
+                total: totalResults,
+                found: foundCount,
+                currentText: foundCount > 0 ? `${foundCount} coordonnée(s) trouvée(s)` : 'Aucune coordonnée trouvée',
+                phase: 'done',
+            },
+        }));
     };
 
     const normalizeInputsForPlugin = (inputs: Record<string, any>, details: PluginDetails): { normalizedInputs: Record<string, any>; warnings: string[] } => {
@@ -1057,10 +1145,122 @@ const PluginExecutorComponent: React.FC<{
             return;
         }
 
-        setState(prev => ({ ...prev, isExecuting: true, error: null, result: null }));
+        setState(prev => ({
+            ...prev,
+            isExecuting: true,
+            error: null,
+            result: null,
+            streamingEvents: [],
+            streamingProgress: null,
+            isStreaming: false,
+            coordsDetectionProgress: null,
+        }));
 
         try {
-            if (state.executionMode === 'sync') {
+            // Metasolver en mode sync → streaming SSE
+            const isMetasolver = state.selectedPlugin === 'metasolver';
+            if (state.executionMode === 'sync' && isMetasolver) {
+                console.log('[Metasolver Streaming] Démarrage SSE avec inputs:', inputsToSend);
+                setState(prev => ({ ...prev, isStreaming: true }));
+
+                const response = await fetch(
+                    `${backendBaseUrl}/api/plugins/metasolver/execute-stream`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ inputs: inputsToSend }),
+                    }
+                );
+
+                if (!response.ok || !response.body) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finalResult: PluginResult | null = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Parse SSE events from buffer
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // keep incomplete line in buffer
+
+                    let currentEventType = '';
+                    let currentData = '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            currentEventType = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            currentData = line.slice(6);
+                        } else if (line === '' && currentEventType && currentData) {
+                            // End of SSE message
+                            try {
+                                const parsed = JSON.parse(currentData);
+                                const sseEvent: StreamingEvent = {
+                                    event: currentEventType as StreamingEvent['event'],
+                                    data: parsed,
+                                    timestamp: Date.now(),
+                                };
+
+                                console.log(`[Metasolver SSE] ${currentEventType}:`, parsed);
+
+                                if (currentEventType === 'progress') {
+                                    setState(prev => ({
+                                        ...prev,
+                                        streamingProgress: parsed,
+                                        streamingEvents: [...prev.streamingEvents, sseEvent],
+                                    }));
+                                } else if (currentEventType === 'result') {
+                                    finalResult = parsed;
+                                    setState(prev => ({
+                                        ...prev,
+                                        streamingEvents: [...prev.streamingEvents, sseEvent],
+                                    }));
+                                } else {
+                                    setState(prev => ({
+                                        ...prev,
+                                        streamingEvents: [...prev.streamingEvents, sseEvent],
+                                    }));
+                                }
+                            } catch (parseErr) {
+                                console.warn('[Metasolver SSE] Parse error:', parseErr);
+                            }
+                            currentEventType = '';
+                            currentData = '';
+                        }
+                    }
+                }
+
+                if (finalResult) {
+                    // Détecter les coordonnées si l'option est activée
+                    if (state.formInputs.detect_coordinates && finalResult.results) {
+                        await detectCoordinatesInResults(finalResult);
+                    }
+                    setState(prev => ({
+                        ...prev,
+                        result: finalResult,
+                        isExecuting: false,
+                        isStreaming: false,
+                    }));
+                    messageService.info('Metasolver terminé avec succès');
+                } else {
+                    setState(prev => ({
+                        ...prev,
+                        isExecuting: false,
+                        isStreaming: false,
+                        error: 'Aucun résultat final reçu du streaming',
+                    }));
+                }
+
+            } else if (state.executionMode === 'sync') {
                 console.log('Exécution synchrone avec inputs:', inputsToSend);
                 const result = await pluginsService.executePlugin(state.selectedPlugin, inputsToSend);
                 console.log('Résultat reçu:', result);
@@ -1084,7 +1284,7 @@ const PluginExecutorComponent: React.FC<{
         } catch (error: any) {
             console.error('Erreur lors de l\'exécution:', error);
             const errorMsg = error.message || String(error);
-            setState(prev => ({ ...prev, error: errorMsg, isExecuting: false }));
+            setState(prev => ({ ...prev, error: errorMsg, isExecuting: false, isStreaming: false }));
             messageService.error(`Erreur lors de l'exécution: ${errorMsg}`);
         }
     };
@@ -1677,6 +1877,27 @@ const PluginExecutorComponent: React.FC<{
                             Asynchrone
                         </label>
                     </div>
+
+                    {/* Sélecteur de verbosité pour metasolver */}
+                    {state.selectedPlugin === 'metasolver' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
+                            <span style={{ opacity: 0.7 }}>Détail :</span>
+                            {(['minimal', 'normal', 'detailed'] as const).map(level => (
+                                <label key={level} style={{ cursor: 'pointer' }}>
+                                    <input
+                                        type='radio'
+                                        value={level}
+                                        checked={state.streamingVerbosity === level}
+                                        onChange={() => setState(prev => ({ ...prev, streamingVerbosity: level }))}
+                                        disabled={state.isExecuting}
+                                        style={{ marginRight: '2px' }}
+                                    />
+                                    {level === 'minimal' ? 'Min' : level === 'normal' ? 'Normal' : 'Détaillé'}
+                                </label>
+                            ))}
+                        </div>
+                    )}
+
                     <button
                         className='theia-button main'
                         onClick={handleExecute}
@@ -1685,6 +1906,16 @@ const PluginExecutorComponent: React.FC<{
                         {state.isExecuting ? 'Exécution...' : 'Exécuter'}
                     </button>
                 </div>
+            )}
+
+            {/* Panneau de progression streaming metasolver (Phase 1: plugins + Phase 2: coords) */}
+            {(state.isStreaming || state.coordsDetectionProgress !== null) && state.streamingEvents.length > 0 && (
+                <MetasolverStreamingPanel
+                    events={state.streamingEvents}
+                    progress={state.streamingProgress}
+                    verbosity={state.streamingVerbosity}
+                    coordsDetectionProgress={state.coordsDetectionProgress}
+                />
             )}
 
             {/* Affichage des résultats */}
@@ -1742,6 +1973,265 @@ const PluginExecutorComponent: React.FC<{
                     <h4>⏱ Tâche créée</h4>
                     <div>ID: {state.task.task_id}</div>
                     <div>Statut: {state.task.status}</div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+/**
+ * Panneau de progression streaming pour le metasolver.
+ * Affiche en temps réel l'avancement de l'exécution des sous-plugins.
+ */
+const MetasolverStreamingPanel: React.FC<{
+    events: StreamingEvent[];
+    progress: StreamingProgress | null;
+    verbosity: 'minimal' | 'normal' | 'detailed';
+    coordsDetectionProgress?: CoordsDetectionProgress | null;
+}> = ({ events, progress, verbosity, coordsDetectionProgress }) => {
+    const scrollRef = React.useRef<HTMLDivElement>(null);
+
+    // Auto-scroll vers le bas quand de nouveaux événements arrivent
+    React.useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+    }, [events.length]);
+
+    const initEvent = events.find(e => e.event === 'init');
+    const totalPlugins = initEvent?.data?.total_plugins || progress?.total || 0;
+    const pluginNames: string[] = initEvent?.data?.plugins || [];
+
+    // Construire le statut de chaque plugin
+    const pluginStatuses = React.useMemo(() => {
+        const statuses: Record<string, { status: 'pending' | 'running' | 'done' | 'error'; time_ms?: number; result_count?: number; reason?: string; results?: any[] }> = {};
+        for (const name of pluginNames) {
+            statuses[name] = { status: 'pending' };
+        }
+        for (const evt of events) {
+            const name = evt.data?.plugin;
+            if (!name) continue;
+            if (evt.event === 'plugin_start') {
+                statuses[name] = { status: 'running' };
+            } else if (evt.event === 'plugin_done') {
+                statuses[name] = {
+                    status: 'done',
+                    time_ms: evt.data.execution_time_ms,
+                    result_count: evt.data.result_count,
+                    results: evt.data.results,
+                };
+            } else if (evt.event === 'plugin_error') {
+                statuses[name] = {
+                    status: 'error',
+                    time_ms: evt.data.execution_time_ms,
+                    reason: evt.data.reason,
+                };
+            }
+        }
+        return statuses;
+    }, [events, pluginNames]);
+
+    const pct = progress?.percentage ?? 0;
+    const elapsed = progress?.elapsed_ms ? (progress.elapsed_ms / 1000).toFixed(1) : '0';
+    const phase1Done = pct >= 100;
+
+    const statusIcon = (s: string) => {
+        switch (s) {
+            case 'running': return '⏳';
+            case 'done': return '✅';
+            case 'error': return '❌';
+            default: return '⬜';
+        }
+    };
+
+    // Phase 2 progress
+    const cdp = coordsDetectionProgress;
+    const coordsPct = cdp && cdp.total > 0 ? Math.round((cdp.current / cdp.total) * 100) : 0;
+
+    return (
+        <div className='plugin-form' style={{ padding: '10px' }}>
+            <h4 style={{ margin: '0 0 8px 0' }}>📡 Progression en direct</h4>
+
+            {/* Phase 1: Exécution des plugins */}
+            <div style={{ fontSize: '11px', fontWeight: 'bold', opacity: 0.6, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                {phase1Done ? '✅' : '⏳'} Phase 1 — Exécution des plugins
+            </div>
+
+            {/* Barre de progression Phase 1 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <div style={{
+                    flex: 1,
+                    height: '6px',
+                    background: 'var(--theia-editor-background)',
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                }}>
+                    <div style={{
+                        width: `${pct}%`,
+                        height: '100%',
+                        background: phase1Done
+                            ? 'var(--theia-successBackground, #4caf50)'
+                            : 'var(--theia-progressBar-background, #0078d4)',
+                        borderRadius: '3px',
+                        transition: 'width 0.3s ease',
+                    }} />
+                </div>
+                <span style={{ fontSize: '11px', fontWeight: 'bold', minWidth: '36px', textAlign: 'right' }}>
+                    {pct.toFixed(0)}%
+                </span>
+            </div>
+
+            {/* Résumé Phase 1 */}
+            <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '8px', display: 'flex', gap: '10px' }}>
+                <span>{progress?.completed ?? 0}/{totalPlugins} plugins</span>
+                <span>{progress?.results_so_far ?? 0} rés.</span>
+                {(progress?.failures_so_far ?? 0) > 0 && (
+                    <span style={{ color: 'var(--theia-errorForeground)' }}>
+                        {progress!.failures_so_far} err.
+                    </span>
+                )}
+                <span style={{ opacity: 0.6 }}>{elapsed}s</span>
+            </div>
+
+            {/* Phase 2: Détection de coordonnées */}
+            {cdp && (
+                <>
+                    <div style={{
+                        fontSize: '11px', fontWeight: 'bold', opacity: 0.6, marginBottom: '4px',
+                        textTransform: 'uppercase', letterSpacing: '0.5px',
+                        borderTop: '1px solid var(--theia-panel-border)',
+                        paddingTop: '8px',
+                    }}>
+                        {cdp.phase === 'done' ? '✅' : '⏳'} Phase 2 — Détection de coordonnées
+                    </div>
+
+                    {/* Barre de progression Phase 2 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <div style={{
+                            flex: 1,
+                            height: '6px',
+                            background: 'var(--theia-editor-background)',
+                            borderRadius: '3px',
+                            overflow: 'hidden',
+                        }}>
+                            <div style={{
+                                width: `${coordsPct}%`,
+                                height: '100%',
+                                background: cdp.phase === 'done'
+                                    ? 'var(--theia-successBackground, #4caf50)'
+                                    : '#e6a817',
+                                borderRadius: '3px',
+                                transition: 'width 0.2s ease',
+                            }} />
+                        </div>
+                        <span style={{ fontSize: '11px', fontWeight: 'bold', minWidth: '36px', textAlign: 'right' }}>
+                            {coordsPct}%
+                        </span>
+                    </div>
+
+                    {/* Résumé Phase 2 */}
+                    <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '4px', display: 'flex', gap: '10px' }}>
+                        <span>{cdp.current}/{cdp.total} textes analysés</span>
+                        <span>📍 {cdp.found} coordonnée(s)</span>
+                    </div>
+
+                    {/* Texte en cours d'analyse (verbosity normal ou detailed) */}
+                    {verbosity !== 'minimal' && cdp.phase === 'running' && cdp.currentText && (
+                        <div style={{
+                            fontSize: '11px',
+                            opacity: 0.5,
+                            fontStyle: 'italic',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            marginBottom: '4px',
+                        }}>
+                            🔍 {cdp.currentText}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* Liste des plugins (verbosity normal ou detailed) */}
+            {verbosity !== 'minimal' && pluginNames.length > 0 && (
+                <div
+                    ref={scrollRef}
+                    style={{
+                        maxHeight: verbosity === 'detailed' ? '400px' : '200px',
+                        overflowY: 'auto',
+                        fontSize: '12px',
+                        borderTop: '1px solid var(--theia-panel-border)',
+                        paddingTop: '6px',
+                    }}
+                >
+                    {pluginNames.map(name => {
+                        const s = pluginStatuses[name] || { status: 'pending' };
+                        return (
+                            <div key={name} style={{ marginBottom: verbosity === 'detailed' ? '6px' : '2px' }}>
+                                <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    opacity: s.status === 'pending' ? 0.4 : 1,
+                                }}>
+                                    <span>{statusIcon(s.status)}</span>
+                                    <span style={{
+                                        fontWeight: s.status === 'running' ? 'bold' : 'normal',
+                                        minWidth: '130px',
+                                    }}>
+                                        {name}
+                                    </span>
+                                    {s.status === 'done' && (
+                                        <span style={{ opacity: 0.6 }}>
+                                            {s.result_count} rés. · {s.time_ms}ms
+                                        </span>
+                                    )}
+                                    {s.status === 'error' && (
+                                        <span style={{ color: 'var(--theia-errorForeground)', opacity: 0.8 }}>
+                                            {s.reason ? (s.reason.length > 60 ? s.reason.slice(0, 60) + '…' : s.reason) : 'Erreur'}
+                                            {s.time_ms ? ` · ${s.time_ms}ms` : ''}
+                                        </span>
+                                    )}
+                                    {s.status === 'running' && (
+                                        <span style={{ opacity: 0.6, fontStyle: 'italic' }}>en cours…</span>
+                                    )}
+                                </div>
+
+                                {/* Résultats inline (verbosity detailed) */}
+                                {verbosity === 'detailed' && s.status === 'done' && s.results && s.results.length > 0 && (
+                                    <div style={{
+                                        marginLeft: '24px',
+                                        marginTop: '2px',
+                                        padding: '4px 8px',
+                                        background: 'var(--theia-editor-background)',
+                                        borderRadius: '3px',
+                                        fontSize: '11px',
+                                        maxHeight: '80px',
+                                        overflowY: 'auto',
+                                    }}>
+                                        {s.results.slice(0, 3).map((r: any, i: number) => (
+                                            <div key={i} style={{ marginBottom: '2px' }}>
+                                                <span style={{ opacity: 0.6 }}>#{i + 1}</span>{' '}
+                                                {r.text_output
+                                                    ? (r.text_output.length > 120
+                                                        ? r.text_output.slice(0, 120) + '…'
+                                                        : r.text_output)
+                                                    : '(pas de texte)'}
+                                                {r.confidence !== undefined && (
+                                                    <span style={{ marginLeft: '6px', opacity: 0.5 }}>
+                                                        [{(r.confidence * 100).toFixed(0)}%]
+                                                    </span>
+                                                )}
+                                            </div>
+                                        ))}
+                                        {s.results.length > 3 && (
+                                            <div style={{ opacity: 0.5 }}>+{s.results.length - 3} autres résultats</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>

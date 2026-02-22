@@ -98,11 +98,11 @@ export class PluginsServiceImpl implements IPluginsService {
     /**
      * Exécute un plugin de manière synchrone.
      */
-    async executePlugin(name: string, inputs: PluginInputs): Promise<PluginResult> {
+    async executePlugin(name: string, inputs: PluginInputs, signal?: AbortSignal): Promise<PluginResult> {
         try {
             const response = await this.client.post(`/api/plugins/${name}/execute`, {
                 inputs
-            });
+            }, { signal });
             
             return response.data;
             

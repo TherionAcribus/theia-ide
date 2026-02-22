@@ -283,7 +283,7 @@ export interface PluginsService {
     /**
      * Exécute un plugin de manière synchrone.
      */
-    executePlugin(name: string, inputs: PluginInputs): Promise<PluginResult>;
+    executePlugin(name: string, inputs: PluginInputs, signal?: AbortSignal): Promise<PluginResult>;
     
     /**
      * Récupère le statut de tous les plugins.

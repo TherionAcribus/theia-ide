@@ -564,6 +564,12 @@ const PluginExecutorComponent: React.FC<{
         };
     });
     
+    // Contrôle d'exécution : arrêt et pause
+    const abortControllerRef = React.useRef<AbortController | null>(null);
+    const pauseResolverRef = React.useRef<(() => void) | null>(null);
+    const isPausedRef = React.useRef(false);
+    const [isPaused, setIsPaused] = React.useState(false);
+
     // État pour savoir si on charge le plugin initial (mode PLUGIN uniquement)
     const [isLoadingInitial, setIsLoadingInitial] = React.useState<boolean>(
         config.mode === 'plugin' && !!config.pluginName
@@ -804,7 +810,7 @@ const PluginExecutorComponent: React.FC<{
     /**
      * Détecte les coordonnées GPS dans les résultats d'un plugin
      */
-    const detectCoordinatesInResults = async (result: PluginResult) => {
+    const detectCoordinatesInResults = async (result: PluginResult, signal?: AbortSignal) => {
         if (!result.results || result.results.length === 0) {
             return;
         }
@@ -835,6 +841,26 @@ const PluginExecutorComponent: React.FC<{
         
         // Parcourir chaque résultat et détecter les coordonnées
         for (let itemIdx = 0; itemIdx < result.results.length; itemIdx++) {
+            // Vérifier l'annulation
+            if (signal?.aborted) {
+                console.log('[Coordinates Detection] Annulé à', itemIdx, '/', totalResults);
+                break;
+            }
+
+            // Attendre si en pause
+            if (isPausedRef.current) {
+                setState(prev => ({
+                    ...prev,
+                    coordsDetectionProgress: prev.coordsDetectionProgress
+                        ? { ...prev.coordsDetectionProgress, currentText: '⏸ En pause…' }
+                        : prev.coordsDetectionProgress,
+                }));
+                await new Promise<void>(resolve => {
+                    pauseResolverRef.current = resolve;
+                });
+                if (signal?.aborted) break;
+            }
+
             const item = result.results[itemIdx];
             if (item.text_output) {
                 try {
@@ -1145,6 +1171,11 @@ const PluginExecutorComponent: React.FC<{
             return;
         }
 
+        // Créer un nouveau AbortController pour cette exécution
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
+        setIsPaused(false);
+
         setState(prev => ({
             ...prev,
             isExecuting: true,
@@ -1170,6 +1201,7 @@ const PluginExecutorComponent: React.FC<{
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                         body: JSON.stringify({ inputs: inputsToSend }),
+                        signal: abortController.signal,
                     }
                 );
 
@@ -1182,67 +1214,95 @@ const PluginExecutorComponent: React.FC<{
                 let buffer = '';
                 let finalResult: PluginResult | null = null;
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                try {
+                    while (true) {
+                        if (abortController.signal.aborted) break;
+                        const { done, value } = await reader.read();
+                        if (done) break;
 
-                    buffer += decoder.decode(value, { stream: true });
+                        buffer += decoder.decode(value, { stream: true });
 
-                    // Parse SSE events from buffer
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || ''; // keep incomplete line in buffer
+                        // Parse SSE events from buffer
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || ''; // keep incomplete line in buffer
 
-                    let currentEventType = '';
-                    let currentData = '';
+                        let currentEventType = '';
+                        let currentData = '';
 
-                    for (const line of lines) {
-                        if (line.startsWith('event: ')) {
-                            currentEventType = line.slice(7).trim();
-                        } else if (line.startsWith('data: ')) {
-                            currentData = line.slice(6);
-                        } else if (line === '' && currentEventType && currentData) {
-                            // End of SSE message
-                            try {
-                                const parsed = JSON.parse(currentData);
-                                const sseEvent: StreamingEvent = {
-                                    event: currentEventType as StreamingEvent['event'],
-                                    data: parsed,
-                                    timestamp: Date.now(),
-                                };
+                        for (const line of lines) {
+                            if (line.startsWith('event: ')) {
+                                currentEventType = line.slice(7).trim();
+                            } else if (line.startsWith('data: ')) {
+                                currentData = line.slice(6);
+                            } else if (line === '' && currentEventType && currentData) {
+                                // End of SSE message
+                                try {
+                                    const parsed = JSON.parse(currentData);
+                                    const sseEvent: StreamingEvent = {
+                                        event: currentEventType as StreamingEvent['event'],
+                                        data: parsed,
+                                        timestamp: Date.now(),
+                                    };
 
-                                console.log(`[Metasolver SSE] ${currentEventType}:`, parsed);
+                                    console.log(`[Metasolver SSE] ${currentEventType}:`, parsed);
 
-                                if (currentEventType === 'progress') {
-                                    setState(prev => ({
-                                        ...prev,
-                                        streamingProgress: parsed,
-                                        streamingEvents: [...prev.streamingEvents, sseEvent],
-                                    }));
-                                } else if (currentEventType === 'result') {
-                                    finalResult = parsed;
-                                    setState(prev => ({
-                                        ...prev,
-                                        streamingEvents: [...prev.streamingEvents, sseEvent],
-                                    }));
-                                } else {
-                                    setState(prev => ({
-                                        ...prev,
-                                        streamingEvents: [...prev.streamingEvents, sseEvent],
-                                    }));
+                                    if (currentEventType === 'progress') {
+                                        setState(prev => ({
+                                            ...prev,
+                                            streamingProgress: parsed,
+                                            streamingEvents: [...prev.streamingEvents, sseEvent],
+                                        }));
+                                    } else if (currentEventType === 'result') {
+                                        finalResult = parsed;
+                                        setState(prev => ({
+                                            ...prev,
+                                            streamingEvents: [...prev.streamingEvents, sseEvent],
+                                        }));
+                                    } else {
+                                        setState(prev => ({
+                                            ...prev,
+                                            streamingEvents: [...prev.streamingEvents, sseEvent],
+                                        }));
+                                    }
+                                } catch (parseErr) {
+                                    console.warn('[Metasolver SSE] Parse error:', parseErr);
                                 }
-                            } catch (parseErr) {
-                                console.warn('[Metasolver SSE] Parse error:', parseErr);
+                                currentEventType = '';
+                                currentData = '';
                             }
-                            currentEventType = '';
-                            currentData = '';
                         }
                     }
+                } finally {
+                    reader.releaseLock();
+                }
+
+                if (abortController.signal.aborted) {
+                    console.log('[Metasolver Streaming] Exécution annulée par l\'utilisateur');
+                    setState(prev => ({
+                        ...prev,
+                        isExecuting: false,
+                        isStreaming: false,
+                        error: 'Exécution annulée',
+                    }));
+                    messageService.warn('Exécution annulée');
+                    return;
                 }
 
                 if (finalResult) {
                     // Détecter les coordonnées si l'option est activée
                     if (state.formInputs.detect_coordinates && finalResult.results) {
-                        await detectCoordinatesInResults(finalResult);
+                        await detectCoordinatesInResults(finalResult, abortController.signal);
+                    }
+                    if (abortController.signal.aborted) {
+                        setState(prev => ({
+                            ...prev,
+                            result: finalResult,
+                            isExecuting: false,
+                            isStreaming: false,
+                            error: 'Exécution interrompue (résultats partiels)',
+                        }));
+                        messageService.warn('Détection de coordonnées interrompue — résultats partiels affichés');
+                        return;
                     }
                     setState(prev => ({
                         ...prev,
@@ -1262,15 +1322,22 @@ const PluginExecutorComponent: React.FC<{
 
             } else if (state.executionMode === 'sync') {
                 console.log('Exécution synchrone avec inputs:', inputsToSend);
-                const result = await pluginsService.executePlugin(state.selectedPlugin, inputsToSend);
+                const result = await pluginsService.executePlugin(
+                    state.selectedPlugin, inputsToSend, abortController.signal
+                );
                 console.log('Résultat reçu:', result);
                 
                 // Détecter les coordonnées si l'option est activée
                 if (state.formInputs.detect_coordinates && result.results) {
                     console.log('[Coordinates Detection] Détection activée, analyse des résultats...');
-                    await detectCoordinatesInResults(result);
+                    await detectCoordinatesInResults(result, abortController.signal);
                 }
                 
+                if (abortController.signal.aborted) {
+                    setState(prev => ({ ...prev, result, isExecuting: false, error: 'Exécution interrompue (résultats partiels)' }));
+                    messageService.warn('Détection de coordonnées interrompue — résultats partiels affichés');
+                    return;
+                }
                 setState(prev => ({ ...prev, result, isExecuting: false }));
                 messageService.info('Plugin exécuté avec succès');
             } else {
@@ -1282,10 +1349,58 @@ const PluginExecutorComponent: React.FC<{
                 // TODO: Ouvrir le Tasks Monitor ou afficher le suivi ici
             }
         } catch (error: any) {
+            if (error.name === 'AbortError' || abortController.signal.aborted) {
+                console.log('[Plugin Executor] Exécution annulée par l\'utilisateur');
+                setState(prev => ({ ...prev, error: 'Exécution annulée', isExecuting: false, isStreaming: false }));
+                messageService.warn('Exécution annulée');
+                return;
+            }
             console.error('Erreur lors de l\'exécution:', error);
             const errorMsg = error.message || String(error);
             setState(prev => ({ ...prev, error: errorMsg, isExecuting: false, isStreaming: false }));
             messageService.error(`Erreur lors de l'exécution: ${errorMsg}`);
+        } finally {
+            abortControllerRef.current = null;
+            isPausedRef.current = false;
+            setIsPaused(false);
+        }
+    };
+
+    /**
+     * Arrête l'exécution en cours (tous les plugins)
+     */
+    const handleStop = () => {
+        if (abortControllerRef.current) {
+            console.log('[Plugin Executor] Arrêt demandé par l\'utilisateur');
+            abortControllerRef.current.abort();
+            // Résoudre aussi la pause si en pause pour débloquer la boucle
+            isPausedRef.current = false;
+            if (pauseResolverRef.current) {
+                pauseResolverRef.current();
+                pauseResolverRef.current = null;
+            }
+            setIsPaused(false);
+        }
+    };
+
+    /**
+     * Met en pause / reprend l'exécution (détection de coordonnées et streaming)
+     */
+    const handlePauseToggle = () => {
+        if (isPausedRef.current) {
+            // Reprendre
+            isPausedRef.current = false;
+            setIsPaused(false);
+            if (pauseResolverRef.current) {
+                pauseResolverRef.current();
+                pauseResolverRef.current = null;
+            }
+            console.log('[Plugin Executor] Reprise de l\'exécution');
+        } else {
+            // Mettre en pause — la boucle s'arrêtera à la prochaine itération
+            isPausedRef.current = true;
+            setIsPaused(true);
+            console.log('[Plugin Executor] Pause demandée');
         }
     };
 
@@ -1898,13 +2013,62 @@ const PluginExecutorComponent: React.FC<{
                         </div>
                     )}
 
-                    <button
-                        className='theia-button main'
-                        onClick={handleExecute}
-                        disabled={state.isExecuting}
-                    >
-                        {state.isExecuting ? 'Exécution...' : 'Exécuter'}
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        {!state.isExecuting ? (
+                            <button
+                                className='theia-button main'
+                                onClick={handleExecute}
+                            >
+                                Exécuter
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    className='theia-button main'
+                                    disabled
+                                    style={{ opacity: 0.7 }}
+                                >
+                                    Exécution…
+                                </button>
+                                <button
+                                    className='theia-button secondary'
+                                    onClick={handlePauseToggle}
+                                    title={isPaused ? 'Reprendre' : 'Mettre en pause'}
+                                    style={{
+                                        minWidth: '32px',
+                                        padding: '4px 8px',
+                                        background: isPaused
+                                            ? 'var(--theia-successBackground, #4caf50)'
+                                            : 'var(--theia-warningBackground, #e6a817)',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                    }}
+                                >
+                                    {isPaused ? '▶' : '⏸'}
+                                </button>
+                                <button
+                                    className='theia-button secondary'
+                                    onClick={handleStop}
+                                    title={"Arrêter l'exécution"}
+                                    style={{
+                                        minWidth: '32px',
+                                        padding: '4px 8px',
+                                        background: 'var(--theia-errorBackground, #d32f2f)',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                    }}
+                                >
+                                    ⏹
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
             )}
 

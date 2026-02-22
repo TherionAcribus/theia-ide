@@ -26,7 +26,7 @@ export default new ContainerModule(bind => {
     bind(AlphabetViewerWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: AlphabetViewerWidget.ID_PREFIX,
-        createWidget: (options: { alphabetId: string }) => {
+        createWidget: (options: { alphabetId: string; instanceId?: number }) => {
             // Créer un container enfant pour isoler les instances
             const child = ctx.container.createChild();
             child.bind('alphabetId').toConstantValue(options.alphabetId);
@@ -34,8 +34,12 @@ export default new ContainerModule(bind => {
             // Créer le widget avec ses dépendances injectées
             const widget = child.get(AlphabetViewerWidget);
 
-            // S'assurer que l'ID est défini
-            widget.id = `${AlphabetViewerWidget.ID_PREFIX}-${options.alphabetId}`;
+            // S'assurer que l'ID est défini (avec instanceId si disponible)
+            if (options.instanceId) {
+                widget.id = `${AlphabetViewerWidget.ID_PREFIX}-${options.alphabetId}#${options.instanceId}`;
+            } else {
+                widget.id = `${AlphabetViewerWidget.ID_PREFIX}-${options.alphabetId}`;
+            }
             return widget;
         }
     })).inSingletonScope();

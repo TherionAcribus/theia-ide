@@ -23,6 +23,7 @@ export class AlphabetTabsManager {
 
     protected readonly tabs: AlphabetTabEntry[] = [];
     protected nextId = 1;
+    private nextIdSynced = false;
 
     protected widgetCreator?: (alphabetId: string) => AlphabetViewerWidget;
 
@@ -126,12 +127,35 @@ export class AlphabetTabsManager {
     }
 
     protected async createWidget(alphabetId: string): Promise<AlphabetViewerWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(AlphabetViewerWidget.ID_PREFIX, { alphabetId, instanceId });
 
         widget.id = this.generateWidgetId(alphabetId, instanceId);
 
         return widget as AlphabetViewerWidget;
+    }
+
+    /**
+     * S'assure que nextId est supérieur aux IDs des widgets déjà restaurés par le layout.
+     */
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = AlphabetViewerWidget.ID_PREFIX + '-';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const hashIdx = w.id.lastIndexOf('#');
+                if (hashIdx > 0) {
+                    const num = parseInt(w.id.substring(hashIdx + 1), 10);
+                    if (!isNaN(num) && num >= this.nextId) {
+                        this.nextId = num + 1;
+                    }
+                }
+            }
+        }
     }
 
     protected generateWidgetId(alphabetId: string, instanceId: number): string {

@@ -28,6 +28,7 @@ export class GeocacheTabsManager {
 
     protected readonly tabs: GeocacheTabEntry[] = [];
     protected nextId = 1;
+    private nextIdSynced = false;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -151,6 +152,7 @@ export class GeocacheTabsManager {
     }
 
     protected async createWidget(): Promise<GeocacheDetailsWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(GeocacheDetailsWidget.ID, { instanceId });
 
@@ -158,6 +160,25 @@ export class GeocacheTabsManager {
         widget.id = `${GeocacheDetailsWidget.ID}#${instanceId}`;
 
         return widget as GeocacheDetailsWidget;
+    }
+
+    /**
+     * S'assure que nextId est supérieur aux IDs des widgets déjà restaurés par le layout.
+     */
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = GeocacheDetailsWidget.ID + '#';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const num = parseInt(w.id.substring(prefix.length), 10);
+                if (!isNaN(num) && num >= this.nextId) {
+                    this.nextId = num + 1;
+                }
+            }
+        }
     }
 
     protected attachAndActivate(widget: GeocacheDetailsWidget): void {

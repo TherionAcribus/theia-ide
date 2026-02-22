@@ -29,6 +29,7 @@ export class ZoneTabsManager {
 
     protected readonly tabs: ZoneTabEntry[] = [];
     protected nextId = 1;
+    private nextIdSynced = false;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -134,6 +135,7 @@ export class ZoneTabsManager {
     }
 
     protected async createWidget(): Promise<ZoneGeocachesWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(ZoneGeocachesWidget.ID, { instanceId });
 
@@ -141,6 +143,25 @@ export class ZoneTabsManager {
         widget.id = this.generateWidgetId(instanceId);
 
         return widget as ZoneGeocachesWidget;
+    }
+
+    /**
+     * S'assure que nextId est supérieur aux IDs des widgets déjà restaurés par le layout.
+     */
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = ZoneGeocachesWidget.ID + '#';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const num = parseInt(w.id.substring(prefix.length), 10);
+                if (!isNaN(num) && num >= this.nextId) {
+                    this.nextId = num + 1;
+                }
+            }
+        }
     }
 
     protected generateWidgetId(instanceId: number): string {

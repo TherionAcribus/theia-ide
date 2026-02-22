@@ -30,6 +30,7 @@ export class PluginTabsManager {
 
     protected readonly tabs: PluginTabEntry[] = [];
     protected nextId = 1;
+    private nextIdSynced = false;
 
     protected widgetCreator?: () => PluginExecutorWidget;
 
@@ -177,12 +178,32 @@ export class PluginTabsManager {
     }
 
     protected async createWidget(): Promise<PluginExecutorWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(PluginExecutorWidget.ID, { instanceId });
 
         widget.id = this.generateWidgetId(instanceId);
 
         return widget as PluginExecutorWidget;
+    }
+
+    /**
+     * S'assure que nextId est supérieur aux IDs des widgets déjà restaurés par le layout.
+     */
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = PluginExecutorWidget.ID + '#';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const num = parseInt(w.id.substring(prefix.length), 10);
+                if (!isNaN(num) && num >= this.nextId) {
+                    this.nextId = num + 1;
+                }
+            }
+        }
     }
 
     protected generateWidgetId(instanceId: number): string {

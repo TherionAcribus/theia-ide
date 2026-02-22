@@ -19,6 +19,7 @@ export class GeocacheImageEditorTabsManager {
 
     protected readonly tabs: EditorTabEntry[] = [];
     protected nextId = 1;
+    private nextIdSynced = false;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -46,12 +47,29 @@ export class GeocacheImageEditorTabsManager {
     }
 
     protected async createWidget(): Promise<GeocacheImageEditorWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(GeocacheImageEditorWidget.ID, { instanceId });
 
         (widget as GeocacheImageEditorWidget).id = `${GeocacheImageEditorWidget.ID}#${instanceId}`;
 
         return widget as GeocacheImageEditorWidget;
+    }
+
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = GeocacheImageEditorWidget.ID + '#';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const num = parseInt(w.id.substring(prefix.length), 10);
+                if (!isNaN(num) && num >= this.nextId) {
+                    this.nextId = num + 1;
+                }
+            }
+        }
     }
 
     protected attachAndActivate(widget: GeocacheImageEditorWidget): void {

@@ -13,6 +13,7 @@ export interface OpenGeocacheLogEditorOptions {
 export class GeocacheLogEditorTabsManager {
 
     protected nextId = 1;
+    private nextIdSynced = false;
 
     constructor(
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
@@ -35,9 +36,26 @@ export class GeocacheLogEditorTabsManager {
     }
 
     protected async createWidget(): Promise<GeocacheLogEditorWidget> {
+        this.syncNextId();
         const instanceId = this.nextId++;
         const widget = await this.widgetManager.getOrCreateWidget(GeocacheLogEditorWidget.ID, { instanceId });
         (widget as GeocacheLogEditorWidget).id = `${GeocacheLogEditorWidget.ID}#${instanceId}`;
         return widget as GeocacheLogEditorWidget;
+    }
+
+    private syncNextId(): void {
+        if (this.nextIdSynced) {
+            return;
+        }
+        this.nextIdSynced = true;
+        const prefix = GeocacheLogEditorWidget.ID + '#';
+        for (const w of this.shell.getWidgets('main')) {
+            if (w.id.startsWith(prefix)) {
+                const num = parseInt(w.id.substring(prefix.length), 10);
+                if (!isNaN(num) && num >= this.nextId) {
+                    this.nextId = num + 1;
+                }
+            }
+        }
     }
 }

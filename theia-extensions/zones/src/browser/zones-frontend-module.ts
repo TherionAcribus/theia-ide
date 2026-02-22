@@ -30,6 +30,7 @@ import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
 import { ZonesMenuContribution } from './zones-menu-contribution';
 import { GeoAppSidebarContribution } from './geoapp-sidebar-contribution';
+import { LayoutAutoSaveContribution } from './layout-auto-save-contribution';
 
 export default new ContainerModule(bind => {
     bind(ZonesTreeWidget).toSelf().inSingletonScope();
@@ -42,21 +43,39 @@ export default new ContainerModule(bind => {
     bind(ZoneGeocachesWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: ZoneGeocachesWidget.ID,
-        createWidget: () => ctx.container.get(ZoneGeocachesWidget)
+        createWidget: (options?: any) => {
+            const widget = ctx.container.get(ZoneGeocachesWidget);
+            if (options?.instanceId) {
+                widget.id = `${ZoneGeocachesWidget.ID}#${options.instanceId}`;
+            }
+            return widget;
+        }
     })).inSingletonScope();
 
     // GeocacheDetailsWidget: instances gérées par GeocacheTabsManager et le WidgetManager (plusieurs onglets possibles)
     bind(GeocacheDetailsWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheDetailsWidget.ID,
-        createWidget: () => ctx.container.get(GeocacheDetailsWidget)
+        createWidget: (options?: any) => {
+            const widget = ctx.container.get(GeocacheDetailsWidget);
+            if (options?.instanceId) {
+                widget.id = `${GeocacheDetailsWidget.ID}#${options.instanceId}`;
+            }
+            return widget;
+        }
     })).inSingletonScope();
 
     // GeocacheImageEditorWidget: instances gérées par GeocacheImageEditorTabsManager (plusieurs onglets possibles)
     bind(GeocacheImageEditorWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheImageEditorWidget.ID,
-        createWidget: () => ctx.container.get(GeocacheImageEditorWidget)
+        createWidget: (options?: any) => {
+            const widget = ctx.container.get(GeocacheImageEditorWidget);
+            if (options?.instanceId) {
+                widget.id = `${GeocacheImageEditorWidget.ID}#${options.instanceId}`;
+            }
+            return widget;
+        }
     })).inSingletonScope();
 
     // Widget des logs de géocache (affichable dans right, bottom ou main)
@@ -69,7 +88,13 @@ export default new ContainerModule(bind => {
     bind(GeocacheLogEditorWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocacheLogEditorWidget.ID,
-        createWidget: () => ctx.container.get(GeocacheLogEditorWidget)
+        createWidget: (options?: any) => {
+            const widget = ctx.container.get(GeocacheLogEditorWidget);
+            if (options?.instanceId) {
+                widget.id = `${GeocacheLogEditorWidget.ID}#${options.instanceId}`;
+            }
+            return widget;
+        }
     })).inSingletonScope();
 
     // Widget des notes de géocache (affichable dans right, bottom ou main)
@@ -141,6 +166,9 @@ export default new ContainerModule(bind => {
     bind(GeoAppSidebarContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(GeoAppSidebarContribution);
     bind(MenuContribution).toService(GeoAppSidebarContribution);
+
+    bind(LayoutAutoSaveContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(LayoutAutoSaveContribution);
 
     // Batch Map Integration pour écouter les événements du plugin batch
     bind(BatchMapIntegration).toSelf().inSingletonScope();

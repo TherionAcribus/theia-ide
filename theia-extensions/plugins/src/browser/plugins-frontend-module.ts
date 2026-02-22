@@ -46,7 +46,13 @@ export default new ContainerModule(bind => {
     bind(PluginExecutorWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: PluginExecutorWidget.ID,
-        createWidget: () => ctx.container.get<PluginExecutorWidget>(PluginExecutorWidget)
+        createWidget: (options?: any) => {
+            const widget = ctx.container.get<PluginExecutorWidget>(PluginExecutorWidget);
+            if (options?.instanceId) {
+                widget.id = `${PluginExecutorWidget.ID}#${options.instanceId}`;
+            }
+            return widget;
+        }
     })).inSingletonScope();
     
     // Widget Batch Plugin Executor

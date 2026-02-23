@@ -121,7 +121,8 @@
     "theia-ide-zones-ext": "file:../../theia-extensions/zones",
     "@mysterai/theia-plugins": "1.0.0",
     "@mysterai/theia-formula-solver": "1.0.0",
-    "@mysterai/theia-preferences": "1.0.0"
+    "@mysterai/theia-preferences": "1.0.0",
+    "theia-ide-search-ext": "1.67.100"
   },
   "devDependencies": {
     "@theia/cli": "1.67.0",

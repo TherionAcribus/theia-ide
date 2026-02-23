@@ -338,7 +338,10 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
     }
 
     protected onAfterAttach(msg: any): void {
+        this.scrollOptions = undefined;
         super.onAfterAttach(msg);
+        this.node.style.overflowY = 'auto';
+        this.node.style.height = '100%';
         this.addInteractionListeners();
     }
 

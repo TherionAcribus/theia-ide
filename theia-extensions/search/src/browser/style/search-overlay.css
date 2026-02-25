@@ -50,6 +50,12 @@
     border-color: var(--theia-inputValidation-errorBorder, #be1100);
 }
 
+/* Input quand aucun résultat trouvé */
+.geoapp-search-overlay input.geoapp-search-input.no-results {
+    border-color: var(--theia-inputValidation-errorBorder, #be1100);
+    animation: geoapp-search-shake 0.3s ease-in-out;
+}
+
 /* Boutons toggle (regex, case, wildcard) */
 .geoapp-search-overlay .geoapp-search-toggle {
     display: inline-flex;
@@ -158,17 +164,20 @@
 
 /* Surlignage des matches dans le contenu */
 mark.geoapp-search-highlight {
-    background-color: rgba(234, 178, 46, 0.35);
+    background-color: rgba(234, 178, 46, 0.4);
     color: inherit;
-    border-radius: 1px;
-    padding: 0;
+    border-radius: 2px;
+    padding: 1px 0;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
 }
 
 /* Surlignage du match actif */
 mark.geoapp-search-highlight.geoapp-search-highlight-active {
-    background-color: rgba(246, 185, 77, 0.7);
-    outline: 1px solid var(--theia-editor-findMatchHighlightBorder, #f0a732);
+    background-color: rgba(246, 185, 77, 0.8);
+    outline: 2px solid var(--theia-editor-findMatchHighlightBorder, #f0a732);
     color: inherit;
+    border-radius: 2px;
 }
 
 /* Animation d'entrée de l'overlay */
@@ -185,4 +194,13 @@ mark.geoapp-search-highlight.geoapp-search-highlight-active {
 
 .geoapp-search-overlay {
     animation: geoapp-search-slide-down 0.15s ease-out;
+}
+
+/* Animation shake pour "pas de résultats" */
+@keyframes geoapp-search-shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-3px); }
+    80% { transform: translateX(2px); }
 }

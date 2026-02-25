@@ -137,7 +137,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
     const inputClassName = [
         'geoapp-search-input',
-        regexError ? 'invalid' : ''
+        regexError ? 'invalid' : '',
+        hasQuery && !hasResults && !regexError ? 'no-results' : ''
     ].filter(Boolean).join(' ');
 
     const countClassName = [

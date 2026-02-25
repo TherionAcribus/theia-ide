@@ -28,7 +28,7 @@
     "clean": "rimraf lib *.tsbuildinfo",
     "build": "tsc -b && yarn run copy:assets",
     "copy:assets": "node -e \"require('fs-extra').copySync('src/browser/style', 'lib/browser/style')\"",
-    "watch": "rimraf lib *.tsbuildinfo && tsc -w"
+    "watch": "yarn run build && tsc -b --watch --preserveWatchOutput"
   },
   "theiaExtensions": [
     {

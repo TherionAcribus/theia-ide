@@ -329,7 +329,13 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
         this.title.caption = PluginExecutorWidget.LABEL;
         this.title.closable = true;
         this.title.iconClass = 'fa fa-play-circle';
+        this.node.tabIndex = 0;
         this.update();
+    }
+
+    protected onActivateRequest(msg: any): void {
+        super.onActivateRequest(msg);
+        this.node.focus();
     }
 
     private getBackendBaseUrl(): string {

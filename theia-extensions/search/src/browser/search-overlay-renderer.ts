@@ -8,7 +8,7 @@
 
 import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
 import * as React from '@theia/core/shared/react';
-import * as ReactDOM from '@theia/core/shared/react-dom';
+import { createRoot, Root } from '@theia/core/shared/react-dom/client';
 import { SearchService } from './search-service';
 import { SearchOverlay } from './search-overlay';
 import { SearchState } from '../common/search-protocol';
@@ -20,6 +20,7 @@ export class SearchOverlayRenderer {
     protected readonly searchService!: SearchService;
 
     private stateDisposable: { dispose: () => void } | null = null;
+    private root: Root | null = null;
 
     @postConstruct()
     protected init(): void {
@@ -83,16 +84,19 @@ export class SearchOverlayRenderer {
             style: { pointerEvents: 'auto' }
         }, overlayElement);
 
-        ReactDOM.render(wrapper, container);
+        if (!this.root) {
+            this.root = createRoot(container);
+        }
+        this.root.render(wrapper);
     }
 
     /**
      * Démonte l'overlay React.
      */
     unmount(): void {
-        const container = this.searchService.getOverlayContainer();
-        if (container) {
-            ReactDOM.unmountComponentAtNode(container);
+        if (this.root) {
+            this.root.unmount();
+            this.root = null;
         }
     }
 

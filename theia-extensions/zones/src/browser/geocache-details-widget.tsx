@@ -1581,6 +1581,62 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
+     * Fournit le contenu structuré pour la recherche in-page (SearchableWidget duck-typing).
+     * Retourne les blocs de texte cherchables extraits des données de la géocache.
+     */
+    getSearchableContent(): { id: string; text: string; element?: HTMLElement }[] {
+        const d = this.data;
+        if (!d) {
+            return [];
+        }
+
+        const contents: { id: string; text: string; element?: HTMLElement }[] = [];
+
+        // En-tête : nom, code, type, owner
+        const headerParts = [d.name, d.gc_code, d.type, d.owner].filter(Boolean);
+        if (headerParts.length > 0) {
+            contents.push({ id: 'header', text: headerParts.join(' ') });
+        }
+
+        // Coordonnées
+        const coordParts = [d.coordinates_raw, d.original_coordinates_raw].filter(Boolean);
+        if (coordParts.length > 0) {
+            contents.push({ id: 'coordinates', text: coordParts.join(' ') });
+        }
+
+        // Description (variante affichée)
+        const descHtml = this.getEffectiveDescriptionHtml(d, this.descriptionVariant);
+        if (descHtml) {
+            contents.push({ id: 'description', text: htmlToRawText(descHtml) });
+        }
+
+        // Indices (hints)
+        const decodedHints = this.getDecodedHints(d);
+        if (decodedHints) {
+            contents.push({ id: 'hints', text: decodedHints });
+        } else if (d.hints) {
+            contents.push({ id: 'hints', text: d.hints });
+        }
+
+        // Waypoints
+        if (d.waypoints && d.waypoints.length > 0) {
+            const wpTexts = d.waypoints.map(wp => {
+                const parts = [wp.prefix, wp.name, wp.type, wp.gc_coords, wp.note, wp.note_override].filter(Boolean);
+                return parts.join(' ');
+            });
+            contents.push({ id: 'waypoints', text: wpTexts.join('\n') });
+        }
+
+        // Checkers
+        if (d.checkers && d.checkers.length > 0) {
+            const checkerTexts = d.checkers.map(c => [c.name, c.url].filter(Boolean).join(' '));
+            contents.push({ id: 'checkers', text: checkerTexts.join('\n') });
+        }
+
+        return contents;
+    }
+
+    /**
      * Appelé quand le widget va être fermé
      * Ferme automatiquement la carte correspondante
      */

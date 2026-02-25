@@ -69,10 +69,10 @@ export interface SearchState {
 export interface SearchableWidget {
     /** Retourne le contenu textuel cherchable du widget */
     getSearchableContent(): SearchableContent[];
-    /** Scrolle vers et surligne un match spécifique */
-    revealMatch(match: SearchMatch): void;
-    /** Efface tous les surlignages de recherche */
-    clearSearchHighlights(): void;
+    /** Scrolle vers et surligne un match spécifique (optionnel, sinon DOM highlighting) */
+    revealMatch?(match: SearchMatch): void;
+    /** Efface tous les surlignages de recherche (optionnel, sinon DOM clearing) */
+    clearSearchHighlights?(): void;
 }
 
 /**
@@ -80,7 +80,14 @@ export interface SearchableWidget {
  */
 export function isSearchableWidget(widget: any): widget is SearchableWidget {
     return widget
-        && typeof widget.getSearchableContent === 'function'
+        && typeof widget.getSearchableContent === 'function';
+}
+
+/**
+ * Vérifie si le widget gère ses propres highlights (méthodes complètes).
+ */
+export function hasCustomHighlighting(widget: any): boolean {
+    return isSearchableWidget(widget)
         && typeof widget.revealMatch === 'function'
         && typeof widget.clearSearchHighlights === 'function';
 }

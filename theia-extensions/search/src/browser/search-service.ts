@@ -16,7 +16,8 @@ import {
     SearchableContent,
     INITIAL_SEARCH_STATE,
     DEFAULT_SEARCH_OPTIONS,
-    isSearchableWidget
+    isSearchableWidget,
+    hasCustomHighlighting
 } from '../common/search-protocol';
 import { searchInContents, searchInDomNode, buildSearchRegex } from './search-engine';
 import { applyHighlights, clearHighlights, scrollToHighlight } from './search-highlight';
@@ -50,6 +51,14 @@ export class SearchService {
     /** Dernier terme de recherche persisté entre ouvertures */
     private persistedQuery: string = '';
     private persistedOptions: SearchOptions = { ...DEFAULT_SEARCH_OPTIONS };
+
+    /** Timer pour debounce de la recherche */
+    private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private static readonly DEBOUNCE_MS = 250;
+
+    /** MutationObserver pour re-appliquer les highlights après changement DOM */
+    private mutationObserver: MutationObserver | null = null;
+    private mutationDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     get searchState(): SearchState {
         return this.state;
@@ -113,8 +122,8 @@ export class SearchService {
     private closeInternal(notify: boolean): void {
         // Nettoyer les surlignages
         if (this.targetWidget) {
-            if (isSearchableWidget(this.targetWidget)) {
-                this.targetWidget.clearSearchHighlights();
+            if (hasCustomHighlighting(this.targetWidget)) {
+                (this.targetWidget as any).clearSearchHighlights();
             } else {
                 clearHighlights(this.targetWidget.node);
             }
@@ -137,25 +146,37 @@ export class SearchService {
     }
 
     /**
-     * Met à jour la query de recherche.
+     * Met à jour la query de recherche (avec debounce).
      */
     updateQuery(query: string): void {
         this.state.query = query;
         this.persistedQuery = query;
         this._regexError = null;
-        this.executeSearch();
-        this.notifyListeners();
+        this.debouncedExecuteSearch();
     }
 
     /**
-     * Met à jour les options de recherche.
+     * Met à jour les options de recherche (avec debounce).
      */
     updateOptions(options: SearchOptions): void {
         this.state.options = { ...options };
         this.persistedOptions = { ...options };
         this._regexError = null;
-        this.executeSearch();
-        this.notifyListeners();
+        this.debouncedExecuteSearch();
+    }
+
+    /**
+     * Exécute la recherche avec un délai de debounce.
+     */
+    private debouncedExecuteSearch(): void {
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+        }
+        this.debounceTimer = setTimeout(() => {
+            this.debounceTimer = null;
+            this.executeSearch();
+            this.notifyListeners();
+        }, SearchService.DEBOUNCE_MS);
     }
 
     /**
@@ -268,15 +289,15 @@ export class SearchService {
             return;
         }
 
-        if (isSearchableWidget(this.targetWidget)) {
+        if (hasCustomHighlighting(this.targetWidget)) {
             // Le widget gère ses propres surlignages
-            this.targetWidget.clearSearchHighlights();
+            (this.targetWidget as any).clearSearchHighlights();
             if (this.state.matches.length > 0 && this.state.activeMatchIndex >= 0) {
                 const activeMatch = this.state.matches[this.state.activeMatchIndex];
-                this.targetWidget.revealMatch(activeMatch);
+                (this.targetWidget as any).revealMatch(activeMatch);
             }
         } else {
-            // Mode fallback : surlignage DOM
+            // Mode DOM highlighting (fallback ou SearchableWidget sans custom highlighting)
             const activeMark = applyHighlights(
                 this.targetWidget.node,
                 this.state.matches,
@@ -295,8 +316,8 @@ export class SearchService {
         if (!this.targetWidget) {
             return;
         }
-        if (isSearchableWidget(this.targetWidget)) {
-            this.targetWidget.clearSearchHighlights();
+        if (hasCustomHighlighting(this.targetWidget)) {
+            (this.targetWidget as any).clearSearchHighlights();
         } else {
             clearHighlights(this.targetWidget.node);
         }
@@ -331,17 +352,69 @@ export class SearchService {
         this.overlayContainer.style.display = 'flex';
         this.overlayContainer.style.justifyContent = 'flex-end';
 
+        // Empêcher les clics dans l'overlay de propager vers Theia
+        // (évite que Theia change le widget actif et ferme la recherche)
+        this.overlayContainer.addEventListener('mousedown', (e: MouseEvent) => {
+            e.stopPropagation();
+        }, true);
+        this.overlayContainer.addEventListener('focusin', (e: FocusEvent) => {
+            e.stopPropagation();
+        }, true);
+
         widgetNode.appendChild(this.overlayContainer);
+
+        // Démarrer le MutationObserver pour re-appliquer les highlights
+        this.startMutationObserver(widgetNode);
     }
 
     /**
      * Supprime le conteneur DOM de l'overlay.
      */
     private removeOverlayContainer(): void {
+        this.stopMutationObserver();
         if (this.overlayContainer && this.overlayContainer.parentNode) {
             this.overlayContainer.parentNode.removeChild(this.overlayContainer);
         }
         this.overlayContainer = null;
+    }
+
+    /**
+     * Démarre un MutationObserver pour détecter les changements DOM
+     * (ex: React re-renders) et re-appliquer les highlights.
+     */
+    private startMutationObserver(widgetNode: HTMLElement): void {
+        this.stopMutationObserver();
+        this.mutationObserver = new MutationObserver(() => {
+            // Debounce pour éviter de re-appliquer trop souvent
+            if (this.mutationDebounceTimer) {
+                clearTimeout(this.mutationDebounceTimer);
+            }
+            this.mutationDebounceTimer = setTimeout(() => {
+                this.mutationDebounceTimer = null;
+                if (this.state.isOpen && this.state.matches.length > 0 && !isSearchableWidget(this.targetWidget!)) {
+                    this.highlightAndScroll();
+                }
+            }, 100);
+        });
+        this.mutationObserver.observe(widgetNode, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    /**
+     * Arrête le MutationObserver.
+     */
+    private stopMutationObserver(): void {
+        if (this.mutationDebounceTimer) {
+            clearTimeout(this.mutationDebounceTimer);
+            this.mutationDebounceTimer = null;
+        }
+        if (this.mutationObserver) {
+            this.mutationObserver.disconnect();
+            this.mutationObserver = null;
+        }
     }
 
     /**

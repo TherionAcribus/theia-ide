@@ -145,6 +145,16 @@ export class PluginExecutorContribution extends AbstractViewContribution<PluginE
             },
             toggleCommandId: PluginsCommands.OPEN_PLUGIN_EXECUTOR.id
         });
+
+        // Écouter l'événement d'ouverture de plugin depuis la recherche globale
+        if (typeof window !== 'undefined') {
+            window.addEventListener('geoapp-open-plugin', ((event: CustomEvent) => {
+                const { pluginName } = event.detail;
+                if (pluginName) {
+                    this.openWithPlugin(pluginName);
+                }
+            }) as EventListener);
+        }
     }
     
     /**

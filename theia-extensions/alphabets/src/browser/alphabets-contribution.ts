@@ -35,6 +35,16 @@ export class AlphabetsListContribution
             },
             toggleCommandId: AlphabetsCommands.OPEN_LIST.id
         });
+
+        // Écouter l'événement d'ouverture d'alphabet depuis la recherche globale
+        if (typeof window !== 'undefined') {
+            window.addEventListener('geoapp-open-alphabet', ((event: CustomEvent) => {
+                const { alphabetId } = event.detail;
+                if (alphabetId) {
+                    this.openAlphabetViewer(alphabetId);
+                }
+            }) as EventListener);
+        }
     }
     
     /**

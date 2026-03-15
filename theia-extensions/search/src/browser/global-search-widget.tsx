@@ -80,6 +80,8 @@ export class GlobalSearchWidget extends ReactWidget {
             onClear={() => this.globalSearchService.clearResults()}
             onRevealInWidget={(widgetId) => this.globalSearchService.revealInWidget(widgetId)}
             onOpenGeocache={(id) => this.globalSearchService.openGeocache(id)}
+            onOpenPlugin={(name) => this.globalSearchService.openPlugin(name)}
+            onOpenAlphabet={(id) => this.globalSearchService.openAlphabet(id)}
         />;
     }
 }
@@ -95,7 +97,9 @@ const GlobalSearchComponent: React.FC<{
     onClear: () => void;
     onRevealInWidget: (widgetId: string) => void;
     onOpenGeocache: (id: number) => void;
-}> = ({ state, onSearch, onUpdateOptions, onUpdateScope, onClear, onRevealInWidget, onOpenGeocache }) => {
+    onOpenPlugin: (name: string) => void;
+    onOpenAlphabet: (id: string) => void;
+}> = ({ state, onSearch, onUpdateOptions, onUpdateScope, onClear, onRevealInWidget, onOpenGeocache, onOpenPlugin, onOpenAlphabet }) => {
 
     const inputRef = React.useRef<HTMLInputElement>(null);
     const [localQuery, setLocalQuery] = React.useState(state.query);
@@ -249,7 +253,7 @@ const GlobalSearchComponent: React.FC<{
                 {state.pluginResults.length > 0 && (
                     <ResultSection title={`Plugins (${state.pluginResults.length})`} icon='codicon-extensions'>
                         {state.pluginResults.map(r => (
-                            <PluginResultItem key={r.id} result={r} />
+                            <PluginResultItem key={r.id} result={r} onOpen={onOpenPlugin} />
                         ))}
                     </ResultSection>
                 )}
@@ -258,7 +262,7 @@ const GlobalSearchComponent: React.FC<{
                 {state.alphabetResults.length > 0 && (
                     <ResultSection title={`Alphabets (${state.alphabetResults.length})`} icon='codicon-symbol-text'>
                         {state.alphabetResults.map(r => (
-                            <AlphabetResultItem key={r.id} result={r} />
+                            <AlphabetResultItem key={r.id} result={r} onOpen={onOpenAlphabet} />
                         ))}
                     </ResultSection>
                 )}
@@ -428,11 +432,12 @@ const NoteResultItem: React.FC<{
  */
 const PluginResultItem: React.FC<{
     result: PluginSearchResult;
-}> = ({ result }) => {
+    onOpen: (name: string) => void;
+}> = ({ result, onOpen }) => {
     const matchedFields = Object.keys(result.matches_in);
 
     return (
-        <div className='geoapp-gs-result-item'>
+        <div className='geoapp-gs-result-item' onClick={() => onOpen(result.name)}>
             <div className='geoapp-gs-result-header'>
                 <span className='codicon codicon-extensions geoapp-gs-result-icon' />
                 <span className='geoapp-gs-result-title'>
@@ -468,11 +473,12 @@ const PluginResultItem: React.FC<{
  */
 const AlphabetResultItem: React.FC<{
     result: AlphabetSearchResult;
-}> = ({ result }) => {
+    onOpen: (id: string) => void;
+}> = ({ result, onOpen }) => {
     const matchedFields = Object.keys(result.matches_in);
 
     return (
-        <div className='geoapp-gs-result-item'>
+        <div className='geoapp-gs-result-item' onClick={() => onOpen(result.id)}>
             <div className='geoapp-gs-result-header'>
                 <span className='codicon codicon-symbol-text geoapp-gs-result-icon' />
                 <span className='geoapp-gs-result-title'>

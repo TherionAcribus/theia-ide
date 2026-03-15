@@ -284,6 +284,24 @@ export class GlobalSearchService {
     }
 
     /**
+     * Ouvre un plugin par son nom (dispatch un custom event).
+     */
+    openPlugin(pluginName: string): void {
+        window.dispatchEvent(new CustomEvent('geoapp-open-plugin', {
+            detail: { pluginName }
+        }));
+    }
+
+    /**
+     * Ouvre un alphabet par son ID (dispatch un custom event).
+     */
+    openAlphabet(alphabetId: string): void {
+        window.dispatchEvent(new CustomEvent('geoapp-open-alphabet', {
+            detail: { alphabetId }
+        }));
+    }
+
+    /**
      * Exécute la recherche complète.
      */
     private async executeSearch(): Promise<void> {

@@ -16,6 +16,8 @@ import {
     GeocacheSearchResult,
     LogSearchResult,
     NoteSearchResult,
+    PluginSearchResult,
+    AlphabetSearchResult,
     SearchSnippet
 } from './global-search-service';
 
@@ -121,7 +123,9 @@ const GlobalSearchComponent: React.FC<{
     const hasResults = state.widgetResults.length > 0
         || state.geocacheResults.length > 0
         || state.logResults.length > 0
-        || state.noteResults.length > 0;
+        || state.noteResults.length > 0
+        || state.pluginResults.length > 0
+        || state.alphabetResults.length > 0;
 
     const hasQuery = localQuery.trim().length > 0;
 
@@ -237,6 +241,24 @@ const GlobalSearchComponent: React.FC<{
                     <ResultSection title={`Notes (${state.noteResults.length})`} icon='codicon-note'>
                         {state.noteResults.map(r => (
                             <NoteResultItem key={r.id} result={r} />
+                        ))}
+                    </ResultSection>
+                )}
+
+                {/* Plugins (DB) */}
+                {state.pluginResults.length > 0 && (
+                    <ResultSection title={`Plugins (${state.pluginResults.length})`} icon='codicon-extensions'>
+                        {state.pluginResults.map(r => (
+                            <PluginResultItem key={r.id} result={r} />
+                        ))}
+                    </ResultSection>
+                )}
+
+                {/* Alphabets (fichiers) */}
+                {state.alphabetResults.length > 0 && (
+                    <ResultSection title={`Alphabets (${state.alphabetResults.length})`} icon='codicon-symbol-text'>
+                        {state.alphabetResults.map(r => (
+                            <AlphabetResultItem key={r.id} result={r} />
                         ))}
                     </ResultSection>
                 )}
@@ -400,3 +422,82 @@ const NoteResultItem: React.FC<{
         ))}
     </div>
 );
+
+/**
+ * Résultat d'un plugin (DB).
+ */
+const PluginResultItem: React.FC<{
+    result: PluginSearchResult;
+}> = ({ result }) => {
+    const matchedFields = Object.keys(result.matches_in);
+
+    return (
+        <div className='geoapp-gs-result-item'>
+            <div className='geoapp-gs-result-header'>
+                <span className='codicon codicon-extensions geoapp-gs-result-icon' />
+                <span className='geoapp-gs-result-title'>
+                    {result.name} v{result.version}
+                    {!result.enabled && <span style={{ opacity: 0.5 }}> (désactivé)</span>}
+                </span>
+                <span className='geoapp-gs-result-badge'>{result.total_matches}</span>
+            </div>
+            {result.description && (
+                <div style={{ paddingLeft: 20, fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
+                    {result.description}
+                </div>
+            )}
+            {result.categories.length > 0 && (
+                <div style={{ paddingLeft: 20, fontSize: 11, opacity: 0.6 }}>
+                    {result.categories.join(' • ')}
+                </div>
+            )}
+            {matchedFields.slice(0, 2).map(field => {
+                const info = result.matches_in[field];
+                return info.snippets.slice(0, 1).map((s, i) => (
+                    <div key={`${field}-${i}`} className='geoapp-gs-result-snippet'>
+                        <SnippetDisplay snippet={s} />
+                    </div>
+                ));
+            })}
+        </div>
+    );
+};
+
+/**
+ * Résultat d'un alphabet (fichiers).
+ */
+const AlphabetResultItem: React.FC<{
+    result: AlphabetSearchResult;
+}> = ({ result }) => {
+    const matchedFields = Object.keys(result.matches_in);
+
+    return (
+        <div className='geoapp-gs-result-item'>
+            <div className='geoapp-gs-result-header'>
+                <span className='codicon codicon-symbol-text geoapp-gs-result-icon' />
+                <span className='geoapp-gs-result-title'>
+                    {result.name}
+                </span>
+                <span className='geoapp-gs-result-badge'>{result.total_matches}</span>
+            </div>
+            {result.description && (
+                <div style={{ paddingLeft: 20, fontSize: 11, opacity: 0.7, marginBottom: 2 }}>
+                    {result.description}
+                </div>
+            )}
+            {result.aliases.length > 0 && (
+                <div style={{ paddingLeft: 20, fontSize: 11, opacity: 0.6 }}>
+                    Alias: {result.aliases.join(', ')}
+                </div>
+            )}
+            {matchedFields.slice(0, 2).map(field => {
+                const info = result.matches_in[field];
+                return info.snippets.slice(0, 1).map((s, i) => (
+                    <div key={`${field}-${i}`} className='geoapp-gs-result-snippet'>
+                        <SnippetDisplay snippet={s} />
+                    </div>
+                ));
+            })}
+        </div>
+    );
+};

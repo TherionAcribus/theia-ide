@@ -75,6 +75,34 @@ export interface NoteSearchResult {
 }
 
 /**
+ * Résultat de recherche dans un plugin (base de données).
+ */
+export interface PluginSearchResult {
+    id: number;
+    name: string;
+    version: string;
+    description: string | null;
+    author: string | null;
+    categories: string[];
+    source: string;
+    enabled: boolean;
+    total_matches: number;
+    matches_in: Record<string, { count: number; snippets: SearchSnippet[] }>;
+}
+
+/**
+ * Résultat de recherche dans un alphabet (fichiers).
+ */
+export interface AlphabetSearchResult {
+    id: string;
+    name: string;
+    description: string;
+    aliases: string[];
+    total_matches: number;
+    matches_in: Record<string, { count: number; snippets: SearchSnippet[] }>;
+}
+
+/**
  * État complet de la recherche globale.
  */
 export interface GlobalSearchState {
@@ -89,6 +117,10 @@ export interface GlobalSearchState {
     logResults: LogSearchResult[];
     /** Recherche dans les notes (DB) */
     noteResults: NoteSearchResult[];
+    /** Recherche dans les plugins (DB) */
+    pluginResults: PluginSearchResult[];
+    /** Recherche dans les alphabets (fichiers) */
+    alphabetResults: AlphabetSearchResult[];
     /** Erreur éventuelle */
     error: string | null;
     /** Nombre total de résultats */
@@ -105,6 +137,8 @@ export const INITIAL_GLOBAL_SEARCH_STATE: GlobalSearchState = {
     geocacheResults: [],
     logResults: [],
     noteResults: [],
+    pluginResults: [],
+    alphabetResults: [],
     error: null,
     totalCount: 0,
     scope: 'all'
@@ -302,7 +336,9 @@ export class GlobalSearchService {
                 this.state.widgetResults.length +
                 this.state.geocacheResults.length +
                 this.state.logResults.length +
-                this.state.noteResults.length;
+                this.state.noteResults.length +
+                this.state.pluginResults.length +
+                this.state.alphabetResults.length;
 
             this.state.isSearching = false;
             this.notifyListeners();
@@ -373,6 +409,8 @@ export class GlobalSearchService {
         this.state.geocacheResults = data.geocaches || [];
         this.state.logResults = data.logs || [];
         this.state.noteResults = data.notes || [];
+        this.state.pluginResults = data.plugins || [];
+        this.state.alphabetResults = data.alphabets || [];
     }
 
     /**

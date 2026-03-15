@@ -258,12 +258,12 @@ export class SearchService {
 
         let matches: SearchMatch[];
 
-        if (isSearchableWidget(this.targetWidget)) {
-            // Mode structuré : le widget fournit son contenu
-            const contents = this.targetWidget.getSearchableContent();
+        if (hasCustomHighlighting(this.targetWidget)) {
+            // Mode structuré complet : le widget fournit contenu ET gère ses highlights
+            const contents = (this.targetWidget as any).getSearchableContent();
             matches = searchInContents(contents, this.state.query, this.state.options);
         } else {
-            // Mode fallback : recherche dans le DOM du widget
+            // Mode DOM : recherche dans le DOM du widget (offsets alignés avec les text nodes)
             matches = searchInDomNode(this.targetWidget.node, this.state.query, this.state.options);
         }
 
@@ -285,6 +285,21 @@ export class SearchService {
      * Applique les surlignages et scrolle vers le match actif.
      */
     private highlightAndScroll(): void {
+        this.applyHighlightsInternal(true);
+    }
+
+    /**
+     * Applique les surlignages SANS scroller.
+     * Utilisé par le MutationObserver pour ne pas interférer avec le scroll utilisateur.
+     */
+    private highlightOnly(): void {
+        this.applyHighlightsInternal(false);
+    }
+
+    /**
+     * Implémentation commune pour le highlight avec ou sans scroll.
+     */
+    private applyHighlightsInternal(shouldScroll: boolean): void {
         if (!this.targetWidget) {
             return;
         }
@@ -303,7 +318,7 @@ export class SearchService {
                 this.state.matches,
                 this.state.activeMatchIndex
             );
-            if (activeMark) {
+            if (activeMark && shouldScroll) {
                 scrollToHighlight(activeMark);
             }
         }
@@ -335,22 +350,18 @@ export class SearchService {
 
         const widgetNode = this.targetWidget.node;
 
-        // S'assurer que le widget a un positionnement relatif pour l'overlay
-        const currentPosition = getComputedStyle(widgetNode).position;
-        if (currentPosition === 'static') {
-            widgetNode.style.position = 'relative';
-        }
-
         this.overlayContainer = document.createElement('div');
         this.overlayContainer.id = 'geoapp-search-overlay-container';
-        this.overlayContainer.style.position = 'absolute';
+        this.overlayContainer.style.position = 'sticky';
         this.overlayContainer.style.top = '0';
-        this.overlayContainer.style.right = '0';
         this.overlayContainer.style.left = '0';
+        this.overlayContainer.style.right = '0';
         this.overlayContainer.style.zIndex = '1000';
         this.overlayContainer.style.pointerEvents = 'none';
         this.overlayContainer.style.display = 'flex';
         this.overlayContainer.style.justifyContent = 'flex-end';
+        this.overlayContainer.style.height = '0';
+        this.overlayContainer.style.overflow = 'visible';
 
         // Empêcher les clics dans l'overlay de propager vers Theia
         // (évite que Theia change le widget actif et ferme la recherche)
@@ -361,7 +372,8 @@ export class SearchService {
             e.stopPropagation();
         }, true);
 
-        widgetNode.appendChild(this.overlayContainer);
+        // Insérer en premier enfant pour que sticky fonctionne en haut du scroll
+        widgetNode.insertBefore(this.overlayContainer, widgetNode.firstChild);
 
         // Démarrer le MutationObserver pour re-appliquer les highlights
         this.startMutationObserver(widgetNode);
@@ -392,7 +404,7 @@ export class SearchService {
             this.mutationDebounceTimer = setTimeout(() => {
                 this.mutationDebounceTimer = null;
                 if (this.state.isOpen && this.state.matches.length > 0 && !isSearchableWidget(this.targetWidget!)) {
-                    this.highlightAndScroll();
+                    this.highlightOnly();
                 }
             }, 100);
         });

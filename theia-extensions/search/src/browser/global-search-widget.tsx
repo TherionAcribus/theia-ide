@@ -74,7 +74,7 @@ export class GlobalSearchWidget extends ReactWidget {
     protected render(): React.ReactNode {
         return <GlobalSearchComponent
             state={this.searchState}
-            onSearch={(query, options, scope) => this.globalSearchService.search(query, options, scope)}
+            onSearch={(query, options, scope) => this.globalSearchService.search(query, options, scope as any)}
             onUpdateOptions={(options) => this.globalSearchService.updateOptions(options)}
             onUpdateScope={(scope) => this.globalSearchService.updateScope(scope)}
             onClear={() => this.globalSearchService.clearResults()}
@@ -91,9 +91,9 @@ export class GlobalSearchWidget extends ReactWidget {
  */
 const GlobalSearchComponent: React.FC<{
     state: GlobalSearchState;
-    onSearch: (query: string, options?: any, scope?: 'all' | 'open_tabs' | 'database') => void;
+    onSearch: (query: string, options?: any, scope?: 'all' | 'open_tabs' | 'database' | 'geocaches' | 'plugins' | 'alphabets') => void;
     onUpdateOptions: (options: any) => void;
-    onUpdateScope: (scope: 'all' | 'open_tabs' | 'database') => void;
+    onUpdateScope: (scope: 'all' | 'open_tabs' | 'database' | 'geocaches' | 'plugins' | 'alphabets') => void;
     onClear: () => void;
     onRevealInWidget: (widgetId: string) => void;
     onOpenGeocache: (id: number) => void;
@@ -186,6 +186,9 @@ const GlobalSearchComponent: React.FC<{
                         <option value='all'>Tout</option>
                         <option value='open_tabs'>Onglets ouverts</option>
                         <option value='database'>Base de données</option>
+                        <option value='geocaches'>Géocaches</option>
+                        <option value='plugins'>Plugins</option>
+                        <option value='alphabets'>Alphabets</option>
                     </select>
                 </div>
             </div>

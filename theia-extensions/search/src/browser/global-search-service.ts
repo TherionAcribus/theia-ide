@@ -126,7 +126,7 @@ export interface GlobalSearchState {
     /** Nombre total de résultats */
     totalCount: number;
     /** Scope actif */
-    scope: 'all' | 'open_tabs' | 'database';
+    scope: 'all' | 'open_tabs' | 'database' | 'geocaches' | 'plugins' | 'alphabets' | 'logs' | 'notes';
 }
 
 export const INITIAL_GLOBAL_SEARCH_STATE: GlobalSearchState = {
@@ -236,12 +236,13 @@ export class GlobalSearchService {
     }
 
     /**
-     * Met à jour le scope et relance.
+     * Met à jour le scope de recherche.
      */
-    updateScope(scope: 'all' | 'open_tabs' | 'database'): void {
+    updateScope(scope: 'all' | 'open_tabs' | 'database' | 'geocaches' | 'plugins' | 'alphabets' | 'logs' | 'notes'): void {
         this.state.scope = scope;
+        this.notifyListeners();
         if (this.state.query.trim()) {
-            this.executeSearch();
+            this.search(this.state.query);
         }
     }
 
@@ -342,12 +343,14 @@ export class GlobalSearchService {
             }
 
             // Recherche dans la base de données
-            if (scope === 'all' || scope === 'database') {
-                await this.searchInDatabase(query, this.abortController.signal);
+            if (scope === 'all' || scope === 'database' || scope === 'geocaches' || scope === 'plugins' || scope === 'alphabets' || scope === 'logs' || scope === 'notes') {
+                await this.searchInDatabase(query, this.abortController.signal, scope);
             } else {
                 this.state.geocacheResults = [];
                 this.state.logResults = [];
                 this.state.noteResults = [];
+                this.state.pluginResults = [];
+                this.state.alphabetResults = [];
             }
 
             this.state.totalCount =
@@ -406,13 +409,13 @@ export class GlobalSearchService {
     /**
      * Recherche dans la base de données via l'API backend.
      */
-    private async searchInDatabase(query: string, signal: AbortSignal): Promise<void> {
+    private async searchInDatabase(query: string, signal: AbortSignal, scope: 'all' | 'database' | 'geocaches' | 'plugins' | 'alphabets' | 'logs' | 'notes'): Promise<void> {
         const params = new URLSearchParams({
             q: query,
             case_sensitive: String(this.state.options.caseSensitive),
             use_regex: String(this.state.options.useRegex),
             use_wildcard: String(this.state.options.useWildcard),
-            scope: 'all',
+            scope,
             limit: '50'
         });
 

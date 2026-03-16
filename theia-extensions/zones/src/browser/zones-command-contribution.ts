@@ -5,12 +5,14 @@ import { ZonesTreeWidget } from './zones-tree-widget';
 import { ZoneGeocachesWidget } from './zone-geocaches-widget';
 import { MapWidget } from './map/map-widget';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
+import { ArchiveManagerWidget } from './archive-manager-widget';
 
 export const ZonesCommands = {
     OPEN: <Command>{ id: 'zones:open', label: 'Zones: Ouvrir' },
     OPEN_ZONE: <Command>{ id: 'zones:open-zone', label: 'Zones: Ouvrir Zone' },
     OPEN_MAP: <Command>{ id: 'geoapp.map.toggle', label: 'GeoApp: Afficher la carte' },
-    OPEN_AUTH: <Command>{ id: 'geoapp.auth.open', label: 'GeoApp: Connexion Geocaching.com' }
+    OPEN_AUTH: <Command>{ id: 'geoapp.auth.open', label: 'GeoApp: Connexion Geocaching.com' },
+    OPEN_ARCHIVE_MANAGER: <Command>{ id: 'geoapp.archive.manager.open', label: 'GeoApp: Gestionnaire d\'archive' }
 };
 
 @injectable()
@@ -61,6 +63,17 @@ export class ZonesCommandContribution implements CommandContribution {
         commands.registerCommand(ZonesCommands.OPEN_AUTH, {
             execute: async () => {
                 const widget = await this.widgetManager.getOrCreateWidget(GeocachingAuthWidget.ID);
+                if (!widget.isAttached) {
+                    this.shell.addWidget(widget, { area: 'main' });
+                }
+                this.shell.activateWidget(widget.id);
+            }
+        });
+
+        // Ouvre le gestionnaire d'archive de résolution
+        commands.registerCommand(ZonesCommands.OPEN_ARCHIVE_MANAGER, {
+            execute: async () => {
+                const widget = await this.widgetManager.getOrCreateWidget(ArchiveManagerWidget.ID);
                 if (!widget.isAttached) {
                     this.shell.addWidget(widget, { area: 'main' });
                 }

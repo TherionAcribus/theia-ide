@@ -28,6 +28,7 @@ import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agen
 import { GeoAppLogWriterAgentContribution } from './geoapp-log-writer-agent';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
+import { ArchiveManagerWidget } from './archive-manager-widget';
 import { ZonesMenuContribution } from './zones-menu-contribution';
 import { GeoAppSidebarContribution } from './geoapp-sidebar-contribution';
 import { LayoutAutoSaveContribution } from './layout-auto-save-contribution';
@@ -197,5 +198,12 @@ export default new ContainerModule(bind => {
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: GeocachingAuthWidget.ID,
         createWidget: () => ctx.container.get(GeocachingAuthWidget)
+    })).inSingletonScope();
+
+    // Widget de gestion de l'archive de résolution
+    bind(ArchiveManagerWidget).toSelf().inSingletonScope();
+    bind(WidgetFactory).toDynamicValue(ctx => ({
+        id: ArchiveManagerWidget.ID,
+        createWidget: () => ctx.container.get(ArchiveManagerWidget)
     })).inSingletonScope();
 });

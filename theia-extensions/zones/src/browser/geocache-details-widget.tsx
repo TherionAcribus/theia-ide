@@ -1173,6 +1173,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected isTranslatingDescription = false;
     protected isTranslatingAllContent = false;
     protected lastAccessTimestamp: number = Date.now();
+    protected archiveStatus: 'synced' | 'needs_sync' | 'none' | 'loading' = 'none';
+    protected archiveUpdatedAt: string | undefined = undefined;
+    protected isSyncingArchive = false;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -1558,6 +1561,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.geocacheId = context.geocacheId;
         this.lastAccessTimestamp = Date.now();
         this.notesCount = undefined;
+        this.archiveStatus = 'none';
+        this.archiveUpdatedAt = undefined;
         if (context.name) {
             this.title.label = `Géocache - ${context.name}`;
         } else if (this.data?.name) {
@@ -1961,6 +1966,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             await this.refreshAssociatedMap();
             await this.loadNotesCount();
             void this.autoSyncGcPersonalNoteFromDetailsIfEnabled();
+            void this.loadArchiveStatus();
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error('GeocacheDetailsWidget: load error', e);
@@ -1970,6 +1976,60 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             this.update();
         }
     }
+
+    protected async loadArchiveStatus(): Promise<void> {
+        const gcCode = this.data?.gc_code;
+        if (!gcCode) { return; }
+        this.archiveStatus = 'loading';
+        this.update();
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/archive/${gcCode}/status`, { credentials: 'include' });
+            if (!res.ok) { this.archiveStatus = 'none'; this.update(); return; }
+            const json = await res.json();
+            if (json.exists) {
+                this.archiveStatus = 'synced';
+                this.archiveUpdatedAt = json.updated_at;
+            } else if (json.needs_sync) {
+                this.archiveStatus = 'needs_sync';
+                this.archiveUpdatedAt = undefined;
+            } else {
+                this.archiveStatus = 'none';
+                this.archiveUpdatedAt = undefined;
+            }
+        } catch {
+            this.archiveStatus = 'none';
+        }
+        this.update();
+    }
+
+    protected forceSyncArchive = async (): Promise<void> => {
+        const gcCode = this.data?.gc_code;
+        if (!gcCode || this.isSyncingArchive) { return; }
+        this.isSyncingArchive = true;
+        this.archiveStatus = 'loading';
+        this.update();
+        try {
+            const res = await fetch(`${this.backendBaseUrl}/api/archive/${gcCode}/sync`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
+            const json = await res.json();
+            if (json.synced && json.archive) {
+                this.archiveStatus = 'synced';
+                this.archiveUpdatedAt = json.archive.updated_at;
+                this.messages.info(`Archive ${gcCode} synchronisée`);
+            } else {
+                this.archiveStatus = 'needs_sync';
+            }
+        } catch (e) {
+            this.archiveStatus = 'needs_sync';
+            this.messages.error(`Erreur synchronisation archive: ${String(e)}`);
+        } finally {
+            this.isSyncingArchive = false;
+            this.update();
+        }
+    };
 
     /**
      * Supprime un waypoint après confirmation
@@ -2744,12 +2804,42 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                     </div>
                                 </div>
                             </div>
-                            <div style={{ display: 'flex', gap: 16, opacity: 0.7, fontSize: 14 }}>
-                                <span>{d.gc_code}</span>
-                                <span>•</span>
-                                <span>{d.type}</span>
-                                <span>•</span>
-                                <span>Par {d.owner || 'Inconnu'}</span>
+                            <div style={{ display: 'flex', gap: 16, alignItems: 'center', fontSize: 14 }}>
+                                <span style={{ opacity: 0.7 }}>{d.gc_code}</span>
+                                <span style={{ opacity: 0.7 }}>•</span>
+                                <span style={{ opacity: 0.7 }}>{d.type}</span>
+                                <span style={{ opacity: 0.7 }}>•</span>
+                                <span style={{ opacity: 0.7 }}>Par {d.owner || 'Inconnu'}</span>
+                                {this.archiveStatus !== 'none' && (
+                                    <button
+                                        onClick={this.forceSyncArchive}
+                                        disabled={this.archiveStatus === 'loading' || this.isSyncingArchive}
+                                        title={
+                                            this.archiveStatus === 'synced'
+                                                ? `Archive à jour${this.archiveUpdatedAt ? ` (${new Date(this.archiveUpdatedAt).toLocaleString()})` : ''} — Cliquer pour re-synchroniser`
+                                                : this.archiveStatus === 'loading'
+                                                ? 'Synchronisation en cours…'
+                                                : 'Archive non synchronisée — Cliquer pour synchroniser'
+                                        }
+                                        style={{
+                                            background: 'none',
+                                            border: '1px solid',
+                                            borderRadius: 12,
+                                            cursor: this.archiveStatus === 'loading' ? 'wait' : 'pointer',
+                                            padding: '2px 8px',
+                                            fontSize: 11,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            borderColor: this.archiveStatus === 'synced' ? '#10b981' : this.archiveStatus === 'loading' ? '#60a5fa' : '#f59e0b',
+                                            color: this.archiveStatus === 'synced' ? '#10b981' : this.archiveStatus === 'loading' ? '#60a5fa' : '#f59e0b',
+                                            opacity: this.isSyncingArchive ? 0.6 : 1,
+                                        }}
+                                    >
+                                        <span>{this.archiveStatus === 'synced' ? '💾' : this.archiveStatus === 'loading' ? '⏳' : '⚠️'}</span>
+                                        <span>{this.archiveStatus === 'synced' ? 'Archive' : this.archiveStatus === 'loading' ? 'Sync…' : 'Non archivée'}</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
 

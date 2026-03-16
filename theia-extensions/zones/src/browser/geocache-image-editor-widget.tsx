@@ -6,6 +6,7 @@ import * as React from 'react';
 import { injectable } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { fabric } from 'fabric';
+import { CurvesEditor, CurveChannel, CurvePoint } from './curves-editor-component';
 
 type GeocacheImageV2Dto = {
     id: number;
@@ -96,6 +97,16 @@ export class GeocacheImageEditorWidget extends ReactWidget {
     protected imageGrayscale = false;
     protected imageSepia = false;
     protected imageInvert = false;
+    protected imageRedChannel = 1;
+    protected imageGreenChannel = 1;
+    protected imageBlueChannel = 1;
+    protected showCurvesEditor = false;
+    protected curvesChannel: CurveChannel = 'rgb';
+    protected curvesRgbPoints: CurvePoint[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+    protected curvesRedPoints: CurvePoint[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+    protected curvesGreenPoints: CurvePoint[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+    protected curvesBluePoints: CurvePoint[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+    protected curvesLuminosityPoints: CurvePoint[] = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
 
     protected shapeType: 'rect' | 'circle' | 'triangle' | 'line' | 'arrow' = 'rect';
     protected shapeWidth = 220;
@@ -1422,6 +1433,96 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         if (F?.Invert && this.imageInvert) {
             filters.push(new F.Invert());
         }
+        if ((F?.ColorMatrix || F?.RemoveColor) && (this.imageRedChannel !== 1 || this.imageGreenChannel !== 1 || this.imageBlueChannel !== 1)) {
+            const r = this.clamp(this.imageRedChannel, 0, 2);
+            const g = this.clamp(this.imageGreenChannel, 0, 2);
+            const b = this.clamp(this.imageBlueChannel, 0, 2);
+            if (F?.ColorMatrix) {
+                const matrix = [
+                    r, 0, 0, 0, 0,
+                    0, g, 0, 0, 0,
+                    0, 0, b, 0, 0,
+                    0, 0, 0, 1, 0
+                ];
+                filters.push(new F.ColorMatrix({ matrix }));
+            }
+        }
+
+        const hasCurves = this.curvesRgbPoints.length > 2 || this.curvesRedPoints.length > 2 ||
+            this.curvesGreenPoints.length > 2 || this.curvesBluePoints.length > 2 ||
+            this.curvesLuminosityPoints.length > 2 ||
+            JSON.stringify(this.curvesRgbPoints) !== JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]) ||
+            JSON.stringify(this.curvesRedPoints) !== JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]) ||
+            JSON.stringify(this.curvesGreenPoints) !== JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]) ||
+            JSON.stringify(this.curvesBluePoints) !== JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]) ||
+            JSON.stringify(this.curvesLuminosityPoints) !== JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 1 }]);
+
+        if (F?.ColorMatrix && hasCurves) {
+            const rgbLUT = this.calculateCurveLUT(this.curvesRgbPoints);
+            const redLUT = this.calculateCurveLUT(this.curvesRedPoints);
+            const greenLUT = this.calculateCurveLUT(this.curvesGreenPoints);
+            const blueLUT = this.calculateCurveLUT(this.curvesBluePoints);
+            const lumLUT = this.calculateCurveLUT(this.curvesLuminosityPoints);
+
+            const combinedLUT = {
+                r: new Array(256),
+                g: new Array(256),
+                b: new Array(256),
+            };
+
+            for (let i = 0; i < 256; i++) {
+                let r = i;
+                let g = i;
+                let b = i;
+
+                r = rgbLUT[r];
+                g = rgbLUT[g];
+                b = rgbLUT[b];
+
+                r = redLUT[r];
+                g = greenLUT[g];
+                b = blueLUT[b];
+
+                const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+                const lumMapped = lumLUT[this.clamp(lum, 0, 255)];
+                const lumDelta = lumMapped - lum;
+
+                r = this.clamp(r + lumDelta, 0, 255);
+                g = this.clamp(g + lumDelta, 0, 255);
+                b = this.clamp(b + lumDelta, 0, 255);
+
+                combinedLUT.r[i] = r / 255;
+                combinedLUT.g[i] = g / 255;
+                combinedLUT.b[i] = b / 255;
+            }
+
+            const matrix = new Array(20).fill(0);
+            matrix[18] = 1;
+
+            const filter = new F.ColorMatrix({ matrix });
+            if (typeof filter.matrix === 'undefined') {
+                filter.matrix = matrix;
+            }
+
+            filter.applyTo2d = function(options: any) {
+                if (!options || !options.imageData || !options.imageData.data) {
+                    return;
+                }
+                const data = options.imageData.data;
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = Math.min(255, Math.max(0, data[i]));
+                    const g = Math.min(255, Math.max(0, data[i + 1]));
+                    const b = Math.min(255, Math.max(0, data[i + 2]));
+                    data[i] = combinedLUT.r[r] * 255;
+                    data[i + 1] = combinedLUT.g[g] * 255;
+                    data[i + 2] = combinedLUT.b[b] * 255;
+                }
+            };
+
+            filter.applyTo = filter.applyTo2d;
+
+            filters.push(filter);
+        }
 
         img.filters = filters;
 
@@ -1433,6 +1534,12 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         if (typeof img.applyFilters !== 'function') {
             afterApply();
             return;
+        }
+
+        const F2: any = fabric as any;
+        const prevBackend = F2.filterBackend;
+        if (hasCurves && F2.Canvas2dFilterBackend) {
+            F2.filterBackend = new F2.Canvas2dFilterBackend();
         }
 
         let applied = false;
@@ -1453,6 +1560,10 @@ export class GeocacheImageEditorWidget extends ReactWidget {
             }
         }
 
+        if (hasCurves && F2.Canvas2dFilterBackend) {
+            F2.filterBackend = prevBackend;
+        }
+
         if (applied) {
             afterApply();
             return;
@@ -1468,6 +1579,126 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         }
     }
 
+    protected getCurvesPoints(channel: CurveChannel): CurvePoint[] {
+        switch (channel) {
+            case 'rgb':
+                return this.curvesRgbPoints;
+            case 'red':
+                return this.curvesRedPoints;
+            case 'green':
+                return this.curvesGreenPoints;
+            case 'blue':
+                return this.curvesBluePoints;
+            case 'luminosity':
+                return this.curvesLuminosityPoints;
+        }
+    }
+
+    protected setCurvesPoints(channel: CurveChannel, points: CurvePoint[]): void {
+        switch (channel) {
+            case 'rgb':
+                this.curvesRgbPoints = points;
+                break;
+            case 'red':
+                this.curvesRedPoints = points;
+                break;
+            case 'green':
+                this.curvesGreenPoints = points;
+                break;
+            case 'blue':
+                this.curvesBluePoints = points;
+                break;
+            case 'luminosity':
+                this.curvesLuminosityPoints = points;
+                break;
+        }
+    }
+
+    protected calculateCurveLUT(points: CurvePoint[]): number[] {
+        const lut: number[] = [];
+        const sorted = [...points].sort((a, b) => a.x - b.x);
+
+        for (let i = 0; i < 256; i++) {
+            const x = i / 255;
+
+            let idx = 0;
+            while (idx < sorted.length - 1 && sorted[idx + 1].x < x) {
+                idx++;
+            }
+
+            if (idx >= sorted.length - 1) {
+                lut.push(Math.round(sorted[sorted.length - 1].y * 255));
+            } else {
+                const p0 = sorted[idx];
+                const p1 = sorted[idx + 1];
+                const t = (x - p0.x) / (p1.x - p0.x);
+                const y = p0.y + t * (p1.y - p0.y);
+                lut.push(Math.round(this.clamp(y, 0, 1) * 255));
+            }
+        }
+
+        return lut;
+    }
+
+    protected applyCurvesPreset(preset: string): void {
+        const channel = this.curvesChannel;
+        let newPoints: CurvePoint[] = [];
+
+        switch (preset) {
+            case 'contrast':
+                newPoints = [
+                    { x: 0, y: 0.1 },
+                    { x: 0.25, y: 0.2 },
+                    { x: 0.5, y: 0.5 },
+                    { x: 0.75, y: 0.8 },
+                    { x: 1, y: 0.9 },
+                ];
+                break;
+            case 'invert':
+                newPoints = [
+                    { x: 0, y: 1 },
+                    { x: 1, y: 0 },
+                ];
+                break;
+            case 'brighten-shadows':
+                newPoints = [
+                    { x: 0, y: 0.15 },
+                    { x: 0.25, y: 0.4 },
+                    { x: 0.5, y: 0.55 },
+                    { x: 1, y: 1 },
+                ];
+                break;
+            case 'darken-highlights':
+                newPoints = [
+                    { x: 0, y: 0 },
+                    { x: 0.5, y: 0.45 },
+                    { x: 0.75, y: 0.6 },
+                    { x: 1, y: 0.85 },
+                ];
+                break;
+            default:
+                newPoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+        }
+
+        this.setCurvesPoints(channel, newPoints);
+        this.applyImageFilters();
+        this.update();
+    }
+
+    protected resetCurves(channel?: CurveChannel): void {
+        if (channel) {
+            this.setCurvesPoints(channel, [{ x: 0, y: 0 }, { x: 1, y: 1 }]);
+        } else {
+            this.curvesRgbPoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+            this.curvesRedPoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+            this.curvesGreenPoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+            this.curvesBluePoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+            this.curvesLuminosityPoints = [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+        }
+        this.applyImageFilters();
+        this.update();
+    }
+
     protected resetImageEdits(): void {
         this.imageBrightness = 0;
         this.imageContrast = 0;
@@ -1477,6 +1708,10 @@ export class GeocacheImageEditorWidget extends ReactWidget {
         this.imageGrayscale = false;
         this.imageSepia = false;
         this.imageInvert = false;
+        this.imageRedChannel = 1;
+        this.imageGreenChannel = 1;
+        this.imageBlueChannel = 1;
+        this.resetCurves();
         this.imageZoom = 1;
 
         const img = this.getActiveImageObject();
@@ -2479,6 +2714,102 @@ export class GeocacheImageEditorWidget extends ReactWidget {
                                     }}
                                 />
                             </label>
+
+                            <div className='w-full' />
+                            <span className='text-xs opacity-70 font-semibold'>Canaux RGB</span>
+
+                            <label className='text-xs opacity-70'>
+                                Rouge
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={2}
+                                    step={0.05}
+                                    value={this.imageRedChannel}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageRedChannel = this.clamp(next, 0, 2);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Vert
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={2}
+                                    step={0.05}
+                                    value={this.imageGreenChannel}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageGreenChannel = this.clamp(next, 0, 2);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <label className='text-xs opacity-70'>
+                                Bleu
+                                <input
+                                    type='number'
+                                    min={0}
+                                    max={2}
+                                    step={0.05}
+                                    value={this.imageBlueChannel}
+                                    className='ml-2 w-20 theia-input'
+                                    onChange={e => {
+                                        const next = Number(e.target.value);
+                                        if (Number.isFinite(next)) {
+                                            this.imageBlueChannel = this.clamp(next, 0, 2);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }
+                                    }}
+                                />
+                            </label>
+
+                            <div className='w-full' />
+
+                            <button
+                                type='button'
+                                className={`theia-button secondary ${this.showCurvesEditor ? 'border border-sky-500' : ''}`}
+                                onClick={() => {
+                                    this.showCurvesEditor = !this.showCurvesEditor;
+                                    this.update();
+                                }}
+                            >
+                                {this.showCurvesEditor ? 'Masquer courbes' : 'Courbes'}
+                            </button>
+
+                            {this.showCurvesEditor ? (
+                                <div className='w-full mt-2 p-3 border border-[var(--theia-panel-border)] rounded bg-[var(--theia-editor-background)]'>
+                                    <CurvesEditor
+                                        channel={this.curvesChannel}
+                                        points={this.getCurvesPoints(this.curvesChannel)}
+                                        onPointsChange={points => {
+                                            this.setCurvesPoints(this.curvesChannel, points);
+                                            this.applyImageFilters();
+                                            this.update();
+                                        }}
+                                        onChannelChange={channel => {
+                                            this.curvesChannel = channel;
+                                            this.update();
+                                        }}
+                                        onReset={() => this.resetCurves(this.curvesChannel)}
+                                        onApplyPreset={preset => this.applyCurvesPreset(preset)}
+                                    />
+                                </div>
+                            ) : null}
                         </div>
                     ) : null}
 

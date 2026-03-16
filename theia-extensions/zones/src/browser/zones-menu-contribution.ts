@@ -19,5 +19,11 @@ export class ZonesMenuContribution implements MenuContribution {
             label: 'Connexion Geocaching.com',
             order: '1'  // Juste après les préférences
         });
+
+        menus.registerMenuAction(CommonMenus.VIEW_VIEWS, {
+            commandId: ZonesCommands.OPEN_ARCHIVE_MANAGER.id,
+            label: 'Gestionnaire d\'Archive',
+            order: '2'
+        });
     }
 }

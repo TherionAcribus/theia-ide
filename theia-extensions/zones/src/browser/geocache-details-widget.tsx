@@ -78,6 +78,7 @@ interface WaypointsEditorProps {
     messages: MessageService;
     onDeleteWaypoint: (id: number, name: string) => Promise<void>;
     onSetAsCorrectedCoords: (waypointId: number, waypointName: string) => Promise<void>;
+    onPushWaypointToGeocaching: (waypointId: number, waypointName: string) => Promise<void>;
 }
 
 /**
@@ -192,10 +193,11 @@ function htmlToRawText(value?: string): string {
  */
 interface WaypointsEditorWrapperProps extends WaypointsEditorProps {
     onRegisterCallback: (callback: (prefill?: WaypointPrefillPayload) => void) => void;
+    onPushWaypointToGeocaching: (waypointId: number, waypointName: string) => Promise<void>;
 }
 
 const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) => {
-    const { onRegisterCallback, ...editorProps } = props;
+    const { onRegisterCallback, onPushWaypointToGeocaching, ...editorProps } = props;
     const startEditRef = React.useRef<((waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => void) | null>(null);
 
     // Enregistrer le callback au montage
@@ -213,6 +215,7 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
     return (
         <WaypointsEditorWithRef
             {...editorProps}
+            onPushWaypointToGeocaching={onPushWaypointToGeocaching}
             onStartEditRef={(fn) => { startEditRef.current = fn; }}
         />
     );
@@ -223,9 +226,10 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
  */
 interface WaypointsEditorWithRefProps extends WaypointsEditorProps {
     onStartEditRef: (fn: (waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => void) => void;
+    onPushWaypointToGeocaching: (waypointId: number, waypointName: string) => Promise<void>;
 }
 
-const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStartEditRef, ...props }) => {
+const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStartEditRef, onPushWaypointToGeocaching, ...props }) => {
     const { waypoints, geocacheId, geocacheData, backendBaseUrl, onUpdate, messages, onDeleteWaypoint, onSetAsCorrectedCoords } = props;
     const [editingId, setEditingId] = React.useState<number | 'new' | null>(null);
     const [editForm, setEditForm] = React.useState<Partial<GeocacheWaypoint>>({});
@@ -335,6 +339,11 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
     const setAsCorrectedCoords = async (waypoint: GeocacheWaypoint) => {
         if (!waypoint.id) { return; }
         await onSetAsCorrectedCoords(waypoint.id, waypoint.name || 'ce waypoint');
+    };
+
+    const pushWaypointToGeocaching = async (waypoint: GeocacheWaypoint) => {
+        if (!waypoint.id) { return; }
+        await onPushWaypointToGeocaching(waypoint.id, waypoint.name || 'ce waypoint');
     };
 
     const setCurrentFormAsCorrectedCoords = async () => {
@@ -648,6 +657,15 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                         </button>
                                         <button
                                             className='theia-button secondary'
+                                            onClick={() => pushWaypointToGeocaching(w)}
+                                            disabled={editingId !== null || !w.latitude}
+                                            style={{ padding: '2px 8px', fontSize: 11 }}
+                                            title='Envoyer ces coordonnées vers Geocaching.com (comme coordonnées corrigées)'
+                                        >
+                                            📡
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
                                             onClick={() => deleteWaypoint(w)}
                                             disabled={editingId !== null}
                                             style={{ padding: '2px 8px', fontSize: 11 }}
@@ -675,6 +693,7 @@ interface CoordinatesEditorProps {
     backendBaseUrl: string;
     onUpdate: () => Promise<void>;
     messages: MessageService;
+    gcCode?: string;
 }
 
 type DescriptionVariant = 'original' | 'modified';
@@ -871,9 +890,10 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
 /**
  * Composant pour afficher et éditer les coordonnées d'une géocache
  */
-const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geocacheId, backendBaseUrl, onUpdate, messages }) => {
+const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geocacheId, backendBaseUrl, onUpdate, messages, gcCode }) => {
     const [isEditing, setIsEditing] = React.useState(false);
     const [editedCoords, setEditedCoords] = React.useState('');
+    const [isSendingToGC, setIsSendingToGC] = React.useState(false);
     const [solvedStatus, setSolvedStatus] = React.useState<'not_solved' | 'in_progress' | 'solved'>(
         geocacheData.solved || 'not_solved'
     );
@@ -935,6 +955,35 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
         }
     };
 
+    const sendToGeocaching = async () => {
+        if (!isCorrected) {
+            messages.warn('Aucune coordonnée corrigée à envoyer. Corrigez d\'abord les coordonnées.');
+            return;
+        }
+        setIsSendingToGC(true);
+        try {
+            const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/push-corrected-coordinates`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+            const json = await res.json();
+            if (!res.ok) {
+                if (res.status === 401) {
+                    messages.error('Non connecté à Geocaching.com — configurez l\'authentification dans GeoApp');
+                } else {
+                    messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
+                }
+                return;
+            }
+            messages.info(`✅ Coordonnées envoyées vers Geocaching.com (${gcCode || geocacheId})`);
+        } catch (e) {
+            console.error('sendToGeocaching error', e);
+            messages.error('Erreur réseau lors de l\'envoi vers Geocaching.com');
+        } finally {
+            setIsSendingToGC(false);
+        }
+    };
+
     const updateSolvedStatus = async (newStatus: 'not_solved' | 'in_progress' | 'solved') => {
         try {
             const res = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/solved-status`, {
@@ -960,19 +1009,40 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                 <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                         <strong>Coordonnées {isCorrected && '(corrigées)'}</strong>
-                        <button
-                            onClick={startEdit}
-                            style={{
-                                padding: '4px 12px',
-                                backgroundColor: 'var(--theia-button-background)',
-                                color: 'var(--theia-button-foreground)',
-                                border: 'none',
-                                borderRadius: 4,
-                                cursor: 'pointer'
-                            }}
-                        >
-                            {isCorrected ? 'Modifier' : 'Corriger les coordonnées'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            {isCorrected && (
+                                <button
+                                    onClick={sendToGeocaching}
+                                    disabled={isSendingToGC}
+                                    title='Envoyer les coordonnées corrigées vers Geocaching.com'
+                                    style={{
+                                        padding: '4px 10px',
+                                        backgroundColor: 'var(--theia-button-secondaryBackground)',
+                                        color: 'var(--theia-button-secondaryForeground)',
+                                        border: '1px solid var(--theia-button-border)',
+                                        borderRadius: 4,
+                                        cursor: isSendingToGC ? 'wait' : 'pointer',
+                                        fontSize: 12,
+                                        opacity: isSendingToGC ? 0.6 : 1
+                                    }}
+                                >
+                                    {isSendingToGC ? '⏳ Envoi…' : '📡 Envoyer vers GC.com'}
+                                </button>
+                            )}
+                            <button
+                                onClick={startEdit}
+                                style={{
+                                    padding: '4px 12px',
+                                    backgroundColor: 'var(--theia-button-background)',
+                                    color: 'var(--theia-button-foreground)',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                {isCorrected ? 'Modifier' : 'Corriger les coordonnées'}
+                            </button>
+                        </div>
                     </div>
                     <div style={{ 
                         padding: 8, 
@@ -2073,6 +2143,43 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     };
 
     /**
+     * Envoie les coordonnées d'un waypoint vers Geocaching.com (comme coordonnées corrigées)
+     */
+    protected pushWaypointToGeocaching = async (waypointId: number, waypointName: string): Promise<void> => {
+        if (!this.geocacheId || !this.data) { return; }
+
+        const dialog = new ConfirmDialog({
+            title: 'Envoyer vers Geocaching.com',
+            msg: `Envoyer les coordonnées de "${waypointName}" comme coordonnées corrigées vers Geocaching.com (${this.data.gc_code || ''}) ?`,
+            ok: 'Envoyer',
+            cancel: 'Annuler'
+        });
+
+        const confirmed = await dialog.open();
+        if (!confirmed) { return; }
+
+        try {
+            const res = await fetch(
+                `${this.backendBaseUrl}/api/geocaches/${this.geocacheId}/waypoints/${waypointId}/push-coordinates`,
+                { method: 'POST', credentials: 'include' }
+            );
+            const json = await res.json();
+            if (!res.ok) {
+                if (res.status === 401) {
+                    this.messages.error('Non connecté à Geocaching.com — configurez l\'authentification dans GeoApp');
+                } else {
+                    this.messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
+                }
+                return;
+            }
+            this.messages.info(`✅ Coordonnées de "${waypointName}" envoyées vers Geocaching.com`);
+        } catch (e) {
+            console.error('pushWaypointToGeocaching error', e);
+            this.messages.error('Erreur réseau lors de l\'envoi vers Geocaching.com');
+        }
+    };
+
+    /**
      * Définit les coordonnées d'un waypoint comme coordonnées corrigées de la géocache
      */
     protected setAsCorrectedCoords = async (waypointId: number, waypointName: string): Promise<void> => {
@@ -2895,6 +3002,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                     backendBaseUrl={this.backendBaseUrl}
                                     onUpdate={() => this.load()}
                                     messages={this.messages}
+                                    gcCode={d.gc_code}
                                 />
                             </div>
                         </div>
@@ -2989,6 +3097,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 messages={this.messages}
                                 onDeleteWaypoint={this.deleteWaypoint}
                                 onSetAsCorrectedCoords={this.setAsCorrectedCoords}
+                                onPushWaypointToGeocaching={this.pushWaypointToGeocaching}
                                 onRegisterCallback={(callback) => { this.waypointEditorCallback = callback; }}
                             />
                         </div>

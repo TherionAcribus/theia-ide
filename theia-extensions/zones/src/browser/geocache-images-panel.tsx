@@ -74,6 +74,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
     const [isSaving, setIsSaving] = React.useState(false);
 
     const [ocrInProgressById, setOcrInProgressById] = React.useState<Record<number, true>>({});
+    const ocrAbortControllersRef = React.useRef<Record<number, AbortController>>({});
 
     const setOcrInProgress = React.useCallback((imageId: number, inProgress: boolean): void => {
         setOcrInProgressById(prev => {
@@ -85,6 +86,29 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             }
             return next;
         });
+        if (!inProgress) {
+            delete ocrAbortControllersRef.current[imageId];
+        }
+    }, []);
+
+    const cancelOcrForImage = React.useCallback((imageId: number): void => {
+        const controller = ocrAbortControllersRef.current[imageId];
+        if (controller) {
+            controller.abort();
+            delete ocrAbortControllersRef.current[imageId];
+        }
+        setOcrInProgress(imageId, false);
+        messages.info('OCR annulé');
+    }, [messages, setOcrInProgress]);
+
+    const createOcrAbortController = React.useCallback((imageId: number): AbortController => {
+        const existing = ocrAbortControllersRef.current[imageId];
+        if (existing) {
+            existing.abort();
+        }
+        const controller = new AbortController();
+        ocrAbortControllersRef.current[imageId] = controller;
+        return controller;
     }, []);
 
     const [hiddenDomainsDraft, setHiddenDomainsDraft] = React.useState(hiddenDomainsText ?? '');
@@ -474,8 +498,8 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
+        const abortController = createOcrAbortController(imageId);
         setOcrInProgress(imageId, true);
-        setIsSaving(true);
         try {
             let imageUrlForFetch = resolveImageUrl(img.url);
 
@@ -496,7 +520,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 }
             }
 
-            const imageRes = await fetch(imageUrlForFetch, { credentials: 'include' });
+            const imageRes = await fetch(imageUrlForFetch, { credentials: 'include', signal: abortController.signal });
             if (!imageRes.ok) {
                 throw new Error(`HTTP ${imageRes.status}`);
             }
@@ -558,11 +582,14 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 setDraftOcr(updated.ocr_text ?? text);
             }
         } catch (e) {
+            if ((e as Error).name === 'AbortError') {
+                console.log('[GeocacheImagesPanel] cloud ocr aborted', imageId);
+                return;
+            }
             console.error('[GeocacheImagesPanel] cloud ocr error', e);
             messages.error(`OCR IA: erreur (${String(e)})`);
         } finally {
             setOcrInProgress(imageId, false);
-            setIsSaving(false);
         }
     };
 
@@ -572,8 +599,8 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
             return;
         }
 
+        const abortController = createOcrAbortController(imageId);
         setOcrInProgress(imageId, true);
-        setIsSaving(true);
         try {
             let imageUrlForPlugin = resolveImageUrl(img.url);
 
@@ -613,6 +640,7 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({ inputs }),
+                signal: abortController.signal,
             });
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}`);
@@ -644,10 +672,13 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                 setDraftOcr(updated.ocr_text ?? text);
             }
         } catch (e) {
+            if ((e as Error).name === 'AbortError') {
+                console.log('[GeocacheImagesPanel] ocr plugin aborted', imageId);
+                return;
+            }
             console.error('[GeocacheImagesPanel] ocr error', e);
         } finally {
             setOcrInProgress(imageId, false);
-            setIsSaving(false);
         }
     };
 
@@ -1222,35 +1253,50 @@ export const GeocacheImagesPanel: React.FC<GeocacheImagesPanelProps> = ({
                                 (() => {
                                     const isOcrBusy = Boolean(ocrInProgressById[img.id]);
                                     return (
-                                        <button
-                                            key={img.id}
-                                            type='button'
-                                            className={`relative shrink-0 rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
-                                            onClick={() => handleThumbnailClick(img.id)}
-                                            onContextMenu={(e) => openThumbnailContextMenu(e, img.id)}
-                                            title={img.source_url}
-                                            disabled={isSaving || isOcrBusy}
-                                            aria-busy={isOcrBusy}
-                                        >
-                                            <img
-                                                className={thumbnailImageClassName}
-                                                src={resolveImageUrl(img.url)}
-                                                alt=''
-                                                width={thumbnailDimensions.width}
-                                                height={thumbnailDimensions.height}
-                                            />
+                                        <div key={img.id} className='relative shrink-0'>
+                                            <button
+                                                type='button'
+                                                className={`relative rounded border ${img.id === selectedId ? 'border-sky-500' : 'border-[var(--theia-panel-border)]'} p-1`}
+                                                onClick={() => handleThumbnailClick(img.id)}
+                                                onContextMenu={(e) => openThumbnailContextMenu(e, img.id)}
+                                                title={img.source_url}
+                                                disabled={isSaving}
+                                                aria-busy={isOcrBusy}
+                                            >
+                                                <img
+                                                    className={`${thumbnailImageClassName} ${isOcrBusy ? 'opacity-50' : ''}`}
+                                                    src={resolveImageUrl(img.url)}
+                                                    alt=''
+                                                    width={thumbnailDimensions.width}
+                                                    height={thumbnailDimensions.height}
+                                                />
+
+                                                {renderBadges(img)}
+                                            </button>
 
                                             {isOcrBusy && (
-                                                <div className='absolute inset-0 flex items-center justify-center rounded bg-black/40'>
-                                                    <div className='flex flex-col items-center gap-1'>
-                                                        <div className='h-6 w-6 animate-spin rounded-full border-2 border-white/70 border-t-transparent' />
+                                                <div className='absolute inset-0 flex items-center justify-center rounded pointer-events-none'>
+                                                    <div className='flex flex-col items-center gap-1 bg-black/60 rounded px-2 py-1'>
+                                                        <div className='h-5 w-5 animate-spin rounded-full border-2 border-white/70 border-t-transparent' />
                                                         <div className='text-[10px] font-medium text-white/90'>OCR…</div>
                                                     </div>
                                                 </div>
                                             )}
 
-                                            {renderBadges(img)}
-                                        </button>
+                                            {isOcrBusy && (
+                                                <button
+                                                    type='button'
+                                                    className='absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold hover:bg-red-700 shadow-md'
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        cancelOcrForImage(img.id);
+                                                    }}
+                                                    title="Annuler l'OCR"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
                                     );
                                 })()
                             ))}

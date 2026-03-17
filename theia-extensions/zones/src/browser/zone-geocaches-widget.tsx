@@ -195,6 +195,15 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
         }
     }
 
+    private extractGcCode(raw: string | null | undefined): string | undefined {
+        const value = (raw || '').trim();
+        if (!value) {
+            return undefined;
+        }
+        const match = value.match(/(GC[0-9A-Z]+)/i);
+        return match ? match[1].toUpperCase() : undefined;
+    }
+
     protected async handleExportGpxSelected(geocacheIds: number[]): Promise<void> {
         try {
             if (!geocacheIds || geocacheIds.length === 0) {
@@ -1654,8 +1663,8 @@ export class ZoneGeocachesWidget extends ReactWidget implements StatefulWidget {
                                 try {
                                     const form = e.currentTarget as HTMLFormElement;
                                     const fd = new FormData(form);
-                                    const gc = (fd.get('gc_code') as string || '').trim().toUpperCase();
-                                    if (!gc) { return; }
+                                    const gc = this.extractGcCode(fd.get('gc_code') as string);
+                                    if (!gc) { this.messages.warn('Code GC invalide'); return; }
                                     if (!this.zoneId) { this.messages.warn('Zone active manquante'); return; }
                                     const res = await fetch(`${this.backendBaseUrl}/api/geocaches/add`, {
                                         method: 'POST',

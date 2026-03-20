@@ -1851,7 +1851,8 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
             return null;
         }
 
-        const fontName = this.alphabet?.alphabetConfig?.type === 'font' 
+        const config = this.alphabet?.alphabetConfig;
+        const fontName = config?.type === 'font' 
             ? `Alphabet-${this.alphabetId}` 
             : undefined;
         const showValue = this.preferenceService.get(PREF_AVAILABLE_SYMBOLS_SHOW_VALUE, false) as boolean;
@@ -1873,6 +1874,7 @@ export class AlphabetViewerWidget extends ReactWidget implements StatefulWidget 
                             index={idx}
                             scale={scale}
                             fontFamily={fontName}
+                            imagePath={config?.type === 'images' ? this.getImageUrl(char) : undefined}
                             isDraggable={false}
                             showIndex={false}
                             showValue={showValue}

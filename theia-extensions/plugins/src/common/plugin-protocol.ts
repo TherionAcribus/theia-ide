@@ -192,6 +192,19 @@ export interface MetasolverSignature {
     looks_like_phone_keypad: boolean;
     looks_like_roman_numerals: boolean;
     looks_like_decimal_sequence: boolean;
+    looks_like_a1z26: boolean;
+    looks_like_tap_code: boolean;
+    looks_like_polybius: boolean;
+    looks_like_multitap: boolean;
+    looks_like_chemical_symbols: boolean;
+    looks_like_houdini_words: boolean;
+    looks_like_nak_nak: boolean;
+    looks_like_shadok: boolean;
+    looks_like_tom_tom: boolean;
+    looks_like_gold_bug: boolean;
+    looks_like_postnet: boolean;
+    looks_like_prime_sequence: boolean;
+    looks_like_bacon: boolean;
     looks_like_coordinate_fragment: boolean;
     suggested_preset: string;
 }
@@ -228,6 +241,59 @@ export interface MetasolverRecommendationResponse {
     eligible_total: number;
     available_presets?: Record<string, MetasolverPresetInfo>;
     explanation?: string[];
+}
+
+export interface ListingClassificationLabel {
+    name: string;
+    confidence: number;
+    evidence: string[];
+    suggested_next_step?: string;
+}
+
+export interface ListingSecretFragment {
+    source: string;
+    source_kind: string;
+    text: string;
+    score: number;
+    confidence: number;
+    signature: MetasolverSignature;
+    evidence: string[];
+}
+
+export interface ListingClassificationRequest {
+    geocache_id?: number;
+    title?: string;
+    description?: string;
+    description_html?: string;
+    hint?: string;
+    waypoints?: Array<Record<string, any>>;
+    checkers?: Array<Record<string, any>>;
+    images?: Array<Record<string, any>>;
+    max_secret_fragments?: number;
+}
+
+export interface ListingClassificationResponse {
+    source: 'direct_input' | 'geocache';
+    geocache?: {
+        id: number;
+        gc_code: string;
+        name?: string;
+    } | null;
+    title?: string | null;
+    max_secret_fragments: number;
+    labels: ListingClassificationLabel[];
+    recommended_actions: string[];
+    candidate_secret_fragments: ListingSecretFragment[];
+    hidden_signals: string[];
+    formula_signals: string[];
+    signal_summary: {
+        has_title: boolean;
+        has_hint: boolean;
+        has_description_html: boolean;
+        image_count: number;
+        checker_count: number;
+        waypoint_count: number;
+    };
 }
 
 /**
@@ -389,6 +455,11 @@ export interface PluginsService {
      * Recommande une sous-liste de plugins metasolver en fonction de la signature d'un texte.
      */
     recommendMetasolverPlugins(request: MetasolverRecommendationRequest): Promise<MetasolverRecommendationResponse>;
+
+    /**
+     * Classe un listing de geocache en plusieurs familles d'enigmes.
+     */
+    classifyListing(request: ListingClassificationRequest): Promise<ListingClassificationResponse>;
     
     /**
      * Détecte les coordonnées GPS dans un texte.

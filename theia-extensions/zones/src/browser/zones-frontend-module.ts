@@ -21,11 +21,12 @@ import { GeocacheImageEditorTabsManager } from './geocache-image-editor-tabs-man
 import { GeocacheImageEditorFrontendContribution } from './geocache-image-editor-frontend-contribution';
 import { ZoneTabsManager } from './zone-tabs-manager';
 import { CheckerToolsManager } from './checker-tools-manager';
-import { GeoAppChatAgent } from './geoapp-chat-agent';
+import { GeoAppChatAgent, GeoAppChatAgentContribution } from './geoapp-chat-agent';
 import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { GeoAppTranslateDescriptionAgentContribution } from './geoapp-translate-description-agent';
 import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agent';
 import { GeoAppLogWriterAgentContribution } from './geoapp-log-writer-agent';
+import { GeoAppChatBridge } from './geoapp-chat-bridge';
 import { ChatAgent } from '@theia/ai-chat/lib/common/chat-agents';
 import { GeocachingAuthWidget } from './geocaching-auth-widget';
 import { ArchiveManagerWidget } from './archive-manager-widget';
@@ -189,6 +190,12 @@ export default new ContainerModule(bind => {
 
     bind(GeoAppLogWriterAgentContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(GeoAppLogWriterAgentContribution);
+
+    bind(GeoAppChatBridge).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppChatBridge);
+
+    bind(GeoAppChatAgentContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(GeoAppChatAgentContribution);
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);

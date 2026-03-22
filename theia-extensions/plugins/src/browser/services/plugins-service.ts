@@ -18,7 +18,9 @@ import {
     PluginsService as IPluginsService,
     MetasolverEligiblePluginsResponse,
     MetasolverRecommendationRequest,
-    MetasolverRecommendationResponse
+    MetasolverRecommendationResponse,
+    ListingClassificationRequest,
+    ListingClassificationResponse
 } from '../../common/plugin-protocol';
 
 @injectable()
@@ -174,6 +176,16 @@ export class PluginsServiceImpl implements IPluginsService {
         } catch (error) {
             console.error('Erreur lors de la recommandation metasolver:', error);
             throw new Error(`Impossible de recommander les plugins metasolver: ${this.getErrorMessage(error)}`);
+        }
+    }
+
+    async classifyListing(request: ListingClassificationRequest): Promise<ListingClassificationResponse> {
+        try {
+            const response = await this.client.post('/api/plugins/listing/classify', request);
+            return response.data;
+        } catch (error) {
+            console.error('Erreur lors de la classification du listing:', error);
+            throw new Error(`Impossible de classifier le listing: ${this.getErrorMessage(error)}`);
         }
     }
     

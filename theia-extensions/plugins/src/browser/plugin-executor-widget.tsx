@@ -22,17 +22,22 @@ import { injectable, inject, postConstruct } from '@theia/core/shared/inversify'
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { StatefulWidget } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
+import { CommandService } from '@theia/core';
 import {
     PluginsService,
     Plugin,
     PluginDetails,
     PluginResult,
+    ListingClassificationResponse,
     MetasolverEligiblePlugin,
     MetasolverRecommendationResponse,
     MetasolverSignature
 } from '../common/plugin-protocol';
 import { TasksService, Task } from '../common/task-protocol';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
+
+const FORMULA_SOLVER_SOLVE_FROM_GEOCACHE_COMMAND = 'formula-solver:solve-from-geocache';
+const GEOAPP_OPEN_CHAT_REQUEST_EVENT = 'geoapp-open-chat-request';
 
 /**
  * Mode d'exécution du Plugin Executor
@@ -315,6 +320,9 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
     @inject(MessageService)
     protected readonly messageService!: MessageService;
 
+    @inject(CommandService)
+    protected readonly commandService!: CommandService;
+
     @inject(PreferenceService)
     protected readonly preferenceService!: PreferenceService;
 
@@ -536,6 +544,7 @@ export class PluginExecutorWidget extends ReactWidget implements StatefulWidget 
             pluginsService={this.pluginsService}
             tasksService={this.tasksService}
             messageService={this.messageService}
+            commandService={this.commandService}
             backendBaseUrl={this.getBackendBaseUrl()}
         />;
     }
@@ -548,8 +557,9 @@ const PluginExecutorComponent: React.FC<{
     pluginsService: PluginsService;
     tasksService: TasksService;
     messageService: MessageService;
+    commandService: CommandService;
     backendBaseUrl: string;
-}> = ({ config, pluginsService, tasksService, messageService, backendBaseUrl }) => {
+}> = ({ config, pluginsService, tasksService, messageService, commandService, backendBaseUrl }) => {
     // Initialisation de l'état basée sur le mode
     const [state, setState] = React.useState<ExecutorState>(() => {
         // En mode plugin ou geocache, on peut avoir un plugin pré-sélectionné
@@ -1926,8 +1936,13 @@ const PluginExecutorComponent: React.FC<{
                     pluginList={state.formInputs.plugin_list || ''}
                     text={String(state.formInputs.text || '')}
                     maxPlugins={typeof state.formInputs.max_plugins === 'number' ? state.formInputs.max_plugins : undefined}
+                    geocacheContext={config.geocacheContext}
                     pluginsService={pluginsService}
+                    commandService={commandService}
+                    backendBaseUrl={backendBaseUrl}
+                    onTextChange={(newText) => handleInputChange('text', newText)}
                     onPluginListChange={(newList) => handleInputChange('plugin_list', newList)}
+                    onExecuteRequest={handleExecute}
                     disabled={state.isExecuting}
                 />
             )}
@@ -2499,8 +2514,44 @@ const buildSignatureBadges = (signature: MetasolverSignature): string[] => {
     if (signature.looks_like_phone_keypad) {
         badges.push('T9 probable');
     }
+    if (signature.looks_like_multitap) {
+        badges.push('Multitap probable');
+    }
+    if (signature.looks_like_chemical_symbols) {
+        badges.push('Elements chimiques probables');
+    }
+    if (signature.looks_like_houdini_words) {
+        badges.push('Houdini probable');
+    }
+    if (signature.looks_like_nak_nak) {
+        badges.push('Nak Nak probable');
+    }
+    if (signature.looks_like_shadok) {
+        badges.push('Shadok probable');
+    }
+    if (signature.looks_like_tom_tom) {
+        badges.push('Tom Tom probable');
+    }
+    if (signature.looks_like_gold_bug) {
+        badges.push('Gold-Bug probable');
+    }
+    if (signature.looks_like_postnet) {
+        badges.push('POSTNET probable');
+    }
+    if (signature.looks_like_prime_sequence) {
+        badges.push('Nombres premiers probables');
+    }
     if (signature.looks_like_roman_numerals) {
         badges.push('Romain probable');
+    }
+    if (signature.looks_like_polybius) {
+        badges.push('Polybe probable');
+    }
+    if (signature.looks_like_tap_code) {
+        badges.push('Tap code probable');
+    }
+    if (signature.looks_like_bacon) {
+        badges.push('Bacon probable');
     }
     if (signature.looks_like_coordinate_fragment) {
         badges.push('Coordonnées possibles');
@@ -2509,26 +2560,200 @@ const buildSignatureBadges = (signature: MetasolverSignature): string[] => {
     return badges;
 };
 
+const LISTING_LABEL_TITLES: Record<string, string> = {
+    secret_code: 'Code secret',
+    hidden_content: 'Contenu cache',
+    formula: 'Formule',
+    word_game: 'Jeu',
+    image_puzzle: 'Image',
+    coord_transform: 'Coordonnees',
+    checker_available: 'Checker',
+};
+
+type MetasolverWorkflowLogEntry = {
+    id: string;
+    category: 'archive' | 'chat' | 'classify' | 'formula' | 'secret' | 'recommend' | 'execute';
+    message: string;
+    detail?: string;
+    timestamp: string;
+};
+
+const truncateDiagnosticText = (value?: string | null, maxLength: number = 240): string => {
+    const normalized = (value || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+        return '';
+    }
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, maxLength - 3))}...`;
+};
+
+const buildGeoAppDiagnosticPrompt = (
+    geocacheContext: GeocacheContext | undefined,
+    text: string,
+    classification: ListingClassificationResponse | null,
+    recommendation: MetasolverRecommendationResponse | null,
+    workflowEntries: MetasolverWorkflowLogEntry[],
+): string => {
+    const lines: string[] = [
+        'Tu reprends une analyse GeoApp depuis le panneau metasolver du Plugin Executor.',
+        'Travaille a partir du diagnostic ci-dessous et continue de facon autonome.',
+        '',
+        'Contexte :',
+        `- Geocache : ${geocacheContext?.gcCode || 'inconnue'}${geocacheContext?.name ? ` - ${geocacheContext.name}` : ''}`,
+        typeof geocacheContext?.geocacheId === 'number' ? `- ID : ${geocacheContext.geocacheId}` : '',
+        geocacheContext?.coordinates?.coordinatesRaw ? `- Coordonnees affichees : ${geocacheContext.coordinates.coordinatesRaw}` : '',
+        geocacheContext?.hint ? `- Hint : ${truncateDiagnosticText(geocacheContext.hint, 280)}` : '',
+        geocacheContext?.description ? `- Extrait listing : ${truncateDiagnosticText(geocacheContext.description, 420)}` : '',
+        '',
+        'Texte courant du panneau :',
+        truncateDiagnosticText(text || geocacheContext?.description || '', 900) || '(vide)',
+    ];
+
+    if (classification) {
+        lines.push(
+            '',
+            'Diagnostic du listing :',
+            classification.labels.length
+                ? `- Labels : ${classification.labels.map(label => `${LISTING_LABEL_TITLES[label.name] || label.name} ${(label.confidence * 100).toFixed(0)}%`).join(' | ')}`
+                : '- Labels : aucun label fort',
+        );
+
+        if (classification.recommended_actions.length) {
+            lines.push(`- Actions recommandees : ${classification.recommended_actions.slice(0, 3).join(' ')}`);
+        }
+        if (classification.formula_signals.length) {
+            lines.push(`- Signaux formule : ${classification.formula_signals.slice(0, 3).map(value => truncateDiagnosticText(value, 120)).join(' | ')}`);
+        }
+        if (classification.hidden_signals.length) {
+            lines.push(`- Signaux HTML : ${classification.hidden_signals.slice(0, 3).map(value => truncateDiagnosticText(value, 120)).join(' | ')}`);
+        }
+        if (classification.candidate_secret_fragments.length) {
+            lines.push(
+                `- Fragments secrets : ${classification.candidate_secret_fragments.slice(0, 3).map(fragment => `${truncateDiagnosticText(fragment.text, 90)} (${(fragment.confidence * 100).toFixed(0)}%)`).join(' | ')}`
+            );
+        }
+    }
+
+    if (recommendation) {
+        lines.push(
+            '',
+            'Recommendation metasolver :',
+            `- Preset : ${recommendation.effective_preset_label || recommendation.effective_preset}`,
+            recommendation.selected_plugins.length
+                ? `- Plugins recommandes : ${recommendation.selected_plugins.slice(0, 6).join(', ')}`
+                : '- Plugins recommandes : aucun',
+        );
+        if (recommendation.explanation?.length) {
+            lines.push(`- Explication : ${recommendation.explanation.slice(0, 2).map(value => truncateDiagnosticText(value, 140)).join(' | ')}`);
+        }
+        if (recommendation.recommendations.length) {
+            lines.push(
+                `- Raisons detaillees : ${recommendation.recommendations.slice(0, 4).map(item => `${item.name}: ${truncateDiagnosticText(item.reasons.join(', '), 140)}`).join(' | ')}`
+            );
+        }
+    }
+
+    if (workflowEntries.length) {
+        lines.push('', 'Trace locale recente :');
+        workflowEntries.slice(0, 5).reverse().forEach(entry => {
+            lines.push(`- [${entry.category}] ${entry.message}${entry.detail ? ` :: ${truncateDiagnosticText(entry.detail, 140)}` : ''}`);
+        });
+    }
+
+    lines.push(
+        '',
+        'Strategie attendue :',
+        '- Si formula domine, utilise Formula Solver avant metasolver.',
+        '- Si secret_code domine, pars du meilleur fragment et appelle recommend_metasolver_plugins avant metasolver.',
+        '- Utilise un checker seulement apres une hypothese plausible.',
+    );
+
+    return lines.filter(Boolean).join('\n');
+};
+
+const buildArchiveDiagnosticSummary = (
+    geocacheContext: GeocacheContext | undefined,
+    text: string,
+    classification: ListingClassificationResponse | null,
+    recommendation: MetasolverRecommendationResponse | null,
+    workflowEntries: MetasolverWorkflowLogEntry[],
+): Record<string, unknown> => ({
+    source: 'plugin_executor_metasolver',
+    updated_at: new Date().toISOString(),
+    geocache: geocacheContext ? {
+        geocache_id: geocacheContext.geocacheId,
+        gc_code: geocacheContext.gcCode,
+        name: geocacheContext.name,
+    } : null,
+    current_text: truncateDiagnosticText(text || geocacheContext?.description || '', 1200),
+    labels: classification?.labels.map(label => ({
+        name: label.name,
+        confidence: label.confidence,
+        evidence: label.evidence.slice(0, 3),
+    })) || [],
+    recommended_actions: classification?.recommended_actions.slice(0, 4) || [],
+    formula_signals: classification?.formula_signals.slice(0, 4) || [],
+    hidden_signals: classification?.hidden_signals.slice(0, 4) || [],
+    secret_fragments: classification?.candidate_secret_fragments.slice(0, 3).map(fragment => ({
+        text: truncateDiagnosticText(fragment.text, 160),
+        source: fragment.source,
+        confidence: fragment.confidence,
+        evidence: fragment.evidence.slice(0, 2),
+    })) || [],
+    metasolver: recommendation ? {
+        preset: recommendation.effective_preset,
+        preset_label: recommendation.effective_preset_label,
+        selected_plugins: recommendation.selected_plugins.slice(0, 8),
+        explanation: recommendation.explanation?.slice(0, 4) || [],
+        top_recommendations: recommendation.recommendations.slice(0, 5).map(item => ({
+            name: item.name,
+            confidence: item.confidence,
+            score: item.score,
+            reasons: item.reasons.slice(0, 3),
+        })),
+    } : null,
+    workflow: workflowEntries.slice(0, 8).map(entry => ({
+        category: entry.category,
+        message: entry.message,
+        detail: entry.detail,
+        timestamp: entry.timestamp,
+    })),
+});
+
 const MetasolverPresetPanel: React.FC<{
     preset: string;
     pluginList: string;
     text: string;
     maxPlugins?: number;
+    geocacheContext?: GeocacheContext;
     pluginsService: PluginsService;
+    commandService: CommandService;
+    backendBaseUrl: string;
+    onTextChange: (newText: string) => void;
     onPluginListChange: (newList: string) => void;
+    onExecuteRequest: () => void;
     disabled: boolean;
-}> = ({ preset, pluginList, text, maxPlugins, pluginsService, onPluginListChange, disabled }) => {
+}> = ({ preset, pluginList, text, maxPlugins, geocacheContext, pluginsService, commandService, backendBaseUrl, onTextChange, onPluginListChange, onExecuteRequest, disabled }) => {
     const [eligiblePlugins, setEligiblePlugins] = React.useState<MetasolverEligiblePlugin[]>([]);
+    const [classification, setClassification] = React.useState<ListingClassificationResponse | null>(null);
     const [recommendation, setRecommendation] = React.useState<MetasolverRecommendationResponse | null>(null);
+    const [recommendationSourceText, setRecommendationSourceText] = React.useState<string>('');
+    const [loadingClassification, setLoadingClassification] = React.useState(false);
     const [loadingEligible, setLoadingEligible] = React.useState(false);
     const [loadingRecommendation, setLoadingRecommendation] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
+    const [pendingAutoExecutionText, setPendingAutoExecutionText] = React.useState<string | null>(null);
+    const [workflowEntries, setWorkflowEntries] = React.useState<MetasolverWorkflowLogEntry[]>([]);
     const [expanded, setExpanded] = React.useState(false);
     const [selectionMode, setSelectionMode] = React.useState<MetasolverSelectionMode>(
         pluginList.trim() ? 'manual' : 'recommended'
     );
     const [manualSelectedPlugins, setManualSelectedPlugins] = React.useState<Set<string>>(new Set(parsePluginListValue(pluginList)));
     const autoApplyKeyRef = React.useRef<string | null>(null);
+    const lastClassificationLogKeyRef = React.useRef<string>('');
+    const lastRecommendationLogKeyRef = React.useRef<string>('');
 
     React.useEffect(() => {
         setSelectionMode(prev => pluginList.trim() ? 'manual' : (prev === 'preset' ? 'preset' : 'recommended'));
@@ -2540,6 +2765,28 @@ const MetasolverPresetPanel: React.FC<{
         setManualSelectedPlugins(new Set(parsePluginListValue(pluginList)));
         autoApplyKeyRef.current = null;
     }, [preset]);
+
+    const appendWorkflowEntry = React.useCallback((
+        category: MetasolverWorkflowLogEntry['category'],
+        message: string,
+        detail?: string,
+    ) => {
+        const timestamp = new Date().toLocaleTimeString('fr-FR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+        });
+        setWorkflowEntries(prev => [
+            {
+                id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+                category,
+                message,
+                detail,
+                timestamp,
+            },
+            ...prev,
+        ].slice(0, 12));
+    }, []);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -2570,10 +2817,63 @@ const MetasolverPresetPanel: React.FC<{
 
     React.useEffect(() => {
         let cancelled = false;
+
+        const timeoutId = window.setTimeout(() => {
+            const fetchClassification = async () => {
+                const trimmedText = (text || '').trim();
+                const geocacheId = typeof geocacheContext?.geocacheId === 'number' ? geocacheContext.geocacheId : undefined;
+                const hasDirectInput = Boolean(trimmedText || geocacheContext?.hint || geocacheContext?.name);
+
+                if (!geocacheId && !hasDirectInput) {
+                    setClassification(null);
+                    setLoadingClassification(false);
+                    return;
+                }
+
+                setLoadingClassification(true);
+                setError(null);
+                try {
+                    const data = await pluginsService.classifyListing({
+                        geocache_id: geocacheId,
+                        title: geocacheContext?.name || undefined,
+                        description: trimmedText || geocacheContext?.description || undefined,
+                        hint: geocacheContext?.hint || undefined,
+                        waypoints: geocacheContext?.waypoints,
+                        checkers: geocacheContext?.checkers,
+                        images: geocacheContext?.images,
+                        max_secret_fragments: 5,
+                    });
+                    if (!cancelled) {
+                        setClassification(data);
+                    }
+                } catch (err: any) {
+                    if (!cancelled) {
+                        setError(err?.message || 'Erreur de classification');
+                        setClassification(null);
+                    }
+                } finally {
+                    if (!cancelled) {
+                        setLoadingClassification(false);
+                    }
+                }
+            };
+
+            void fetchClassification();
+        }, 300);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        };
+    }, [text, geocacheContext, pluginsService]);
+
+    React.useEffect(() => {
+        let cancelled = false;
         const trimmedText = (text || '').trim();
 
         if (!trimmedText) {
             setRecommendation(null);
+            setRecommendationSourceText('');
             setLoadingRecommendation(false);
             return undefined;
         }
@@ -2591,11 +2891,13 @@ const MetasolverPresetPanel: React.FC<{
                     });
                     if (!cancelled) {
                         setRecommendation(data);
+                        setRecommendationSourceText(trimmedText);
                     }
                 } catch (err: any) {
                     if (!cancelled) {
                         setError(err?.message || 'Erreur de recommandation');
                         setRecommendation(null);
+                        setRecommendationSourceText('');
                     }
                 } finally {
                     if (!cancelled) {
@@ -2632,6 +2934,93 @@ const MetasolverPresetPanel: React.FC<{
         onPluginListChange(recommendation.plugin_list || '');
     }, [recommendation, selectionMode, pluginList, preset, text, maxPlugins, onPluginListChange]);
 
+    React.useEffect(() => {
+        if (!classification) {
+            return;
+        }
+
+        const key = JSON.stringify({
+            labels: classification.labels.map(label => [label.name, label.confidence]),
+            topFragment: classification.candidate_secret_fragments?.[0]?.text || '',
+        });
+        if (lastClassificationLogKeyRef.current === key) {
+            return;
+        }
+        lastClassificationLogKeyRef.current = key;
+
+        const labelsText = classification.labels.length
+            ? classification.labels.map(label => `${label.name} ${(label.confidence * 100).toFixed(0)}%`).join(', ')
+            : 'aucun label fort';
+        const detail = classification.candidate_secret_fragments?.[0]?.text
+            ? `Meilleur fragment: ${classification.candidate_secret_fragments[0].text.slice(0, 60)}`
+            : classification.formula_signals?.[0];
+        appendWorkflowEntry('classify', `Classification du listing: ${labelsText}`, detail);
+    }, [classification, appendWorkflowEntry]);
+
+    React.useEffect(() => {
+        if (!recommendation || !recommendationSourceText) {
+            return;
+        }
+
+        const key = `${recommendationSourceText}::${recommendation.plugin_list}`;
+        if (lastRecommendationLogKeyRef.current === key) {
+            return;
+        }
+        lastRecommendationLogKeyRef.current = key;
+
+        const selected = recommendation.selected_plugins.slice(0, 4).join(', ') || 'aucun plugin';
+        appendWorkflowEntry(
+            'recommend',
+            `Recommendation metasolver: ${selected}`,
+            `Texte source: ${recommendationSourceText.slice(0, 60)}`
+        );
+    }, [recommendation, recommendationSourceText, appendWorkflowEntry]);
+
+    React.useEffect(() => {
+        if (!pendingAutoExecutionText) {
+            return;
+        }
+
+        const currentText = (text || '').trim();
+        if (currentText !== pendingAutoExecutionText) {
+            return;
+        }
+        if (loadingClassification || loadingRecommendation || disabled) {
+            return;
+        }
+        if (!recommendation) {
+            return;
+        }
+        if (recommendationSourceText !== pendingAutoExecutionText) {
+            return;
+        }
+
+        const expectedPluginList = (recommendation.plugin_list || '').trim();
+        const currentPluginList = (pluginList || '').trim();
+        if (currentPluginList !== expectedPluginList) {
+            return;
+        }
+
+        appendWorkflowEntry(
+            'execute',
+            'Execution automatique du metasolver',
+            `Texte: ${pendingAutoExecutionText.slice(0, 60)}`
+        );
+        setPendingAutoExecutionText(null);
+        onExecuteRequest();
+    }, [
+        pendingAutoExecutionText,
+        text,
+        recommendation,
+        recommendationSourceText,
+        pluginList,
+        loadingClassification,
+        loadingRecommendation,
+        disabled,
+        appendWorkflowEntry,
+        onExecuteRequest,
+    ]);
+
     const currentSelectedPlugins = React.useMemo(() => {
         if (selectionMode === 'preset' && !pluginList.trim()) {
             return new Set(eligiblePlugins.map(plugin => plugin.name));
@@ -2653,13 +3042,15 @@ const MetasolverPresetPanel: React.FC<{
         setSelectionMode('recommended');
         setManualSelectedPlugins(names);
         onPluginListChange(recommendation.plugin_list || '');
-    }, [recommendation, onPluginListChange]);
+        appendWorkflowEntry('recommend', 'Recommendation appliquee', recommendation.selected_plugins.slice(0, 4).join(', '));
+    }, [recommendation, onPluginListChange, appendWorkflowEntry]);
 
     const useFullPreset = React.useCallback(() => {
         setSelectionMode('preset');
         setManualSelectedPlugins(new Set(eligiblePlugins.map(plugin => plugin.name)));
         onPluginListChange('');
-    }, [eligiblePlugins, onPluginListChange]);
+        appendWorkflowEntry('recommend', `Preset complet applique (${eligiblePlugins.length} plugins)`);
+    }, [eligiblePlugins, onPluginListChange, appendWorkflowEntry]);
 
     const handleTogglePlugin = React.useCallback((pluginName: string, checked: boolean) => {
         setManualSelectedPlugins(prev => {
@@ -2684,6 +3075,114 @@ const MetasolverPresetPanel: React.FC<{
 
     const includedCount = currentSelectedPlugins.size;
     const signatureBadges = recommendation?.signature ? buildSignatureBadges(recommendation.signature) : [];
+    const hasSecretCodeLabel = Boolean(classification?.labels.some(label => label.name === 'secret_code'));
+    const hasFormulaLabel = Boolean(classification?.labels.some(label => label.name === 'formula'));
+    const bestSecretFragment = classification?.candidate_secret_fragments?.[0] || null;
+    const formulaGeocacheId = typeof geocacheContext?.geocacheId === 'number' ? geocacheContext.geocacheId : undefined;
+    const canSendToGeoAppChat = Boolean((text || '').trim() || classification || recommendation);
+
+    const applySecretFragment = React.useCallback((fragmentText: string) => {
+        setPendingAutoExecutionText(null);
+        onTextChange(fragmentText);
+        onPluginListChange('');
+        setSelectionMode('recommended');
+        setManualSelectedPlugins(new Set());
+        appendWorkflowEntry('secret', 'Fragment selectionne manuellement', fragmentText.slice(0, 60));
+    }, [onTextChange, onPluginListChange, appendWorkflowEntry]);
+
+    const executeSecretFragment = React.useCallback((fragmentText: string) => {
+        const normalizedText = fragmentText.trim();
+        if (!normalizedText) {
+            return;
+        }
+        setPendingAutoExecutionText(normalizedText);
+        onTextChange(normalizedText);
+        onPluginListChange('');
+        setSelectionMode('recommended');
+        setManualSelectedPlugins(new Set());
+        appendWorkflowEntry('secret', 'Preparation de l execution automatique', normalizedText.slice(0, 60));
+    }, [onTextChange, onPluginListChange, appendWorkflowEntry]);
+
+    const executeBestSecretFragment = React.useCallback(() => {
+        if (!bestSecretFragment) {
+            return;
+        }
+        executeSecretFragment(bestSecretFragment.text);
+    }, [bestSecretFragment, executeSecretFragment]);
+
+    const openFormulaSolver = React.useCallback(async () => {
+        if (!formulaGeocacheId) {
+            return;
+        }
+
+        try {
+            await commandService.executeCommand(FORMULA_SOLVER_SOLVE_FROM_GEOCACHE_COMMAND, formulaGeocacheId);
+            appendWorkflowEntry('formula', 'Formula Solver ouvert', `Geocache #${formulaGeocacheId}`);
+        } catch (error: any) {
+            setError(error?.message || "Impossible d'ouvrir le Formula Solver");
+        }
+    }, [commandService, formulaGeocacheId, appendWorkflowEntry]);
+
+    const persistDiagnosticSummary = React.useCallback(async (summary: Record<string, unknown>) => {
+        const gcCode = (geocacheContext?.gcCode || '').trim();
+        if (!gcCode) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${backendBaseUrl}/api/archive/${encodeURIComponent(gcCode)}/resolution-diagnostics`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(summary),
+            });
+
+            if (!response.ok) {
+                const payload = await response.json().catch(() => undefined);
+                throw new Error(payload?.error || `HTTP ${response.status}`);
+            }
+
+            appendWorkflowEntry('archive', 'Diagnostic archive mis a jour', gcCode);
+        } catch (error: any) {
+            console.warn('[MetasolverPresetPanel] Archive diagnostic update failed', error);
+            appendWorkflowEntry('archive', 'Archive du diagnostic ignoree', error?.message || 'Erreur archive');
+        }
+    }, [appendWorkflowEntry, backendBaseUrl, geocacheContext?.gcCode]);
+
+    const sendDiagnosticToGeoAppChat = React.useCallback(() => {
+        const prompt = buildGeoAppDiagnosticPrompt(geocacheContext, text, classification, recommendation, workflowEntries);
+        const archiveSummary = buildArchiveDiagnosticSummary(geocacheContext, text, classification, recommendation, workflowEntries);
+        const sessionTitle = `CHAT IA - ${geocacheContext?.gcCode || geocacheContext?.name || 'Plugin Executor'}`;
+
+        window.dispatchEvent(new CustomEvent(GEOAPP_OPEN_CHAT_REQUEST_EVENT, {
+            detail: {
+                geocacheId: geocacheContext?.geocacheId,
+                gcCode: geocacheContext?.gcCode,
+                geocacheName: geocacheContext?.name,
+                sessionTitle,
+                prompt,
+                focus: true,
+            }
+        }));
+
+        appendWorkflowEntry(
+            'chat',
+            'Diagnostic envoye au chat GeoApp',
+            truncateDiagnosticText(text || bestSecretFragment?.text || geocacheContext?.gcCode || 'Plugin Executor', 90)
+        );
+        void persistDiagnosticSummary(archiveSummary);
+    }, [
+        appendWorkflowEntry,
+        bestSecretFragment?.text,
+        classification,
+        geocacheContext,
+        persistDiagnosticSummary,
+        recommendation,
+        text,
+        workflowEntries,
+    ]);
 
     return (
         <div className='plugin-form'>
@@ -2697,6 +3196,221 @@ const MetasolverPresetPanel: React.FC<{
             {error && (
                 <div style={{ color: 'var(--theia-errorForeground)', fontSize: '12px', marginTop: '6px' }}>
                     Erreur : {error}
+                </div>
+            )}
+
+            {(loadingClassification || classification) && (
+                <div style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '4px',
+                    background: 'var(--theia-editor-background)'
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600 }}>
+                            Diagnostic du listing
+                        </div>
+                        <div style={{ fontSize: '11px', opacity: 0.7 }}>
+                            {loadingClassification ? 'Analyse...' : (classification?.source === 'geocache' ? 'Source geocache' : 'Source texte')}
+                        </div>
+                    </div>
+
+                    {classification?.labels && classification.labels.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                            {classification.labels.map(label => (
+                                <span
+                                    key={label.name}
+                                    title={label.evidence.join(' - ')}
+                                    style={{
+                                        fontSize: '11px',
+                                        padding: '2px 8px',
+                                        borderRadius: '999px',
+                                        background: label.name === 'secret_code'
+                                            ? 'var(--theia-list-activeSelectionBackground)'
+                                            : 'var(--theia-input-background)',
+                                        border: '1px solid var(--theia-panel-border)'
+                                    }}
+                                >
+                                    {LISTING_LABEL_TITLES[label.name] || label.name} {(label.confidence * 100).toFixed(0)}%
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
+                    {classification?.recommended_actions?.length ? (
+                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.8 }}>
+                            {classification.recommended_actions.slice(0, 2).join(' ')}
+                        </div>
+                    ) : null}
+
+                    {(canSendToGeoAppChat || hasFormulaLabel || hasSecretCodeLabel) && (
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                            <button
+                                type='button'
+                                className='theia-button secondary'
+                                onClick={() => sendDiagnosticToGeoAppChat()}
+                                disabled={disabled || loadingClassification || loadingRecommendation || !canSendToGeoAppChat}
+                                title='Ouvrir ou reutiliser un chat GeoApp et lui envoyer le diagnostic courant'
+                            >
+                                Envoyer au chat GeoApp
+                            </button>
+                            {hasFormulaLabel && (
+                                <button
+                                    type='button'
+                                    className='theia-button secondary'
+                                    onClick={() => void openFormulaSolver()}
+                                    disabled={disabled || !formulaGeocacheId}
+                                    title={formulaGeocacheId ? 'Ouvrir le Formula Solver pour cette geocache' : 'Disponible seulement avec une geocache associee'}
+                                >
+                                    Ouvrir Formula Solver
+                                </button>
+                            )}
+                            {hasSecretCodeLabel && bestSecretFragment && (
+                                <button
+                                    type='button'
+                                    className='theia-button secondary'
+                                    onClick={() => executeBestSecretFragment()}
+                                    disabled={disabled}
+                                >
+                                    {pendingAutoExecutionText ? 'Preparation...' : 'Executer le meilleur fragment'}
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {classification?.formula_signals?.length ? (
+                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.75 }}>
+                            Signaux formule : {classification.formula_signals.slice(0, 3).join(' - ')}
+                        </div>
+                    ) : null}
+
+                    {classification?.candidate_secret_fragments?.length ? (
+                        <div style={{ marginTop: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '6px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 600 }}>
+                                    Fragments de code probables
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {classification.candidate_secret_fragments.slice(0, 3).map(fragment => {
+                                    const fragmentBadges = buildSignatureBadges(fragment.signature).slice(0, 4);
+                                    const isCurrentText = (text || '').trim() === fragment.text.trim();
+                                    return (
+                                        <div
+                                            key={`${fragment.source}-${fragment.text}`}
+                                            style={{
+                                                padding: '8px 10px',
+                                                border: '1px solid var(--theia-panel-border)',
+                                                borderRadius: '4px',
+                                                background: isCurrentText
+                                                    ? 'var(--theia-list-activeSelectionBackground)'
+                                                    : 'var(--theia-editor-background)'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                                                <div style={{ fontSize: '11px', opacity: 0.7 }}>
+                                                    {fragment.source_kind === 'hidden_html' ? 'HTML cache' : fragment.source}
+                                                    {' - '}
+                                                    conf {(fragment.confidence * 100).toFixed(0)}%
+                                                </div>
+                                                <button
+                                                    type='button'
+                                                    className='theia-button secondary'
+                                                    onClick={() => applySecretFragment(fragment.text)}
+                                                    disabled={disabled}
+                                                >
+                                                    {isCurrentText ? 'Fragment actif' : 'Utiliser ce fragment'}
+                                                </button>
+                                            </div>
+                                            <div style={{
+                                                marginTop: '6px',
+                                                fontFamily: 'monospace',
+                                                fontSize: '12px',
+                                                overflowX: 'auto',
+                                                whiteSpace: 'pre-wrap',
+                                                wordBreak: 'break-word'
+                                            }}>
+                                                {fragment.text}
+                                            </div>
+                                            {fragmentBadges.length > 0 && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                                                    {fragmentBadges.map(badge => (
+                                                        <span
+                                                            key={`${fragment.text}-${badge}`}
+                                                            style={{
+                                                                fontSize: '10px',
+                                                                padding: '1px 6px',
+                                                                borderRadius: '999px',
+                                                                background: 'var(--theia-input-background)',
+                                                                border: '1px solid var(--theia-panel-border)'
+                                                            }}
+                                                        >
+                                                            {badge}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {fragment.evidence.length > 0 && (
+                                                <div style={{ marginTop: '6px', fontSize: '11px', opacity: 0.75 }}>
+                                                    {fragment.evidence.slice(0, 2).join(' - ')}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ) : classification && hasSecretCodeLabel ? (
+                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.8 }}>
+                            La classification detecte un code secret, mais aucun fragment compact n&apos;a ete extrait automatiquement.
+                        </div>
+                    ) : null}
+
+                    {classification?.hidden_signals?.length ? (
+                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.75 }}>
+                            HTML suspect : {classification.hidden_signals.slice(0, 3).join(' - ')}
+                        </div>
+                    ) : null}
+
+                    {workflowEntries.length > 0 && (
+                        <div style={{ marginTop: '10px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                                Journal local
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {workflowEntries.slice(0, 6).map(entry => (
+                                    <div
+                                        key={entry.id}
+                                        style={{
+                                            padding: '6px 8px',
+                                            border: '1px solid var(--theia-panel-border)',
+                                            borderRadius: '4px',
+                                            background: 'var(--theia-input-background)',
+                                            fontSize: '11px',
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' }}>
+                                            <span style={{
+                                                fontSize: '10px',
+                                                padding: '1px 6px',
+                                                borderRadius: '999px',
+                                                background: 'var(--theia-editor-background)',
+                                                border: '1px solid var(--theia-panel-border)'
+                                            }}>
+                                                {entry.category}
+                                            </span>
+                                            <span style={{ opacity: 0.7 }}>{entry.timestamp}</span>
+                                        </div>
+                                        <div style={{ marginTop: '4px' }}>{entry.message}</div>
+                                        {entry.detail ? (
+                                            <div style={{ marginTop: '2px', opacity: 0.75 }}>{entry.detail}</div>
+                                        ) : null}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

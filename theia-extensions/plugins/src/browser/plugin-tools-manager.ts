@@ -15,7 +15,8 @@ import {
     PluginDetails,
     PluginSchema,
     PluginResult,
-    MetasolverRecommendationResponse
+    MetasolverRecommendationResponse,
+    ListingClassificationResponse
 } from '../common/plugin-protocol';
 
 /**
@@ -60,6 +61,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                     .filter((plugin: Plugin) => plugin.enabled !== false)
                     .map((plugin: Plugin) => this.toToolRequest(plugin))
             );
+            toolRequests.unshift(this.createListingClassificationTool());
             toolRequests.unshift(this.createMetasolverRecommendationTool());
 
             const registeredTools = [];
@@ -214,6 +216,45 @@ export class PluginToolsManager implements FrontendApplicationContribution {
         };
     }
 
+    protected createListingClassificationTool(): ToolRequest {
+        return {
+            id: 'geoapp.plugins.listing.classify',
+            name: 'classify_geocache_listing',
+            description: 'Classifie un listing de geocache en plusieurs familles d enigmes, extrait les fragments de code probables et suggere les prochaines actions.',
+            providerName: PluginToolsManager.PROVIDER_NAME,
+            parameters: {
+                type: 'object',
+                properties: {
+                    geocache_id: {
+                        type: 'number',
+                        description: 'ID de la geocache a classifier. Si fourni, le backend recharge le listing, le hint, les images, waypoints et checkers.'
+                    },
+                    title: {
+                        type: 'string',
+                        description: 'Titre du listing si geocache_id n est pas fourni.'
+                    },
+                    description: {
+                        type: 'string',
+                        description: 'Description textuelle du listing.'
+                    },
+                    description_html: {
+                        type: 'string',
+                        description: 'HTML brut du listing pour detecter du contenu cache.'
+                    },
+                    hint: {
+                        type: 'string',
+                        description: 'Hint ou indice du listing.'
+                    },
+                    max_secret_fragments: {
+                        type: 'number',
+                        description: 'Nombre maximum de fragments de code a retourner.'
+                    }
+                }
+            },
+            handler: async (argString: string) => this.classifyListing(argString)
+        };
+    }
+
     protected async executePlugin(name: string, argString: string): Promise<ToolCallResult> {
         console.log(`[PluginTools] Exécution du plugin '${name}' avec arguments:`, argString);
         try {
@@ -247,6 +288,33 @@ export class PluginToolsManager implements FrontendApplicationContribution {
 
         const response = await this.pluginsService.recommendMetasolverPlugins(request);
         return this.formatMetasolverRecommendation(response);
+    }
+
+    protected async classifyListing(argString: string): Promise<ToolCallResult> {
+        const args = this.parseArguments(argString);
+        const geocacheId = typeof args.geocache_id === 'number'
+            ? args.geocache_id
+            : (typeof args.geocache_id === 'string' && args.geocache_id.trim() ? Number(args.geocache_id) : undefined);
+
+        if (geocacheId === undefined || Number.isNaN(geocacheId)) {
+            const hasDirectInput = ['title', 'description', 'description_html', 'hint'].some(key => {
+                const value = args[key];
+                return typeof value === 'string' && value.trim().length > 0;
+            });
+            if (!hasDirectInput) {
+                return { error: 'Fournissez geocache_id ou au moins un champ parmi title, description, description_html, hint.' };
+            }
+        }
+
+        const response = await this.pluginsService.classifyListing({
+            geocache_id: geocacheId !== undefined && !Number.isNaN(geocacheId) ? geocacheId : undefined,
+            title: typeof args.title === 'string' ? args.title : undefined,
+            description: typeof args.description === 'string' ? args.description : undefined,
+            description_html: typeof args.description_html === 'string' ? args.description_html : undefined,
+            hint: typeof args.hint === 'string' ? args.hint : undefined,
+            max_secret_fragments: typeof args.max_secret_fragments === 'number' ? args.max_secret_fragments : undefined
+        });
+        return this.formatListingClassification(response);
     }
 
     protected parseArguments(argString: string): Record<string, unknown> {
@@ -292,6 +360,24 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                     reasons: item.reasons
                 })),
                 explanation: result.explanation
+            },
+            null,
+            2
+        );
+    }
+
+    protected formatListingClassification(result: ListingClassificationResponse): ToolCallResult {
+        return JSON.stringify(
+            {
+                source: result.source,
+                geocache: result.geocache,
+                title: result.title,
+                labels: result.labels,
+                candidate_secret_fragments: result.candidate_secret_fragments,
+                hidden_signals: result.hidden_signals,
+                formula_signals: result.formula_signals,
+                recommended_actions: result.recommended_actions,
+                signal_summary: result.signal_summary
             },
             null,
             2

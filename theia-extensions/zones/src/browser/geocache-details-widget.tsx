@@ -2365,14 +2365,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         try {
             const existingSession = this.findGeocacheChatSession(this.geocacheId);
             if (existingSession) {
-                existingSession.pinnedAgent = this.resolveDefaultChatAgent();
+                existingSession.pinnedAgent = await this.resolveDefaultChatAgent();
                 this.setSessionGeocacheMetadata(existingSession, metadata);
                 this.chatService.setActiveSession(existingSession.id, { focus: true });
                 this.messages.info('Chat IA rouvert pour cette géocache.');
                 return;
             }
 
-            const pinnedAgent = this.resolveDefaultChatAgent();
+            const pinnedAgent = await this.resolveDefaultChatAgent();
             console.log('[GeocacheDetailsWidget] Opening chat session with pinned agent:', pinnedAgent?.id, pinnedAgent?.name);
             const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: true }, pinnedAgent);
             this.setSessionGeocacheMetadata(session, metadata);
@@ -2387,8 +2387,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         }
     };
 
-    private resolveDefaultChatAgent(): ChatAgent | undefined {
+    private async resolveDefaultChatAgent(): Promise<ChatAgent | undefined> {
         const available = this.chatAgentService.getAgents();
+        const candidates: ChatAgent[] = [];
 
         const isClaudeCode = (agent: ChatAgent): boolean => {
             const id = (agent.id || '').toLowerCase();
@@ -2396,23 +2397,51 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return id === 'claudecode' || name === 'claudecode' || id.includes('claude') || name.includes('claude');
         };
 
+        const configuredId = this.preferenceService.get(DEFAULT_CHAT_AGENT_PREF, undefined) as string | undefined;
+        const configured = configuredId ? this.chatAgentService.getAgent(configuredId) : undefined;
+        if (configured && !isClaudeCode(configured)) {
+            candidates.push(configured);
+        }
+
         const geoApp = available.find(a => (a.id || '').toLowerCase() === 'geoapp' || (a.name || '').toLowerCase() === 'geoapp');
         if (geoApp) {
-            return geoApp;
+            candidates.push(geoApp);
         }
 
         const universal = available.find(a => (a.id || '').toLowerCase().includes('universal') || (a.name || '').toLowerCase().includes('universal'));
         if (universal) {
-            return universal;
+            candidates.push(universal);
         }
 
-        const configuredId = this.preferenceService.get(DEFAULT_CHAT_AGENT_PREF, undefined) as string | undefined;
-        const configured = configuredId ? this.chatAgentService.getAgent(configuredId) : undefined;
-        if (configured && !isClaudeCode(configured)) {
-            return configured;
+        for (const agent of available) {
+            if (!isClaudeCode(agent) && !candidates.includes(agent)) {
+                candidates.push(agent);
+            }
         }
 
-        return available.find(a => !isClaudeCode(a)) ?? available[0];
+        for (const agent of candidates) {
+            if (await this.isChatAgentReady(agent)) {
+                return agent;
+            }
+        }
+
+        return candidates[0] ?? available[0];
+    }
+
+    private async isChatAgentReady(agent: ChatAgent | undefined): Promise<boolean> {
+        if (!agent?.id) {
+            return false;
+        }
+        try {
+            const languageModel = await this.languageModelRegistry.selectLanguageModel({
+                agent: agent.id,
+                purpose: 'chat',
+                identifier: 'default/universal'
+            });
+            return !!languageModel;
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -2545,6 +2574,30 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             '~geoapp.checkers.session.ensure',
             '~geoapp.checkers.session.login',
             '~geoapp.checkers.session.reset',
+            '~geoapp.plugins.listing.classify',
+            '~geoapp.plugins.metasolver.recommend',
+            '~plugin.metasolver',
+            '~formula-solver.detect-formula',
+            '~formula-solver.find-questions',
+            '~formula-solver.search-answer',
+            '~formula-solver.calculate-value',
+            '~formula-solver.calculate-coordinates',
+            '',
+            'Classification initiale du listing :',
+            '- Commence par classifier le listing avec classify_geocache_listing(geocache_id) pour identifier les familles probables : secret_code, hidden_content, formula, word_game, image_puzzle, coord_transform, checker_available.',
+            '- Utilise les labels, les hidden_signals et les candidate_secret_fragments pour choisir ensuite le bon workflow.',
+            '',
+            'Formules / coordonnées :',
+            '- Si la classification signale formula, commence par detect_formula(text, geocache_id?) pour extraire les formules et leurs variables.',
+            '- Ensuite utilise find_questions_for_variables(text, variables) pour rattacher les questions aux lettres.',
+            '- Si certaines réponses sont factuelles, utilise search_answer_online(question, context) avant de convertir avec calculate_variable_value(answer, type).',
+            '- Quand les valeurs sont connues, utilise calculate_final_coordinates(north_formula, east_formula, values).',
+            '- Si formula est dominant, ne lance pas metasolver en premier sauf si un candidate_secret_fragment très fort est aussi présent.',
+            '',
+            'Codes secrets / metasolver :',
+            '- Si la classification signale secret_code, prends de preference le meilleur candidate_secret_fragment puis appelle d’abord recommend_metasolver_plugins(text, preset?) pour obtenir une signature d’entrée et une plugin_list recommandée.',
+            '- Ensuite appelle metasolver en mode tool-driven avec le texte extrait. Utilise de préférence plugin_list recommandée pour limiter le bruit.',
+            "- Si tu veux tester tout un preset sans filtrage explicite, appelle metasolver avec preset seulement et sans plugin_list.",
             '',
             'Vérification (checkers) :',
             '- Pour valider une réponse, appelle run_checker en mode tool-driven avec geocache_id (recommandé) : run_checker(geocache_id, candidate). Le tool résout automatiquement le bon checker, l\'URL et wp.',

@@ -1739,6 +1739,48 @@ const PluginExecutorComponent: React.FC<{
         }
     }, [config.mode, config.geocacheContext, getCandidateTextFromCoords, pickCheckerUrl, isGeocachingUrl, normalizeGeocachingUrl, ensureCheckerSession, loginCheckerSession, isCertitudesUrl, backendBaseUrl, messageService]);
 
+    const handleSetAsCorrectedCoords = React.useCallback(async (gcCoords: string): Promise<void> => {
+        if (config.mode !== 'geocache' || !config.geocacheContext?.geocacheId) {
+            messageService.error('Aucune géocache associée.');
+            return;
+        }
+
+        const geocacheId = config.geocacheContext.geocacheId;
+        // Nettoyer le format pour correspondre à "N 48° 31.914 E 003° 24.304"
+        const sanitizedCoords = gcCoords
+            .replace(/[''ʼ′']/g, '')  // Retirer toutes les variantes d'apostrophes
+            .replace(/,/g, '')        // Retirer les virgules
+            .replace(/\s+/g, ' ')     // Normaliser les espaces multiples
+            .trim();
+
+        console.log('[Plugin Executor] Correcting coordinates:', { original: gcCoords, sanitized: sanitizedCoords });
+
+        try {
+            const response = await fetch(`${backendBaseUrl}/api/geocaches/${geocacheId}/coordinates`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ coordinates_raw: sanitizedCoords })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            messageService.info('Coordonnées corrigées mises à jour');
+
+            // Émettre un événement pour rafraîchir le widget de détails si ouvert
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('geoapp-geocache-coordinates-updated', {
+                    detail: { geocacheId, gcCode: config.geocacheContext.gcCode }
+                }));
+            }
+        } catch (error) {
+            console.error('[Plugin Executor] Erreur lors de la correction des coordonnées:', error);
+            messageService.error('Erreur lors de la mise à jour des coordonnées');
+        }
+    }, [config.mode, config.geocacheContext, backendBaseUrl, messageService]);
+
     return (
         <div className='plugin-executor-container'>
             {/* En-tête MODE GEOCACHE */}
@@ -2103,6 +2145,7 @@ const PluginExecutorComponent: React.FC<{
                         pluginsService={pluginsService}
                         onRequestAddWaypoint={handleRequestAddWaypoint}
                         onVerifyCoordinates={handleVerifyCoordinates}
+                        onSetAsCorrectedCoords={handleSetAsCorrectedCoords}
                         messageService={messageService}
                     />
                     
@@ -2752,8 +2795,9 @@ const PluginResultDisplay: React.FC<{
     pluginsService: PluginsService;
     onRequestAddWaypoint?: (detail: AddWaypointEventDetail) => void;
     onVerifyCoordinates?: (coords?: { formatted?: string; latitude?: string; longitude?: string }) => Promise<{ status?: 'success' | 'failure' | 'unknown'; message?: string }>;
+    onSetAsCorrectedCoords?: (gcCoords: string) => Promise<void>;
     messageService: MessageService;
-}> = ({ result, configMode, geocacheContext, pluginName, pluginsService, onRequestAddWaypoint, onVerifyCoordinates, messageService }) => {
+}> = ({ result, configMode, geocacheContext, pluginName, pluginsService, onRequestAddWaypoint, onVerifyCoordinates, onSetAsCorrectedCoords, messageService }) => {
     console.log('=== PluginResultDisplay RENDER ===');
     console.log('Received result:', result);
     console.log('result.results:', result.results);
@@ -2815,6 +2859,7 @@ const PluginResultDisplay: React.FC<{
     const isBruteForce = sortedResults.length > 5; // Considérer comme brute-force si plus de 5 résultats
     const canRequestWaypoint = configMode === 'geocache' && !!geocacheContext && !!onRequestAddWaypoint;
     const canVerifyCoordinates = configMode === 'geocache' && !!geocacheContext?.checkers?.length && !!onVerifyCoordinates;
+    const canSetAsCorrectedCoords = configMode === 'geocache' && !!geocacheContext?.geocacheId && !!onSetAsCorrectedCoords;
 
     const getCoordsKey = (coords?: { formatted?: string; latitude?: string; longitude?: string }): string => {
         if (!coords) {
@@ -3107,7 +3152,7 @@ const PluginResultDisplay: React.FC<{
                                             borderRadius: '4px'
                                         }}>
                                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                                                <strong>📍 Coordonnées détectées :</strong>
+                                                <strong>📍 Coordonnées détectéees :</strong>
                                                 <button
                                                     className='theia-button secondary'
                                                     onClick={() => copyToClipboard(resolvedCoordinates?.formatted ||
@@ -3200,6 +3245,21 @@ const PluginResultDisplay: React.FC<{
                                                             </button>
                                                         ))}
                                                     </>
+                                                )}
+                                                {canSetAsCorrectedCoords && resolvedCoordinates && buildGcCoords(resolvedCoordinates) && (
+                                                    <button
+                                                        className='theia-button secondary'
+                                                        onClick={() => {
+                                                            const gcCoords = buildGcCoords(resolvedCoordinates);
+                                                            if (gcCoords) {
+                                                                onSetAsCorrectedCoords?.(gcCoords);
+                                                            }
+                                                        }}
+                                                        title='Définir ces coordonnées comme coordonnées corrigées de la géocache'
+                                                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                                                    >
+                                                        📍 Corriger la cache
+                                                    </button>
                                                 )}
                                             </div>
                                             <div style={{ marginTop: '8px', fontFamily: 'monospace', fontSize: '14px', fontWeight: 'bold' }}>

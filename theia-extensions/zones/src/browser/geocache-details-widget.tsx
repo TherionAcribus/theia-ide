@@ -1341,6 +1341,22 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.messages.info(`Waypoint prérempli depuis le Plugin Executor${source}`);
     };
 
+    private handleCoordinatesUpdatedEvent = (event: CustomEvent<{ geocacheId: number; gcCode: string }>): void => {
+        if (!event.detail?.geocacheId || !this.data) {
+            return;
+        }
+
+        // Vérifier que l'événement concerne bien cette géocache
+        if (event.detail.geocacheId !== this.data.id && event.detail.gcCode !== this.data.gc_code) {
+            return;
+        }
+
+        // Recharger les données de la géocache
+        this.load().catch(error => {
+            console.error('[GeocacheDetailsWidget] Error reloading after coordinates update:', error);
+        });
+    };
+
     private addEventListeners(): void {
         if (typeof window === 'undefined') {
             return;
@@ -1348,6 +1364,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
         window.removeEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
         window.addEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
+
+        window.removeEventListener('geoapp-geocache-coordinates-updated', this.handleCoordinatesUpdatedEvent as EventListener);
+        window.addEventListener('geoapp-geocache-coordinates-updated', this.handleCoordinatesUpdatedEvent as EventListener);
     }
 
     private removeEventListeners(): void {
@@ -1356,6 +1375,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         }
 
         window.removeEventListener('geoapp-plugin-add-waypoint', this.handlePluginAddWaypointEvent as EventListener);
+        window.removeEventListener('geoapp-geocache-coordinates-updated', this.handleCoordinatesUpdatedEvent as EventListener);
     }
 
     private addInteractionListeners(): void {

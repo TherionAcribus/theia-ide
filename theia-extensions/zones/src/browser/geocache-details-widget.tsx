@@ -711,6 +711,7 @@ interface DescriptionEditorProps {
     isTranslating: boolean;
     onTranslateAllToFrench: () => Promise<void>;
     isTranslatingAll: boolean;
+    externalLinksOpenMode: 'new-tab' | 'new-window';
 }
 
 const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
@@ -725,11 +726,13 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
     onTranslateToFrench,
     isTranslating,
     onTranslateAllToFrench,
-    isTranslatingAll
+    isTranslatingAll,
+    externalLinksOpenMode
 }) => {
     const [variant, setVariant] = React.useState<DescriptionVariant>(defaultVariant);
     const [isEditing, setIsEditing] = React.useState(false);
     const [editedRaw, setEditedRaw] = React.useState('');
+    const descriptionRef = React.useRef<HTMLDivElement>(null);
 
     const hasModified = Boolean(geocacheData.description_override_raw) || Boolean(geocacheData.description_override_html);
 
@@ -802,6 +805,36 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
     const displayLabel = variant === 'modified' ? 'Modifiée' : 'Originale';
     const effectiveHtml = getEffectiveDescriptionHtml(geocacheData, variant);
 
+    // Intercepter les clics sur les liens externes
+    React.useEffect(() => {
+        const handleLinkClick = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            const link = target.closest('a');
+            if (link && link.href) {
+                // Vérifier si c'est un lien externe (http/https)
+                if (link.href.startsWith('http://') || link.href.startsWith('https://')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    if (externalLinksOpenMode === 'new-window') {
+                        window.open(link.href, '_blank', 'noopener,noreferrer');
+                    } else {
+                        // new-tab (défaut)
+                        window.open(link.href, '_blank');
+                    }
+                }
+            }
+        };
+
+        const descElement = descriptionRef.current;
+        if (descElement) {
+            descElement.addEventListener('click', handleLinkClick);
+            return () => {
+                descElement.removeEventListener('click', handleLinkClick);
+            };
+        }
+    }, [externalLinksOpenMode, effectiveHtml]);
+
     return (
         <div style={{ display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -855,6 +888,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
 
             {!isEditing ? (
                 <div
+                    ref={descriptionRef}
                     style={{ border: '1px solid var(--theia-foreground)', borderRadius: 4, padding: 8, maxWidth: 900 }}
                     dangerouslySetInnerHTML={{ __html: effectiveHtml }}
                 />
@@ -1249,6 +1283,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
+    private readonly externalLinksOpenModePreferenceKey = 'geoApp.geocache.externalLinks.openMode';
     private readonly imagesStorageDefaultModePreferenceKey = 'geoApp.images.storage.defaultMode';
     private readonly imagesGalleryThumbnailSizePreferenceKey = 'geoApp.images.gallery.thumbnailSize';
     private readonly imagesGalleryHiddenDomainsPreferenceKey = 'geoApp.images.gallery.hiddenDomains';
@@ -2830,6 +2865,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             .filter(v => Boolean(v));
     }
 
+    private getExternalLinksOpenMode(): 'new-tab' | 'new-window' {
+        const raw = this.preferenceService.get(this.externalLinksOpenModePreferenceKey, 'new-tab') as string;
+        if (raw === 'new-window') {
+            return 'new-window';
+        }
+        return 'new-tab';
+    }
+
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -3068,6 +3111,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             isTranslating={this.isTranslatingDescription}
                             onTranslateAllToFrench={() => this.translateAllToFrench()}
                             isTranslatingAll={this.isTranslatingAllContent}
+                            externalLinksOpenMode={this.getExternalLinksOpenMode()}
                         />
 
                         {displayedHints ? (

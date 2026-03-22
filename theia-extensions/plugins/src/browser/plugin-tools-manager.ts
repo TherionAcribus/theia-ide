@@ -9,7 +9,14 @@ import {
     ToolRequestParameterProperty,
     ToolCallResult
 } from '@theia/ai-core';
-import { PluginsService, Plugin, PluginDetails, PluginSchema, PluginResult } from '../common/plugin-protocol';
+import {
+    PluginsService,
+    Plugin,
+    PluginDetails,
+    PluginSchema,
+    PluginResult,
+    MetasolverRecommendationResponse
+} from '../common/plugin-protocol';
 
 /**
  * Enregistre dynamiquement chaque plugin MysterAI comme Tool IA.
@@ -53,6 +60,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                     .filter((plugin: Plugin) => plugin.enabled !== false)
                     .map((plugin: Plugin) => this.toToolRequest(plugin))
             );
+            toolRequests.unshift(this.createMetasolverRecommendationTool());
 
             const registeredTools = [];
             for (const tool of toolRequests) {
@@ -174,6 +182,38 @@ export class PluginToolsManager implements FrontendApplicationContribution {
         };
     }
 
+    protected createMetasolverRecommendationTool(): ToolRequest {
+        return {
+            id: 'geoapp.plugins.metasolver.recommend',
+            name: 'recommend_metasolver_plugins',
+            description: 'Analyse un texte de type code secret et recommande une sous-liste de plugins metasolver avec signature d’entrée, scores et plugin_list prête à l’emploi.',
+            providerName: PluginToolsManager.PROVIDER_NAME,
+            parameters: {
+                type: 'object',
+                properties: {
+                    text: {
+                        type: 'string',
+                        description: 'Texte à analyser pour recommander les plugins metasolver.'
+                    },
+                    preset: {
+                        type: 'string',
+                        description: 'Preset metasolver optionnel (ex: "all", "letters_only", "digits_only").'
+                    },
+                    mode: {
+                        type: 'string',
+                        description: 'Mode metasolver: "decode" ou "detect".'
+                    },
+                    max_plugins: {
+                        type: 'number',
+                        description: 'Nombre maximum de plugins à recommander.'
+                    }
+                },
+                required: ['text']
+            },
+            handler: async (argString: string) => this.recommendMetasolverPlugins(argString)
+        };
+    }
+
     protected async executePlugin(name: string, argString: string): Promise<ToolCallResult> {
         console.log(`[PluginTools] Exécution du plugin '${name}' avec arguments:`, argString);
         try {
@@ -189,6 +229,24 @@ export class PluginToolsManager implements FrontendApplicationContribution {
             console.error(`[PluginTools] Erreur lors de l'exécution du plugin '${name}':`, error);
             throw error;
         }
+    }
+
+    protected async recommendMetasolverPlugins(argString: string): Promise<ToolCallResult> {
+        const args = this.parseArguments(argString);
+        const text = typeof args.text === 'string' ? args.text : '';
+        if (!text.trim()) {
+            return { error: 'Le champ text est requis pour recommander les plugins metasolver.' };
+        }
+
+        const request = {
+            text,
+            preset: typeof args.preset === 'string' ? args.preset : undefined,
+            mode: args.mode === 'detect' ? 'detect' as const : 'decode' as const,
+            max_plugins: typeof args.max_plugins === 'number' ? args.max_plugins : undefined
+        };
+
+        const response = await this.pluginsService.recommendMetasolverPlugins(request);
+        return this.formatMetasolverRecommendation(response);
     }
 
     protected parseArguments(argString: string): Record<string, unknown> {
@@ -214,6 +272,26 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                 results: result.results,
                 coordinates: result.coordinates,
                 metadata: result.metadata ?? result.plugin_info
+            },
+            null,
+            2
+        );
+    }
+
+    protected formatMetasolverRecommendation(result: MetasolverRecommendationResponse): ToolCallResult {
+        return JSON.stringify(
+            {
+                effective_preset: result.effective_preset,
+                signature: result.signature,
+                selected_plugins: result.selected_plugins,
+                plugin_list: result.plugin_list,
+                recommendations: result.recommendations.map(item => ({
+                    name: item.name,
+                    score: item.score,
+                    confidence: item.confidence,
+                    reasons: item.reasons
+                })),
+                explanation: result.explanation
             },
             null,
             2

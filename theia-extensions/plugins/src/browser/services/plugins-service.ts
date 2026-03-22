@@ -15,7 +15,10 @@ import {
     PluginInputs,
     PluginResult,
     PluginsStatus,
-    PluginsService as IPluginsService
+    PluginsService as IPluginsService,
+    MetasolverEligiblePluginsResponse,
+    MetasolverRecommendationRequest,
+    MetasolverRecommendationResponse
 } from '../../common/plugin-protocol';
 
 @injectable()
@@ -149,6 +152,28 @@ export class PluginsServiceImpl implements IPluginsService {
         } catch (error) {
             console.error(`Erreur lors du rechargement du plugin ${name}:`, error);
             throw new Error(`Échec du rechargement: ${this.getErrorMessage(error)}`);
+        }
+    }
+
+    async getMetasolverEligiblePlugins(preset: string = 'all'): Promise<MetasolverEligiblePluginsResponse> {
+        try {
+            const response = await this.client.get('/api/plugins/metasolver/eligible', {
+                params: { preset }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Erreur lors de la récupération des plugins metasolver éligibles:', error);
+            throw new Error(`Impossible de récupérer les plugins metasolver: ${this.getErrorMessage(error)}`);
+        }
+    }
+
+    async recommendMetasolverPlugins(request: MetasolverRecommendationRequest): Promise<MetasolverRecommendationResponse> {
+        try {
+            const response = await this.client.post('/api/plugins/metasolver/recommend', request);
+            return response.data;
+        } catch (error) {
+            console.error('Erreur lors de la recommandation metasolver:', error);
+            throw new Error(`Impossible de recommander les plugins metasolver: ${this.getErrorMessage(error)}`);
         }
     }
     

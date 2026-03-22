@@ -150,6 +150,86 @@ export interface PluginFilters {
     enabled?: boolean;
 }
 
+export interface MetasolverPresetInfo {
+    label: string;
+    description: string;
+}
+
+export interface MetasolverEligiblePlugin {
+    name: string;
+    description: string;
+    input_charset: string;
+    tags: string[];
+    priority: number;
+}
+
+export interface MetasolverEligiblePluginsResponse {
+    preset: string;
+    preset_label?: string;
+    preset_filter?: Record<string, any> | null;
+    plugins: MetasolverEligiblePlugin[];
+    total: number;
+    available_presets?: Record<string, MetasolverPresetInfo>;
+}
+
+export interface MetasolverSignature {
+    raw_length: number;
+    trimmed_length: number;
+    non_space_length: number;
+    letter_count: number;
+    digit_count: number;
+    symbol_count: number;
+    whitespace_count: number;
+    word_count: number;
+    group_count: number;
+    average_group_length: number;
+    charsets_present: string[];
+    dominant_input_kind: string;
+    separators: string[];
+    looks_like_morse: boolean;
+    looks_like_binary: boolean;
+    looks_like_hex: boolean;
+    looks_like_phone_keypad: boolean;
+    looks_like_roman_numerals: boolean;
+    looks_like_decimal_sequence: boolean;
+    looks_like_coordinate_fragment: boolean;
+    suggested_preset: string;
+}
+
+export interface MetasolverRecommendation {
+    name: string;
+    description: string;
+    input_charset: string;
+    tags: string[];
+    priority: number;
+    score: number;
+    confidence: number;
+    reasons: string[];
+}
+
+export interface MetasolverRecommendationRequest {
+    text: string;
+    preset?: string;
+    mode?: 'decode' | 'detect';
+    max_plugins?: number;
+}
+
+export interface MetasolverRecommendationResponse {
+    requested_preset?: string | null;
+    effective_preset: string;
+    effective_preset_label?: string;
+    preset_filter?: Record<string, any> | null;
+    mode: string;
+    max_plugins: number;
+    signature: MetasolverSignature;
+    recommendations: MetasolverRecommendation[];
+    selected_plugins: string[];
+    plugin_list: string;
+    eligible_total: number;
+    available_presets?: Record<string, MetasolverPresetInfo>;
+    explanation?: string[];
+}
+
 /**
  * Résultat de l'exécution d'un plugin.
  */
@@ -299,6 +379,16 @@ export interface PluginsService {
      * Recharge un plugin spécifique.
      */
     reloadPlugin(name: string): Promise<void>;
+
+    /**
+     * Retourne la liste des plugins éligibles au metasolver pour un preset donné.
+     */
+    getMetasolverEligiblePlugins(preset?: string): Promise<MetasolverEligiblePluginsResponse>;
+
+    /**
+     * Recommande une sous-liste de plugins metasolver en fonction de la signature d'un texte.
+     */
+    recommendMetasolverPlugins(request: MetasolverRecommendationRequest): Promise<MetasolverRecommendationResponse>;
     
     /**
      * Détecte les coordonnées GPS dans un texte.

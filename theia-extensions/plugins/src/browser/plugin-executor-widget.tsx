@@ -22,7 +22,15 @@ import { injectable, inject, postConstruct } from '@theia/core/shared/inversify'
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { StatefulWidget } from '@theia/core/lib/browser';
 import { MessageService } from '@theia/core/lib/common/message-service';
-import { PluginsService, Plugin, PluginDetails, PluginResult } from '../common/plugin-protocol';
+import {
+    PluginsService,
+    Plugin,
+    PluginDetails,
+    PluginResult,
+    MetasolverEligiblePlugin,
+    MetasolverRecommendationResponse,
+    MetasolverSignature
+} from '../common/plugin-protocol';
 import { TasksService, Task } from '../common/task-protocol';
 import { PreferenceService } from '@theia/core/lib/common/preferences/preference-service';
 
@@ -1916,7 +1924,9 @@ const PluginExecutorComponent: React.FC<{
                 <MetasolverPresetPanel
                     preset={state.formInputs.preset || 'all'}
                     pluginList={state.formInputs.plugin_list || ''}
-                    backendBaseUrl={backendBaseUrl}
+                    text={String(state.formInputs.text || '')}
+                    maxPlugins={typeof state.formInputs.max_plugins === 'number' ? state.formInputs.max_plugins : undefined}
+                    pluginsService={pluginsService}
                     onPluginListChange={(newList) => handleInputChange('plugin_list', newList)}
                     disabled={state.isExecuting}
                 />
@@ -2454,132 +2464,377 @@ const MetasolverStreamingPanel: React.FC<{
     );
 };
 
-/**
- * Panneau de prévisualisation des plugins éligibles pour le metasolver.
- * Affiche la liste des plugins correspondant au preset sélectionné
- * avec des checkboxes pour inclure/exclure des plugins individuels.
- */
-interface MetasolverEligiblePlugin {
-    name: string;
-    description: string;
-    input_charset: string;
-    tags: string[];
-    priority: number;
-}
+type MetasolverSelectionMode = 'recommended' | 'preset' | 'manual';
+
+const METASOLVER_CHARSET_ICONS: Record<string, string> = {
+    letters: 'ABC',
+    digits: '123',
+    symbols: '#!@',
+    words: 'Mot',
+    mixed: 'Mix',
+};
+
+const parsePluginListValue = (value: string): string[] =>
+    value
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+
+const buildSignatureBadges = (signature: MetasolverSignature): string[] => {
+    const badges: string[] = [
+        `Type ${signature.dominant_input_kind}`,
+        `${signature.non_space_length} chars`,
+        `${signature.group_count} groupe(s)`
+    ];
+
+    if (signature.looks_like_morse) {
+        badges.push('Morse probable');
+    }
+    if (signature.looks_like_binary) {
+        badges.push('Binaire probable');
+    }
+    if (signature.looks_like_hex) {
+        badges.push('Hex probable');
+    }
+    if (signature.looks_like_phone_keypad) {
+        badges.push('T9 probable');
+    }
+    if (signature.looks_like_roman_numerals) {
+        badges.push('Romain probable');
+    }
+    if (signature.looks_like_coordinate_fragment) {
+        badges.push('Coordonnées possibles');
+    }
+
+    return badges;
+};
 
 const MetasolverPresetPanel: React.FC<{
     preset: string;
     pluginList: string;
-    backendBaseUrl: string;
+    text: string;
+    maxPlugins?: number;
+    pluginsService: PluginsService;
     onPluginListChange: (newList: string) => void;
     disabled: boolean;
-}> = ({ preset, pluginList, backendBaseUrl, onPluginListChange, disabled }) => {
+}> = ({ preset, pluginList, text, maxPlugins, pluginsService, onPluginListChange, disabled }) => {
     const [eligiblePlugins, setEligiblePlugins] = React.useState<MetasolverEligiblePlugin[]>([]);
-    const [loading, setLoading] = React.useState(false);
+    const [recommendation, setRecommendation] = React.useState<MetasolverRecommendationResponse | null>(null);
+    const [loadingEligible, setLoadingEligible] = React.useState(false);
+    const [loadingRecommendation, setLoadingRecommendation] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [expanded, setExpanded] = React.useState(false);
-    const [excludedPlugins, setExcludedPlugins] = React.useState<Set<string>>(new Set());
+    const [selectionMode, setSelectionMode] = React.useState<MetasolverSelectionMode>(
+        pluginList.trim() ? 'manual' : 'recommended'
+    );
+    const [manualSelectedPlugins, setManualSelectedPlugins] = React.useState<Set<string>>(new Set(parsePluginListValue(pluginList)));
+    const autoApplyKeyRef = React.useRef<string | null>(null);
 
-    // Charger les plugins éligibles quand le preset change
     React.useEffect(() => {
-        const fetchEligible = async () => {
-            setLoading(true);
-            setError(null);
-            try {
-                const res = await fetch(
-                    `${backendBaseUrl}/api/plugins/metasolver/eligible?preset=${encodeURIComponent(preset)}`,
-                    { credentials: 'include' }
-                );
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                const data = await res.json();
-                setEligiblePlugins(data.plugins || []);
-            } catch (err: any) {
-                setError(err?.message || 'Erreur de chargement');
-                setEligiblePlugins([]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchEligible();
-    }, [preset, backendBaseUrl]);
+        setSelectionMode(prev => pluginList.trim() ? 'manual' : (prev === 'preset' ? 'preset' : 'recommended'));
+        setManualSelectedPlugins(new Set(parsePluginListValue(pluginList)));
+    }, [pluginList]);
 
-    // Réinitialiser les exclusions quand le preset change
     React.useEffect(() => {
-        setExcludedPlugins(new Set());
-        onPluginListChange('');
+        setSelectionMode(prev => pluginList.trim() ? 'manual' : (prev === 'preset' ? 'preset' : 'recommended'));
+        setManualSelectedPlugins(new Set(parsePluginListValue(pluginList)));
+        autoApplyKeyRef.current = null;
     }, [preset]);
 
-    // Quand l'utilisateur modifie les checkboxes, recalculer plugin_list
-    const handleTogglePlugin = React.useCallback((pluginName: string, checked: boolean) => {
-        setExcludedPlugins(prev => {
-            const next = new Set(prev);
-            if (checked) {
-                next.delete(pluginName);
-            } else {
-                next.add(pluginName);
-            }
+    React.useEffect(() => {
+        let cancelled = false;
 
-            // Si aucune exclusion, vider plugin_list (= utiliser le preset tel quel)
-            if (next.size === 0) {
-                onPluginListChange('');
-            } else {
-                // Construire la liste explicite des plugins inclus
-                const included = eligiblePlugins
-                    .filter(p => !next.has(p.name))
-                    .map(p => p.name);
-                onPluginListChange(included.join(', '));
+        const fetchEligible = async () => {
+            setLoadingEligible(true);
+            setError(null);
+            try {
+                const data = await pluginsService.getMetasolverEligiblePlugins(preset);
+                if (!cancelled) {
+                    setEligiblePlugins(data.plugins || []);
+                }
+            } catch (err: any) {
+                if (!cancelled) {
+                    setError(err?.message || 'Erreur de chargement');
+                    setEligiblePlugins([]);
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoadingEligible(false);
+                }
             }
+        };
 
-            return next;
-        });
+        void fetchEligible();
+        return () => { cancelled = true; };
+    }, [preset, pluginsService]);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        const trimmedText = (text || '').trim();
+
+        if (!trimmedText) {
+            setRecommendation(null);
+            setLoadingRecommendation(false);
+            return undefined;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            const fetchRecommendation = async () => {
+                setLoadingRecommendation(true);
+                setError(null);
+                try {
+                    const data = await pluginsService.recommendMetasolverPlugins({
+                        text: trimmedText,
+                        preset,
+                        mode: 'decode',
+                        max_plugins: maxPlugins
+                    });
+                    if (!cancelled) {
+                        setRecommendation(data);
+                    }
+                } catch (err: any) {
+                    if (!cancelled) {
+                        setError(err?.message || 'Erreur de recommandation');
+                        setRecommendation(null);
+                    }
+                } finally {
+                    if (!cancelled) {
+                        setLoadingRecommendation(false);
+                    }
+                }
+            };
+
+            void fetchRecommendation();
+        }, 350);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        };
+    }, [text, preset, maxPlugins, pluginsService]);
+
+    React.useEffect(() => {
+        if (!recommendation || selectionMode !== 'recommended') {
+            return;
+        }
+        if (pluginList.trim()) {
+            return;
+        }
+
+        const key = `${preset}::${text}::${maxPlugins ?? ''}`;
+        if (autoApplyKeyRef.current === key) {
+            return;
+        }
+
+        autoApplyKeyRef.current = key;
+        const recommendedNames = recommendation.selected_plugins || [];
+        setManualSelectedPlugins(new Set(recommendedNames));
+        onPluginListChange(recommendation.plugin_list || '');
+    }, [recommendation, selectionMode, pluginList, preset, text, maxPlugins, onPluginListChange]);
+
+    const currentSelectedPlugins = React.useMemo(() => {
+        if (selectionMode === 'preset' && !pluginList.trim()) {
+            return new Set(eligiblePlugins.map(plugin => plugin.name));
+        }
+        if (manualSelectedPlugins.size > 0) {
+            return manualSelectedPlugins;
+        }
+        if (recommendation?.selected_plugins?.length) {
+            return new Set(recommendation.selected_plugins);
+        }
+        return new Set(eligiblePlugins.map(plugin => plugin.name));
+    }, [eligiblePlugins, manualSelectedPlugins, pluginList, recommendation, selectionMode]);
+
+    const applyRecommendation = React.useCallback(() => {
+        if (!recommendation) {
+            return;
+        }
+        const names = new Set(recommendation.selected_plugins || []);
+        setSelectionMode('recommended');
+        setManualSelectedPlugins(names);
+        onPluginListChange(recommendation.plugin_list || '');
+    }, [recommendation, onPluginListChange]);
+
+    const useFullPreset = React.useCallback(() => {
+        setSelectionMode('preset');
+        setManualSelectedPlugins(new Set(eligiblePlugins.map(plugin => plugin.name)));
+        onPluginListChange('');
     }, [eligiblePlugins, onPluginListChange]);
 
-    const charsetIcons: Record<string, string> = {
-        letters: 'ABC',
-        digits: '123',
-        symbols: '#!@',
-        words: 'Mot',
-        mixed: 'Mix',
-    };
+    const handleTogglePlugin = React.useCallback((pluginName: string, checked: boolean) => {
+        setManualSelectedPlugins(prev => {
+            const next = new Set(prev.size > 0 ? prev : Array.from(currentSelectedPlugins));
+            if (checked) {
+                next.add(pluginName);
+            } else {
+                next.delete(pluginName);
+            }
 
-    const includedCount = eligiblePlugins.length - excludedPlugins.size;
+            if (next.size === 0) {
+                setSelectionMode('preset');
+                onPluginListChange('');
+                return new Set(eligiblePlugins.map(plugin => plugin.name));
+            }
+
+            setSelectionMode('manual');
+            onPluginListChange(Array.from(next).join(', '));
+            return next;
+        });
+    }, [currentSelectedPlugins, eligiblePlugins, onPluginListChange]);
+
+    const includedCount = currentSelectedPlugins.size;
+    const signatureBadges = recommendation?.signature ? buildSignatureBadges(recommendation.signature) : [];
 
     return (
         <div className='plugin-form'>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                <h4 style={{ margin: 0 }}>🔎 Sélection assistée metasolver</h4>
+                <div style={{ fontSize: '11px', opacity: 0.7 }}>
+                    {selectionMode === 'recommended' ? 'Mode recommandé' : selectionMode === 'preset' ? 'Mode preset complet' : 'Mode manuel'}
+                </div>
+            </div>
+
+            {error && (
+                <div style={{ color: 'var(--theia-errorForeground)', fontSize: '12px', marginTop: '6px' }}>
+                    Erreur : {error}
+                </div>
+            )}
+
+            {!text.trim() && (
+                <div style={{ marginTop: '8px', fontSize: '12px', opacity: 0.7 }}>
+                    Renseignez le texte à analyser pour obtenir une sélection dynamique.
+                </div>
+            )}
+
+            {recommendation?.signature && (
+                <div style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    border: '1px solid var(--theia-panel-border)',
+                    borderRadius: '4px',
+                    background: 'var(--theia-editor-background)'
+                }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                        Signature détectée
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {signatureBadges.map(badge => (
+                            <span
+                                key={badge}
+                                style={{
+                                    fontSize: '11px',
+                                    padding: '2px 6px',
+                                    borderRadius: '999px',
+                                    background: 'var(--theia-input-background)',
+                                    border: '1px solid var(--theia-panel-border)'
+                                }}
+                            >
+                                {badge}
+                            </span>
+                        ))}
+                    </div>
+                    <div style={{ fontSize: '11px', opacity: 0.75, marginTop: '8px' }}>
+                        Preset suggéré : <strong>{recommendation.effective_preset_label || recommendation.effective_preset}</strong>
+                    </div>
+                </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                <button
+                    type='button'
+                    className='theia-button secondary'
+                    onClick={() => void applyRecommendation()}
+                    disabled={disabled || !recommendation || loadingRecommendation}
+                >
+                    {loadingRecommendation ? 'Analyse…' : 'Appliquer la recommandation'}
+                </button>
+                <button
+                    type='button'
+                    className='theia-button secondary'
+                    onClick={() => void useFullPreset()}
+                    disabled={disabled || loadingEligible}
+                >
+                    Utiliser tout le preset
+                </button>
+                <div style={{ fontSize: '11px', opacity: 0.7, alignSelf: 'center' }}>
+                    {includedCount}/{eligiblePlugins.length} plugin(s) sélectionné(s)
+                </div>
+            </div>
+
+            {recommendation && recommendation.recommendations.length > 0 && (
+                <div style={{ marginTop: '10px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                        Plugins recommandés
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {recommendation.recommendations.slice(0, 6).map(plugin => (
+                            <div
+                                key={plugin.name}
+                                style={{
+                                    padding: '8px 10px',
+                                    border: '1px solid var(--theia-panel-border)',
+                                    borderRadius: '4px',
+                                    background: currentSelectedPlugins.has(plugin.name)
+                                        ? 'var(--theia-list-activeSelectionBackground)'
+                                        : 'var(--theia-editor-background)'
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{
+                                        display: 'inline-block',
+                                        width: '28px',
+                                        textAlign: 'center',
+                                        fontSize: '10px',
+                                        background: 'var(--theia-input-background)',
+                                        borderRadius: '3px',
+                                        padding: '1px 2px',
+                                        fontWeight: 'bold',
+                                        flexShrink: 0,
+                                    }}>
+                                        {METASOLVER_CHARSET_ICONS[plugin.input_charset] || '?'}
+                                    </span>
+                                    <strong>{plugin.name}</strong>
+                                    <span style={{ fontSize: '11px', opacity: 0.7 }}>
+                                        score {plugin.score.toFixed(0)} • conf {(plugin.confidence * 100).toFixed(0)}%
+                                    </span>
+                                </div>
+                                {plugin.reasons.length > 0 && (
+                                    <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.75 }}>
+                                        {plugin.reasons.slice(0, 2).join(' • ')}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             <div
-                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+                style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none', marginTop: '12px' }}
                 onClick={() => setExpanded(!expanded)}
             >
                 <h4 style={{ margin: 0, flex: 1 }}>
-                    🔌 Plugins du preset ({loading ? '...' : `${includedCount}/${eligiblePlugins.length}`})
+                    🔌 Liste complète ({loadingEligible ? '...' : `${includedCount}/${eligiblePlugins.length}`})
                 </h4>
                 <span style={{ fontSize: '12px', opacity: 0.7 }}>
                     {expanded ? '▲ Réduire' : '▼ Détails'}
                 </span>
             </div>
 
-            {error && (
-                <div style={{ color: 'var(--theia-errorForeground)', fontSize: '12px', marginTop: '4px' }}>
-                    Erreur : {error}
-                </div>
-            )}
-
-            {!expanded && !loading && eligiblePlugins.length > 0 && (
+            {!expanded && !loadingEligible && eligiblePlugins.length > 0 && (
                 <div style={{ fontSize: '12px', opacity: 0.7, marginTop: '4px' }}>
-                    {eligiblePlugins.slice(0, 8).map(p => p.name).join(', ')}
-                    {eligiblePlugins.length > 8 && ` +${eligiblePlugins.length - 8} autres`}
+                    {Array.from(currentSelectedPlugins).slice(0, 8).join(', ')}
+                    {currentSelectedPlugins.size > 8 && ` +${currentSelectedPlugins.size - 8} autres`}
                 </div>
             )}
 
-            {expanded && !loading && (
-                <div style={{ marginTop: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+            {expanded && !loadingEligible && (
+                <div style={{ marginTop: '8px', maxHeight: '320px', overflowY: 'auto' }}>
                     {eligiblePlugins.length === 0 && (
                         <div style={{ fontSize: '13px', opacity: 0.7 }}>Aucun plugin éligible pour ce preset</div>
                     )}
                     {eligiblePlugins.map(plugin => {
-                        const isExcluded = excludedPlugins.has(plugin.name);
+                        const isSelected = currentSelectedPlugins.has(plugin.name);
                         return (
                             <div
                                 key={plugin.name}
@@ -2588,14 +2843,14 @@ const MetasolverPresetPanel: React.FC<{
                                     alignItems: 'center',
                                     padding: '4px 6px',
                                     borderBottom: '1px solid var(--theia-panel-border)',
-                                    opacity: isExcluded ? 0.5 : 1,
+                                    opacity: isSelected ? 1 : 0.55,
                                     fontSize: '12px',
                                     gap: '6px',
                                 }}
                             >
                                 <input
                                     type='checkbox'
-                                    checked={!isExcluded}
+                                    checked={isSelected}
                                     onChange={(e) => handleTogglePlugin(plugin.name, e.target.checked)}
                                     disabled={disabled}
                                     style={{ margin: 0 }}
@@ -2611,7 +2866,7 @@ const MetasolverPresetPanel: React.FC<{
                                     fontWeight: 'bold',
                                     flexShrink: 0,
                                 }}>
-                                    {charsetIcons[plugin.input_charset] || '?'}
+                                    {METASOLVER_CHARSET_ICONS[plugin.input_charset] || '?'}
                                 </span>
                                 <span style={{ fontWeight: 500, minWidth: '120px' }}>{plugin.name}</span>
                                 <span style={{ opacity: 0.7, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -2629,21 +2884,6 @@ const MetasolverPresetPanel: React.FC<{
                             </div>
                         );
                     })}
-
-                    {excludedPlugins.size > 0 && (
-                        <div style={{ marginTop: '8px', fontSize: '11px', opacity: 0.7 }}>
-                            {excludedPlugins.size} plugin(s) exclu(s).
-                            <span
-                                style={{ cursor: 'pointer', textDecoration: 'underline', marginLeft: '6px' }}
-                                onClick={() => {
-                                    setExcludedPlugins(new Set());
-                                    onPluginListChange('');
-                                }}
-                            >
-                                Tout réactiver
-                            </span>
-                        </div>
-                    )}
                 </div>
             )}
         </div>

@@ -20,6 +20,7 @@
     "prepare": "yarn run clean && yarn run build",
     "clean": "rimraf lib",
     "build": "tsc && yarn run copy:assets",
+    "test:geoapp": "node ../../node_modules/ts-node/dist/bin.js src/browser/tests/plugin-executor-geoapp-shared.test.ts",
     "copy:assets": "node -e \"require('fs-extra').copySync('src/browser/style', 'lib/browser/style')\"",
     "watch": "tsc -w"
   },

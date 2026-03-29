@@ -199,9 +199,24 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
                     required: true
                 },
                 values: {
-                    type: 'object',
-                    description: 'Valeurs des variables, ex: {"A": 3, "B": 5, "C": 1}',
-                    required: true
+                    type: 'array',
+                    description: 'Liste de paires variable/valeur, ex: [{"name":"A","value":3},{"name":"B","value":5}].',
+                    required: true,
+                    items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        properties: {
+                            name: {
+                                type: 'string',
+                                description: 'Nom de la variable, ex: A.'
+                            },
+                            value: {
+                                type: 'number',
+                                description: 'Valeur numerique de la variable.'
+                            }
+                        },
+                        required: ['name', 'value']
+                    }
                 }
             }),
             handler: async (argString: string) => this.handleCalculateCoordinates(argString)
@@ -349,10 +364,15 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
             const args = JSON.parse(argString);
             console.log('[FORMULA-SOLVER-TOOLS] calculate_coordinates appelé:', args);
 
+            const values = this.toNamedNumberRecord(args.values);
+            if (!values) {
+                return { error: 'Le champ values est requis et doit contenir des paires variable/valeur valides.' };
+            }
+
             const response = await this.apiClient.post('/calculate', {
                 north_formula: args.north_formula,
                 east_formula: args.east_formula,
-                values: args.values
+                values
             });
 
             const data = response.data;
@@ -383,10 +403,7 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
         const required: string[] = [];
 
         for (const [key, value] of Object.entries(props)) {
-            properties[key] = {
-                type: value.type,
-                description: value.description
-            };
+            properties[key] = this.normalizeProperty(value);
             
             if (value.required) {
                 required.push(key);
@@ -396,8 +413,74 @@ export class FormulaSolverToolsManager implements FrontendApplicationContributio
         return {
             type: 'object',
             properties,
-            required
-        };
+            required,
+            additionalProperties: false
+        } as ToolRequestParameters;
+    }
+
+    private normalizeProperty(value: Record<string, any>): Record<string, any> {
+        const property: Record<string, any> = { ...value };
+        delete property.required;
+
+        if (property.properties && typeof property.properties === 'object') {
+            const nestedProperties: Record<string, any> = {};
+            for (const [key, nestedValue] of Object.entries(property.properties)) {
+                nestedProperties[key] = this.normalizeProperty(nestedValue as Record<string, any>);
+            }
+            property.properties = nestedProperties;
+        }
+
+        if (property.items && typeof property.items === 'object') {
+            property.items = this.normalizeProperty(property.items);
+        }
+
+        if (property.type === 'object' && property.additionalProperties === undefined) {
+            property.additionalProperties = false;
+        }
+
+        return property;
+    }
+
+    private toNamedNumberRecord(value: unknown): Record<string, number> | undefined {
+        if (!value || typeof value !== 'object') {
+            return undefined;
+        }
+
+        if (Array.isArray(value)) {
+            const entries = value
+                .map(item => {
+                    if (!item || typeof item !== 'object') {
+                        return undefined;
+                    }
+                    const record = item as Record<string, unknown>;
+                    const name = typeof record.name === 'string' ? record.name.trim() : '';
+                    const rawValue = record.value;
+                    const numericValue = typeof rawValue === 'number'
+                        ? rawValue
+                        : (typeof rawValue === 'string' && rawValue.trim() ? Number(rawValue) : NaN);
+                    if (!name || Number.isNaN(numericValue)) {
+                        return undefined;
+                    }
+                    return [name, numericValue] as const;
+                })
+                .filter((entry): entry is readonly [string, number] => Boolean(entry));
+
+            return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+        }
+
+        const entries = Object.entries(value as Record<string, unknown>)
+            .map(([key, rawValue]) => {
+                const numericValue = typeof rawValue === 'number'
+                    ? rawValue
+                    : (typeof rawValue === 'string' && rawValue.trim() ? Number(rawValue) : NaN);
+                if (!key.trim() || Number.isNaN(numericValue)) {
+                    return undefined;
+                }
+                return [key, numericValue] as const;
+            })
+            .filter((entry): entry is readonly [string, number] => Boolean(entry));
+
+        return entries.length > 0 ? Object.fromEntries(entries) : undefined;
     }
 
     private calculateChecksum(value: string | number): number {

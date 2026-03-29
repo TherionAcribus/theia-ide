@@ -704,10 +704,7 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
         const required: string[] = [];
 
         for (const [key, value] of Object.entries(props)) {
-            properties[key] = {
-                type: value.type,
-                description: value.description
-            };
+            properties[key] = this.normalizeProperty(value);
 
             if (value.required) {
                 required.push(key);
@@ -717,7 +714,31 @@ export class CheckerToolsManager implements FrontendApplicationContribution {
         return {
             type: 'object',
             properties,
-            required
-        };
+            required,
+            additionalProperties: false
+        } as ToolRequestParameters;
+    }
+
+    private normalizeProperty(value: Record<string, any>): Record<string, any> {
+        const property: Record<string, any> = { ...value };
+        delete property.required;
+
+        if (property.properties && typeof property.properties === 'object') {
+            const nestedProperties: Record<string, any> = {};
+            for (const [key, nestedValue] of Object.entries(property.properties)) {
+                nestedProperties[key] = this.normalizeProperty(nestedValue as Record<string, any>);
+            }
+            property.properties = nestedProperties;
+        }
+
+        if (property.items && typeof property.items === 'object') {
+            property.items = this.normalizeProperty(property.items);
+        }
+
+        if (property.type === 'object' && property.additionalProperties === undefined) {
+            property.additionalProperties = false;
+        }
+
+        return property;
     }
 }

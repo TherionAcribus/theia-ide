@@ -5,8 +5,22 @@ import { PreferenceService } from '@theia/core/lib/common/preferences/preference
 import { LanguageModelRegistry } from '@theia/ai-core';
 import { DEFAULT_CHAT_AGENT_PREF } from '@theia/ai-chat/lib/common/ai-chat-preferences';
 import { ChatAgent, ChatAgentLocation, ChatAgentService, ChatService, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
-
-export const GEOAPP_OPEN_CHAT_REQUEST_EVENT = 'geoapp-open-chat-request';
+import {
+    GeoAppChatAgentId,
+    GeoAppChatAgentIdsByProfile,
+    GeoAppChatProfile,
+    GeoAppChatWorkflowKind,
+    GeoAppChatWorkflowProfile
+} from './geoapp-chat-agent';
+import {
+    buildGeoAppChatDisplaySessionTitle,
+    buildGeoAppChatPrompt,
+    GEOAPP_OPEN_CHAT_REQUEST_EVENT,
+    normalizeGeoAppChatWorkflowKind,
+    resolveGeoAppChatProfileForWorkflow,
+    sanitizeGeoAppSessionSettings,
+} from './geoapp-chat-shared';
+export { GEOAPP_OPEN_CHAT_REQUEST_EVENT } from './geoapp-chat-shared';
 
 interface GeoAppOpenChatRequestDetail {
     geocacheId?: number;
@@ -15,12 +29,20 @@ interface GeoAppOpenChatRequestDetail {
     sessionTitle?: string;
     prompt?: string;
     focus?: boolean;
+    workflowKind?: GeoAppChatWorkflowKind | string;
+    preferredProfile?: GeoAppChatWorkflowProfile | string;
+    resumeState?: Record<string, unknown>;
 }
 
 interface GeoAppChatSessionMetadata {
     geocacheId?: number;
     gcCode?: string;
     geocacheName?: string;
+    baseSessionTitle?: string;
+    workflowKind?: GeoAppChatWorkflowKind;
+    agentId?: string;
+    agentName?: string;
+    resumeState?: Record<string, unknown>;
 }
 
 @injectable()
@@ -37,6 +59,10 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
     ) {}
 
     onStart(): void {
+        for (const session of this.chatService.getSessions()) {
+            this.sanitizeSessionSettings(session);
+        }
+
         this.chatService.onSessionEvent(event => {
             if (isSessionDeletedEvent(event)) {
                 this.sessionMetadata.delete(event.sessionId);
@@ -53,14 +79,17 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
     protected readonly handleOpenChatRequest = async (rawEvent: Event): Promise<void> => {
         const event = rawEvent as CustomEvent<GeoAppOpenChatRequestDetail>;
         const detail = event.detail || {};
-        const sessionTitle = this.buildSessionTitle(detail);
-        const prompt = (detail.prompt || '').trim();
+        const baseSessionTitle = this.buildSessionTitle(detail);
+        const prompt = this.buildPrompt(detail);
 
         try {
-            const existingSession = this.findExistingSession(detail, sessionTitle);
+            const existingSession = this.findExistingSession(detail, baseSessionTitle);
             if (existingSession) {
-                existingSession.pinnedAgent = await this.resolveDefaultChatAgent();
-                this.setSessionMetadata(existingSession, detail);
+                const pinnedAgent = await this.resolveDefaultChatAgent(detail);
+                existingSession.pinnedAgent = pinnedAgent;
+                existingSession.title = this.buildDisplaySessionTitle(baseSessionTitle, pinnedAgent);
+                this.setSessionMetadata(existingSession, detail, baseSessionTitle, pinnedAgent);
+                this.sanitizeSessionSettings(existingSession);
                 this.chatService.setActiveSession(existingSession.id, { focus: detail.focus !== false });
                 if (prompt) {
                     await this.chatService.sendRequest(existingSession.id, { text: prompt });
@@ -68,10 +97,11 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
                 return;
             }
 
-            const pinnedAgent = await this.resolveDefaultChatAgent();
+            const pinnedAgent = await this.resolveDefaultChatAgent(detail);
             const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: detail.focus !== false }, pinnedAgent);
-            session.title = sessionTitle;
-            this.setSessionMetadata(session, detail);
+            session.title = this.buildDisplaySessionTitle(baseSessionTitle, pinnedAgent);
+            this.setSessionMetadata(session, detail, baseSessionTitle, pinnedAgent);
+            this.sanitizeSessionSettings(session);
 
             if (prompt) {
                 await this.chatService.sendRequest(session.id, { text: prompt });
@@ -91,16 +121,45 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
             if (detail.gcCode && metadata?.gcCode === detail.gcCode) {
                 return true;
             }
+            if (metadata?.baseSessionTitle === sessionTitle) {
+                return true;
+            }
             return session.title === sessionTitle;
         });
     }
 
-    protected setSessionMetadata(session: ChatSession, detail: GeoAppOpenChatRequestDetail): void {
+    protected setSessionMetadata(
+        session: ChatSession,
+        detail: GeoAppOpenChatRequestDetail,
+        baseSessionTitle: string,
+        agent?: ChatAgent
+    ): void {
         this.sessionMetadata.set(session.id, {
             geocacheId: detail.geocacheId,
             gcCode: detail.gcCode,
             geocacheName: detail.geocacheName,
+            baseSessionTitle,
+            workflowKind: normalizeGeoAppChatWorkflowKind(detail.workflowKind),
+            agentId: agent?.id,
+            agentName: agent?.name,
+            resumeState: detail.resumeState,
         });
+    }
+
+    protected sanitizeSessionSettings(session: ChatSession): void {
+        const modelWithSettings = session.model as typeof session.model & {
+            setSettings?: (settings: { [key: string]: unknown }) => void;
+        };
+
+        if (typeof modelWithSettings.setSettings !== 'function') {
+            return;
+        }
+
+        modelWithSettings.setSettings(sanitizeGeoAppSessionSettings(session.model.settings || {}));
+    }
+
+    protected buildPrompt(detail: GeoAppOpenChatRequestDetail): string {
+        return buildGeoAppChatPrompt(detail.prompt, detail.resumeState);
     }
 
     protected buildSessionTitle(detail: GeoAppOpenChatRequestDetail): string {
@@ -111,9 +170,21 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
         return `CHAT IA - ${detail.gcCode || detail.geocacheName || 'GeoApp'}`;
     }
 
-    protected async resolveDefaultChatAgent(): Promise<ChatAgent | undefined> {
+    protected buildDisplaySessionTitle(baseSessionTitle: string, agent?: ChatAgent): string {
+        return buildGeoAppChatDisplaySessionTitle(baseSessionTitle, agent);
+    }
+
+    protected async resolveDefaultChatAgent(detail?: GeoAppOpenChatRequestDetail): Promise<ChatAgent | undefined> {
         const available = this.chatAgentService.getAgents();
         const candidates: ChatAgent[] = [];
+
+        const preferredProfile = this.resolveRequestedProfile(detail);
+        if (preferredProfile) {
+            const preferredGeoAppAgent = this.chatAgentService.getAgent(GeoAppChatAgentIdsByProfile[preferredProfile]);
+            if (preferredGeoAppAgent) {
+                candidates.push(preferredGeoAppAgent);
+            }
+        }
 
         const configuredId = this.preferenceService.get(DEFAULT_CHAT_AGENT_PREF, undefined) as string | undefined;
         const configured = configuredId ? this.chatAgentService.getAgent(configuredId) : undefined;
@@ -121,9 +192,7 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
             candidates.push(configured);
         }
 
-        const geoApp = available.find(agent =>
-            (agent.id || '').toLowerCase() === 'geoapp' || (agent.name || '').toLowerCase() === 'geoapp'
-        );
+        const geoApp = available.find(agent => (agent.id || '').toLowerCase() === GeoAppChatAgentId.toLowerCase());
         if (geoApp) {
             candidates.push(geoApp);
         }
@@ -148,6 +217,17 @@ export class GeoAppChatBridge implements FrontendApplicationContribution {
         }
 
         return candidates[0];
+    }
+
+    protected resolveRequestedProfile(detail?: GeoAppOpenChatRequestDetail): GeoAppChatProfile | undefined {
+        return resolveGeoAppChatProfileForWorkflow(detail?.workflowKind, detail?.preferredProfile, {
+            'geoApp.chat.defaultProfile': this.preferenceService.get('geoApp.chat.defaultProfile', 'fast'),
+            'geoApp.chat.workflowProfile.secretCode': this.preferenceService.get('geoApp.chat.workflowProfile.secretCode', 'default'),
+            'geoApp.chat.workflowProfile.formula': this.preferenceService.get('geoApp.chat.workflowProfile.formula', 'default'),
+            'geoApp.chat.workflowProfile.checker': this.preferenceService.get('geoApp.chat.workflowProfile.checker', 'default'),
+            'geoApp.chat.workflowProfile.hiddenContent': this.preferenceService.get('geoApp.chat.workflowProfile.hiddenContent', 'default'),
+            'geoApp.chat.workflowProfile.imagePuzzle': this.preferenceService.get('geoApp.chat.workflowProfile.imagePuzzle', 'default'),
+        });
     }
 
     protected async isAgentReady(agent: ChatAgent | undefined): Promise<boolean> {

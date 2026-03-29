@@ -291,9 +291,264 @@ export interface ListingClassificationResponse {
         has_hint: boolean;
         has_description_html: boolean;
         image_count: number;
+        image_hint_count: number;
+        image_hint_sources: string[];
         checker_count: number;
         waypoint_count: number;
+        formula_signal_count: number;
+        variable_assignment_count: number;
+        has_formula_coordinate_placeholders: boolean;
+        projection_keyword_count: number;
+        visual_image_signal_count: number;
+        direct_structured_fragment_count: number;
+        hidden_structured_fragment_count: number;
+        image_structured_fragment_count: number;
+        direct_domain_score: number;
+        hidden_domain_score: number;
+        image_domain_score: number;
+        dominant_evidence_domain?: 'direct' | 'hidden' | 'image' | null;
+        evidence_domain_gap: number;
+        hybrid_domain_count: number;
+        is_hybrid_listing: boolean;
+        ambiguous_domains: Array<'direct' | 'hidden' | 'image'>;
+        is_ambiguous_hybrid: boolean;
+        has_visual_only_image_clue: boolean;
+        hidden_signal_count: number;
+        hidden_comment_count: number;
+        hidden_text_count: number;
+        secret_fragment_count: number;
+        best_secret_fragment_source?: string | null;
+        best_secret_fragment_confidence: number;
     };
+}
+
+export type ResolutionWorkflowKind =
+    | 'general'
+    | 'secret_code'
+    | 'formula'
+    | 'checker'
+    | 'hidden_content'
+    | 'image_puzzle'
+    | 'coord_transform';
+
+export interface ResolutionWorkflowCandidate {
+    kind: ResolutionWorkflowKind;
+    confidence: number;
+    score: number;
+    reason: string;
+    supporting_labels: string[];
+    forced?: boolean;
+}
+
+export interface ResolutionPlanStep {
+    id: string;
+    title: string;
+    status: 'planned' | 'completed' | 'blocked' | 'skipped';
+    automated: boolean;
+    tool?: string;
+    detail?: string;
+}
+
+export interface GeographicPlausibilityReference {
+    type: string;
+    label: string;
+    distance_km: number;
+}
+
+export interface GeographicPlausibilityAssessment {
+    status: 'very_plausible' | 'plausible' | 'uncertain' | 'unlikely' | 'unknown';
+    score: number;
+    summary: string;
+    reasons: string[];
+    reference_count: number;
+    published_distance_km?: number | null;
+    original_distance_km?: number | null;
+    nearest_waypoint_distance_km?: number | null;
+    nearest_reference?: GeographicPlausibilityReference | null;
+    reference_distances?: GeographicPlausibilityReference[];
+}
+
+export interface ResolutionSecretExecution {
+    selected_fragment?: ListingSecretFragment | null;
+    recommendation?: MetasolverRecommendationResponse | null;
+    metasolver_result?: {
+        status?: string;
+        summary?: string;
+        results_count: number;
+        top_results: PluginResultItem[];
+        coordinates?: Record<string, any> | null;
+        geographic_plausibility?: GeographicPlausibilityAssessment | null;
+        failed_plugins?: Array<Record<string, any>>;
+    } | null;
+}
+
+export interface ResolutionFormulaExecution {
+    formula_count: number;
+    formulas: Array<Record<string, any>>;
+    variables: string[];
+    questions: Record<string, string>;
+    found_question_count: number;
+    answer_search?: {
+        answers: Record<string, {
+            question: string;
+            best_answer?: string;
+            results?: Array<Record<string, any>>;
+            suggested_values?: Array<Record<string, any>>;
+            recommended_value_type?: string;
+        }>;
+        found_count: number;
+        missing: string[];
+        search_context?: string;
+    } | null;
+    calculated_coordinates?: {
+        [key: string]: any;
+        geographic_plausibility?: GeographicPlausibilityAssessment | null;
+    } | null;
+}
+
+export interface ResolutionCheckerExecution {
+    checker_name?: string;
+    checker_url?: string;
+    provider?: string;
+    interactive?: boolean;
+    candidate?: string;
+    wp?: string;
+    status?: string;
+    message?: string;
+    result?: Record<string, any> | null;
+}
+
+export interface ResolutionHiddenContentItem {
+    source: string;
+    reason: string;
+    text: string;
+}
+
+export interface ResolutionHiddenContentExecution {
+    inspected?: boolean;
+    hidden_signals: string[];
+    comments: string[];
+    hidden_texts: string[];
+    items: ResolutionHiddenContentItem[];
+    candidate_secret_fragments: ListingSecretFragment[];
+    selected_fragment?: ListingSecretFragment | null;
+    recommendation?: MetasolverRecommendationResponse | null;
+    summary?: string;
+}
+
+export interface ResolutionImagePuzzleItem {
+    source: string;
+    reason: string;
+    text: string;
+    image_url?: string | null;
+    confidence?: number | null;
+}
+
+export interface ResolutionImagePuzzleExecution {
+    inspected?: boolean;
+    image_count: number;
+    image_urls: string[];
+    items: ResolutionImagePuzzleItem[];
+    candidate_secret_fragments: ListingSecretFragment[];
+    selected_fragment?: ListingSecretFragment | null;
+    recommendation?: MetasolverRecommendationResponse | null;
+    plugin_summaries: string[];
+    vision_ocr_images_analyzed?: number;
+    vision_ocr_budget_cost?: number;
+    coordinates_candidate?: Record<string, any> | string | null;
+    geographic_plausibility?: GeographicPlausibilityAssessment | null;
+    summary?: string;
+}
+
+export interface ResolutionWorkflowBudget {
+    max_automated_steps: number;
+    max_metasolver_runs: number;
+    max_search_questions: number;
+    max_checker_runs: number;
+    max_coordinate_calculations: number;
+    max_vision_ocr_runs: number;
+    stop_on_checker_success: boolean;
+}
+
+export interface ResolutionWorkflowUsage {
+    automated_steps: number;
+    metasolver_runs: number;
+    search_questions: number;
+    checker_runs: number;
+    coordinate_calculations: number;
+    vision_ocr_runs: number;
+}
+
+export interface ResolutionWorkflowControl {
+    status: 'ready' | 'awaiting_input' | 'budget_exhausted' | 'stopped' | 'completed';
+    budget: ResolutionWorkflowBudget;
+    usage: ResolutionWorkflowUsage;
+    remaining: ResolutionWorkflowUsage;
+    stop_reasons: string[];
+    can_run_next_step: boolean;
+    requires_user_input: boolean;
+    final_confidence: number;
+    summary: string;
+}
+
+export interface ResolutionWorkflowRequest extends ListingClassificationRequest {
+    preferred_workflow?: ResolutionWorkflowKind;
+    auto_execute?: boolean;
+    metasolver_preset?: string;
+    metasolver_mode?: 'decode' | 'detect';
+    max_plugins?: number;
+    workflow_control?: Partial<ResolutionWorkflowControl> | null;
+}
+
+export interface ResolutionWorkflowResponse {
+    source: 'direct_input' | 'geocache';
+    geocache?: {
+        id: number;
+        gc_code: string;
+        name?: string;
+    } | null;
+    title?: string | null;
+    workflow: ResolutionWorkflowCandidate;
+    workflow_candidates: ResolutionWorkflowCandidate[];
+    classification: ListingClassificationResponse;
+    plan: ResolutionPlanStep[];
+    execution: {
+        secret_code?: ResolutionSecretExecution | null;
+        formula?: ResolutionFormulaExecution | null;
+        hidden_content?: ResolutionHiddenContentExecution | null;
+        image_puzzle?: ResolutionImagePuzzleExecution | null;
+        checker?: ResolutionCheckerExecution | null;
+    };
+    control: ResolutionWorkflowControl;
+    next_actions: string[];
+    explanation: string[];
+}
+
+export interface ResolutionWorkflowStepRunRequest extends ResolutionWorkflowRequest {
+    target_step_id?: string;
+    formula_index?: number;
+    formula_values?: Record<string, number>;
+    formula_answers?: Record<string, string>;
+    formula_value_types?: Record<string, string>;
+    search_context?: string;
+    max_search_results?: number;
+    checker_candidate?: string;
+    checker_url?: string;
+    checker_name?: string;
+    checker_id?: number;
+    wp?: string;
+    checker_auto_login?: boolean;
+    checker_login_timeout_sec?: number;
+    checker_timeout_sec?: number;
+}
+
+export interface ResolutionWorkflowStepRunResponse {
+    status: 'success' | 'blocked' | 'error';
+    executed_step?: string | null;
+    message: string;
+    step?: ResolutionPlanStep | null;
+    result?: Record<string, any> | null;
+    workflow_resolution: ResolutionWorkflowResponse;
 }
 
 /**
@@ -460,6 +715,12 @@ export interface PluginsService {
      * Classe un listing de geocache en plusieurs familles d'enigmes.
      */
     classifyListing(request: ListingClassificationRequest): Promise<ListingClassificationResponse>;
+
+    /**
+     * Orchestre l'analyse initiale d'un listing et choisit le workflow principal.
+     */
+    resolveWorkflow(request: ResolutionWorkflowRequest): Promise<ResolutionWorkflowResponse>;
+    runWorkflowStep(request: ResolutionWorkflowStepRunRequest): Promise<ResolutionWorkflowStepRunResponse>;
     
     /**
      * Détecte les coordonnées GPS dans un texte.

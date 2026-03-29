@@ -21,7 +21,14 @@ import { GeocacheImageEditorTabsManager } from './geocache-image-editor-tabs-man
 import { GeocacheImageEditorFrontendContribution } from './geocache-image-editor-frontend-contribution';
 import { ZoneTabsManager } from './zone-tabs-manager';
 import { CheckerToolsManager } from './checker-tools-manager';
-import { GeoAppChatAgent, GeoAppChatAgentContribution } from './geoapp-chat-agent';
+import {
+    GeoAppChatAgent,
+    GeoAppChatAgentContribution,
+    GeoAppChatFastAgent,
+    GeoAppChatLocalAgent,
+    GeoAppChatStrongAgent,
+    GeoAppChatWebAgent
+} from './geoapp-chat-agent';
 import { GeoAppOcrAgentContribution } from './geoapp-ocr-agent';
 import { GeoAppTranslateDescriptionAgentContribution } from './geoapp-translate-description-agent';
 import { GeoAppLogsAnalyzerAgentContribution } from './geoapp-logs-analyzer-agent';
@@ -199,6 +206,18 @@ export default new ContainerModule(bind => {
 
     bind(GeoAppChatAgent).toSelf().inSingletonScope();
     bind(ChatAgent).toService(GeoAppChatAgent);
+
+    bind(GeoAppChatLocalAgent).toSelf().inSingletonScope();
+    bind(ChatAgent).toService(GeoAppChatLocalAgent);
+
+    bind(GeoAppChatFastAgent).toSelf().inSingletonScope();
+    bind(ChatAgent).toService(GeoAppChatFastAgent);
+
+    bind(GeoAppChatStrongAgent).toSelf().inSingletonScope();
+    bind(ChatAgent).toService(GeoAppChatStrongAgent);
+
+    bind(GeoAppChatWebAgent).toSelf().inSingletonScope();
+    bind(ChatAgent).toService(GeoAppChatWebAgent);
 
     // Widget d'authentification Geocaching.com
     bind(GeocachingAuthWidget).toSelf().inSingletonScope();

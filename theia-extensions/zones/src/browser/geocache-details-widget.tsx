@@ -1,11 +1,9 @@
-import * as React from 'react';
-import { injectable, inject, postConstruct } from '@theia/core/shared/inversify';
+﻿import * as React from 'react';
+import { injectable, inject } from '@theia/core/shared/inversify';
 import { ReactWidget } from '@theia/core/lib/browser/widgets/react-widget';
 import { MessageService } from '@theia/core';
 import { ApplicationShell, ConfirmDialog, StatefulWidget } from '@theia/core/lib/browser';
 import { CommandService } from '@theia/core';
-import { ChatAgent, ChatAgentLocation, ChatAgentService, ChatService, ChatSession, isSessionDeletedEvent } from '@theia/ai-chat';
-import { DEFAULT_CHAT_AGENT_PREF } from '@theia/ai-chat/lib/common/ai-chat-preferences';
 import { LanguageModelRegistry, LanguageModelService, UserRequest, getJsonOfResponse, getTextOfResponse, isLanguageModelParsedResponse } from '@theia/ai-core';
 import { getAttributeIconUrl } from './geocache-attributes-icons-data';
 import { PluginExecutorContribution } from '@mysterai/theia-plugins/lib/browser/plugins-contribution';
@@ -15,6 +13,19 @@ import { PreferenceService } from '@theia/core/lib/common/preferences/preference
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
 import { GeocacheImagesPanel } from './geocache-images-panel';
 import { GeoAppTranslateDescriptionAgentId } from './geoapp-translate-description-agent';
+import {
+    GeoAppChatProfile,
+    GeoAppChatWorkflowKind
+} from './geoapp-chat-agent';
+import {
+    buildGeocacheGeoAppOpenChatDetail,
+} from './geocache-chat-prompt-shared';
+import {
+    dispatchGeoAppOpenChatRequest,
+    GeoAppWorkflowResolutionPreview,
+    resolveGeoAppChatProfileForWorkflow,
+    resolveGeoAppChatWorkflowKindFromOrchestrator,
+} from './geoapp-chat-shared';
 
 interface PluginAddWaypointDetail {
     gcCoords: string;
@@ -54,13 +65,6 @@ type GeocacheWaypoint = {
 };
 type GeocacheChecker = { id?: number; name?: string; url?: string };
 
-interface GeocacheChatMetadata {
-    geocacheId: number;
-    geocacheCode?: string;
-    geocacheName?: string;
-    lastUpdatedIso: string;
-}
-
 interface SerializedGeocacheDetailsState {
     geocacheId?: number;
     lastAccessTimestamp?: number;
@@ -82,7 +86,7 @@ interface WaypointsEditorProps {
 }
 
 /**
- * Calcule l'antipode d'une coordonnée
+ * Calcule l'antipode d'une coordonnÃ©e
  */
 function calculateAntipode(lat: number, lon: number): { lat: number; lon: number } {
     return {
@@ -92,32 +96,32 @@ function calculateAntipode(lat: number, lon: number): { lat: number; lon: number
 }
 
 /**
- * Calcule une projection géographique
+ * Calcule une projection gÃ©ographique
  */
 function calculateProjection(lat: number, lon: number, distance: number, bearing: number): { lat: number; lon: number } {
-    const R = 6371000; // Rayon de la Terre en mètres
-    const φ1 = lat * Math.PI / 180;
-    const λ1 = lon * Math.PI / 180;
-    const θ = bearing * Math.PI / 180;
+    const R = 6371000; // Rayon de la Terre en mÃ¨tres
+    const latRad = lat * Math.PI / 180;
+    const lonRad = lon * Math.PI / 180;
+    const bearingRad = bearing * Math.PI / 180;
 
-    const φ2 = Math.asin(
-        Math.sin(φ1) * Math.cos(distance / R) +
-        Math.cos(φ1) * Math.sin(distance / R) * Math.cos(θ)
+    const projectedLatRad = Math.asin(
+        Math.sin(latRad) * Math.cos(distance / R) +
+        Math.cos(latRad) * Math.sin(distance / R) * Math.cos(bearingRad)
     );
 
-    const λ2 = λ1 + Math.atan2(
-        Math.sin(θ) * Math.sin(distance / R) * Math.cos(φ1),
-        Math.cos(distance / R) - Math.sin(φ1) * Math.sin(φ2)
+    const projectedLonRad = lonRad + Math.atan2(
+        Math.sin(bearingRad) * Math.sin(distance / R) * Math.cos(latRad),
+        Math.cos(distance / R) - Math.sin(latRad) * Math.sin(projectedLatRad)
     );
 
     return {
-        lat: φ2 * 180 / Math.PI,
-        lon: λ2 * 180 / Math.PI
+        lat: projectedLatRad * 180 / Math.PI,
+        lon: projectedLonRad * 180 / Math.PI
     };
 }
 
 /**
- * Convertit des coordonnées décimales en format Geocaching (N 48° 51.402)
+ * Convertit des coordonnÃ©es dÃ©cimales en format Geocaching (N 48Â° 51.402)
  */
 function toGCFormat(lat: number, lon: number): { gcLat: string; gcLon: string } {
     const latDir = lat >= 0 ? 'N' : 'S';
@@ -129,17 +133,17 @@ function toGCFormat(lat: number, lon: number): { gcLat: string; gcLon: string } 
     const latMin = ((absLat - latDeg) * 60).toFixed(3);
     const lonMin = ((absLon - lonDeg) * 60).toFixed(3);
     return {
-        gcLat: `${latDir} ${latDeg}° ${latMin}`,
-        gcLon: `${lonDir} ${lonDeg}° ${lonMin}`
+        gcLat: `${latDir} ${latDeg}Â° ${latMin}`,
+        gcLon: `${lonDir} ${lonDeg}Â° ${lonMin}`
     };
 }
 
 /**
- * Parse les coordonnées au format Geocaching
+ * Parse les coordonnÃ©es au format Geocaching
  */
 function parseGCCoords(gcLat: string, gcLon: string): { lat: number; lon: number } | null {
-    const latMatch = gcLat.match(/([NS])\s*(\d+)°\s*([\d.]+)/);
-    const lonMatch = gcLon.match(/([EW])\s*(\d+)°\s*([\d.]+)/);
+    const latMatch = gcLat.match(/([NS])\s*(\d+)Â°\s*([\d.]+)/);
+    const lonMatch = gcLon.match(/([EW])\s*(\d+)Â°\s*([\d.]+)/);
     if (!latMatch || !lonMatch) { return null; }
     const lat = (parseInt(latMatch[2]) + parseFloat(latMatch[3]) / 60) * (latMatch[1] === 'S' ? -1 : 1);
     const lon = (parseInt(lonMatch[2]) + parseFloat(lonMatch[3]) / 60) * (lonMatch[1] === 'W' ? -1 : 1);
@@ -211,7 +215,7 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
         }
     }, [onRegisterCallback]);
 
-    // Créer une version modifiée du WaypointsEditor avec accès à startEdit
+    // CrÃ©er une version modifiÃ©e du WaypointsEditor avec accÃ¨s Ã  startEdit
     return (
         <WaypointsEditorWithRef
             {...editorProps}
@@ -222,7 +226,7 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
 };
 
 /**
- * Version modifiée de WaypointsEditor qui expose startEdit via une ref
+ * Version modifiÃ©e de WaypointsEditor qui expose startEdit via une ref
  */
 interface WaypointsEditorWithRefProps extends WaypointsEditorProps {
     onStartEditRef: (fn: (waypoint?: GeocacheWaypoint, prefill?: WaypointPrefillPayload) => void) => void;
@@ -298,8 +302,8 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                 note_override: noteToSave
             };
             
-            console.log('[WaypointsEditor] 🔍 SAVE WAYPOINT');
-            console.log('[WaypointsEditor] Données à envoyer:', dataToSave);
+            console.log('[WaypointsEditor] ðŸ” SAVE WAYPOINT');
+            console.log('[WaypointsEditor] DonnÃ©es Ã  envoyer:', dataToSave);
             console.log('[WaypointsEditor] gc_coords:', dataToSave.gc_coords);
             
             const url = editingId === 'new'
@@ -319,14 +323,14 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
             const result = await res.json();
-            console.log('[WaypointsEditor] ✅ Réponse du serveur:', result);
-            console.log('[WaypointsEditor] ✅ Coordonnées calculées par le backend:', result.latitude, result.longitude);
+            console.log('[WaypointsEditor] âœ… RÃ©ponse du serveur:', result);
+            console.log('[WaypointsEditor] âœ… CoordonnÃ©es calculÃ©es par le backend:', result.latitude, result.longitude);
             
             await onUpdate();
             cancelEdit();
-            messages.info('Waypoint sauvegardé');
+            messages.info('Waypoint sauvegardÃ©');
         } catch (e) {
-            console.error('[WaypointsEditor] ❌ Save waypoint error', e);
+            console.error('[WaypointsEditor] âŒ Save waypoint error', e);
             messages.error('Erreur lors de la sauvegarde du waypoint');
         }
     };
@@ -348,7 +352,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
 
     const setCurrentFormAsCorrectedCoords = async () => {
         if (!editForm.gc_coords) {
-            messages.error('Veuillez saisir des coordonnées');
+            messages.error('Veuillez saisir des coordonnÃ©es');
             return;
         }
         const tempWaypoint: GeocacheWaypoint = {
@@ -360,7 +364,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
         if (editingId === 'new') {
             messages.info('Sauvegarde du waypoint en cours...');
             await saveWaypoint();
-            messages.info('Veuillez maintenant cliquer sur le bouton 📍 du waypoint créé');
+            messages.info('Veuillez maintenant cliquer sur le bouton ðŸ“ du waypoint crÃ©Ã©');
         } else if (tempWaypoint.id) {
             await onSetAsCorrectedCoords(tempWaypoint.id, tempWaypoint.name || 'ce waypoint');
         }
@@ -374,7 +378,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             ? { lat: editForm.latitude, lon: editForm.longitude }
             : null);
         if (!coords) {
-            messages.error('Coordonnées invalides');
+            messages.error('CoordonnÃ©es invalides');
             return;
         }
         const antipode = calculateAntipode(coords.lat, coords.lon);
@@ -390,7 +394,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             ? { lat: editForm.latitude, lon: editForm.longitude }
             : null);
         if (!coords) {
-            messages.error('Coordonnées invalides');
+            messages.error('CoordonnÃ©es invalides');
             return;
         }
         let distanceInMeters = projectionParams.distance;
@@ -413,7 +417,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
         }
     };
 
-    // Retourner le même JSX que WaypointsEditor
+    // Retourner le mÃªme JSX que WaypointsEditor
     return (
         <div style={{ display: 'grid', gap: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -435,10 +439,10 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                     padding: 12,
                     background: 'var(--theia-editor-background)'
                 }}>
-                    <h5 style={{ marginTop: 0 }}>{editingId === 'new' ? 'Nouveau Waypoint' : 'Éditer Waypoint'}</h5>
+                    <h5 style={{ marginTop: 0 }}>{editingId === 'new' ? 'Nouveau Waypoint' : 'Ã‰diter Waypoint'}</h5>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                         <div>
-                            <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 2 }}>Préfixe</label>
+                            <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 2 }}>PrÃ©fixe</label>
                             <input
                                 type='text'
                                 className='theia-input'
@@ -479,13 +483,13 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                         />
                     </div>
                     <div style={{ marginBottom: 8 }}>
-                        <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 2 }}>Coordonnées (format GC)</label>
+                        <label style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 2 }}>CoordonnÃ©es (format GC)</label>
                         <input
                             type='text'
                             className='theia-input'
                             value={editForm.gc_coords || ''}
                             onChange={e => setEditForm({ ...editForm, gc_coords: e.target.value })}
-                            placeholder='N 48° 51.402, E 002° 21.048'
+                            placeholder='N 48Â° 51.402, E 002Â° 21.048'
                             style={{ width: '100%' }}
                         />
                     </div>
@@ -498,7 +502,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                         marginBottom: 8,
                         background: 'var(--theia-panel-background)'
                     }}>
-                        <h6 style={{ margin: '0 0 8px 0', fontSize: 13 }}>Calculs géographiques</h6>
+                        <h6 style={{ margin: '0 0 8px 0', fontSize: 13 }}>Calculs gÃ©ographiques</h6>
                         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                             <button
                                 className='theia-button secondary'
@@ -520,20 +524,20 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                 />
                             </div>
                             <div>
-                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>Unité</label>
+                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>UnitÃ©</label>
                                 <select
                                     className='theia-select'
                                     value={projectionParams.unit}
                                     onChange={e => setProjectionParams({ ...projectionParams, unit: e.target.value })}
                                     style={{ width: '100%', fontSize: 12 }}
                                 >
-                                    <option value='m'>mètres</option>
-                                    <option value='km'>kilomètres</option>
+                                    <option value='m'>mÃ¨tres</option>
+                                    <option value='km'>kilomÃ¨tres</option>
                                     <option value='miles'>miles</option>
                                 </select>
                             </div>
                             <div>
-                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>Angle (0°=N)</label>
+                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>Angle (0Â°=N)</label>
                                 <input
                                     type='number'
                                     className='theia-input'
@@ -554,7 +558,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                         </button>
                         {calculatedCoords && (
                             <div style={{ marginTop: 8 }}>
-                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>Résultat</label>
+                                <label style={{ display: 'block', fontSize: 11, opacity: 0.8, marginBottom: 2 }}>RÃ©sultat</label>
                                 <div style={{ display: 'flex', gap: 4 }}>
                                     <input
                                         type='text'
@@ -589,10 +593,10 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                         <button 
                             className='theia-button secondary'
                             onClick={setCurrentFormAsCorrectedCoords}
-                            title='Définir ces coordonnées comme coordonnées corrigées de la géocache'
+                            title='DÃ©finir ces coordonnÃ©es comme coordonnÃ©es corrigÃ©es de la gÃ©ocache'
                             style={{ fontSize: 12 }}
                         >
-                            📍 Définir comme coords corrigées
+                            ðŸ“ DÃ©finir comme coords corrigÃ©es
                         </button>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
@@ -608,11 +612,11 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                 <table className='theia-table' style={{ width: '100%' }}>
                     <thead>
                         <tr>
-                            <th>Préfixe</th>
+                            <th>PrÃ©fixe</th>
                             <th>Lookup</th>
                             <th>Nom</th>
                             <th>Type</th>
-                            <th>Coordonnées</th>
+                            <th>CoordonnÃ©es</th>
                             <th>Note</th>
                             <th style={{ width: 100 }}>Actions</th>
                         </tr>
@@ -633,9 +637,9 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             onClick={() => startEdit(w)}
                                             disabled={editingId !== null}
                                             style={{ padding: '2px 8px', fontSize: 11 }}
-                                            title='Éditer'
+                                            title='Ã‰diter'
                                         >
-                                            ✏️
+                                            âœï¸
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -644,25 +648,25 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Dupliquer'
                                         >
-                                            📋
+                                            ðŸ“‹
                                         </button>
                                         <button
                                             className='theia-button secondary'
                                             onClick={() => setAsCorrectedCoords(w)}
                                             disabled={editingId !== null}
                                             style={{ padding: '2px 8px', fontSize: 11 }}
-                                            title='Définir comme coordonnées corrigées'
+                                            title='DÃ©finir comme coordonnÃ©es corrigÃ©es'
                                         >
-                                            📍
+                                            ðŸ“
                                         </button>
                                         <button
                                             className='theia-button secondary'
                                             onClick={() => pushWaypointToGeocaching(w)}
                                             disabled={editingId !== null || !w.latitude}
                                             style={{ padding: '2px 8px', fontSize: 11 }}
-                                            title='Envoyer ces coordonnées vers Geocaching.com (comme coordonnées corrigées)'
+                                            title='Envoyer ces coordonnÃ©es vers Geocaching.com (comme coordonnÃ©es corrigÃ©es)'
                                         >
-                                            📡
+                                            ðŸ“¡
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -671,7 +675,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Supprimer'
                                         >
-                                            🗑️
+                                            ðŸ—‘ï¸
                                         </button>
                                     </div>
                                 </td>
@@ -775,10 +779,10 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
             }
             await onUpdate();
             setIsEditing(false);
-            messages.info('Description mise à jour');
+            messages.info('Description mise Ã  jour');
         } catch (e) {
             console.error('Save description error', e);
-            messages.error('Erreur lors de la mise à jour de la description');
+            messages.error('Erreur lors de la mise Ã  jour de la description');
         }
     };
 
@@ -795,14 +799,14 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
             setIsEditing(false);
             setEditedRaw('');
             switchVariant('original');
-            messages.info('Description réinitialisée');
+            messages.info('Description rÃ©initialisÃ©e');
         } catch (e) {
             console.error('Reset description error', e);
-            messages.error('Erreur lors de la réinitialisation de la description');
+            messages.error('Erreur lors de la rÃ©initialisation de la description');
         }
     };
 
-    const displayLabel = variant === 'modified' ? 'Modifiée' : 'Originale';
+    const displayLabel = variant === 'modified' ? 'ModifiÃ©e' : 'Originale';
     const effectiveHtml = getEffectiveDescriptionHtml(geocacheData, variant);
 
     // Intercepter les clics sur les liens externes
@@ -811,7 +815,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
             const target = e.target as HTMLElement;
             const link = target.closest('a');
             if (link && link.href) {
-                // Vérifier si c'est un lien externe (http/https)
+                // VÃ©rifier si c'est un lien externe (http/https)
                 if (link.href.startsWith('http://') || link.href.startsWith('https://')) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -819,7 +823,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                     if (externalLinksOpenMode === 'new-window') {
                         window.open(link.href, '_blank', 'noopener,noreferrer');
                     } else {
-                        // new-tab (défaut)
+                        // new-tab (dÃ©faut)
                         window.open(link.href, '_blank');
                     }
                 }
@@ -842,7 +846,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                     <strong>Description</strong>
                     <span style={{ opacity: 0.75, fontSize: 12 }}>(version: {displayLabel})</span>
                     {hasModified ? (
-                        <span style={{ opacity: 0.75, fontSize: 12 }}>(modif. présente)</span>
+                        <span style={{ opacity: 0.75, fontSize: 12 }}>(modif. prÃ©sente)</span>
                     ) : (
                         <span style={{ opacity: 0.75, fontSize: 12 }}>(pas de modif.)</span>
                     )}
@@ -860,28 +864,28 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                         className='theia-button secondary'
                         onClick={() => switchVariant('modified')}
                         disabled={isEditing || (!hasModified && variant === 'modified')}
-                        title={hasModified ? undefined : 'Aucune description modifiée'}
+                        title={hasModified ? undefined : 'Aucune description modifiÃ©e'}
                     >
-                        Modifiée
+                        ModifiÃ©e
                     </button>
                     <button
                         className='theia-button secondary'
                         onClick={() => { void onTranslateToFrench(); }}
                         disabled={isEditing || isTranslating}
-                        title='Traduire la description originale en français (conserve le HTML)'
+                        title='Traduire la description originale en franÃ§ais (conserve le HTML)'
                     >
-                        {isTranslating ? 'Traduction…' : 'Traduire (FR)'}
+                        {isTranslating ? 'Traductionâ€¦' : 'Traduire (FR)'}
                     </button>
                     <button
                         className='theia-button secondary'
                         onClick={() => { void onTranslateAllToFrench(); }}
                         disabled={isEditing || isTranslatingAll}
-                        title='Traduire en français : description + indices + notes de waypoints'
+                        title='Traduire en franÃ§ais : description + indices + notes de waypoints'
                     >
-                        {isTranslatingAll ? 'Traduction…' : 'Traduire tout (FR)'}
+                        {isTranslatingAll ? 'Traductionâ€¦' : 'Traduire tout (FR)'}
                     </button>
                     {!isEditing ? (
-                        <button className='theia-button' onClick={startEdit}>Éditer</button>
+                        <button className='theia-button' onClick={startEdit}>Ã‰diter</button>
                     ) : undefined}
                 </div>
             </div>
@@ -906,9 +910,9 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                             className='theia-button secondary'
                             onClick={resetDescription}
                             disabled={!hasModified}
-                            title={!hasModified ? 'Aucune description modifiée' : undefined}
+                            title={!hasModified ? 'Aucune description modifiÃ©e' : undefined}
                         >
-                            Revenir à l'originale
+                            Revenir Ã  l'originale
                         </button>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
@@ -922,7 +926,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
 };
 
 /**
- * Composant pour afficher et éditer les coordonnées d'une géocache
+ * Composant pour afficher et Ã©diter les coordonnÃ©es d'une gÃ©ocache
  */
 const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geocacheId, backendBaseUrl, onUpdate, messages, gcCode }) => {
     const [isEditing, setIsEditing] = React.useState(false);
@@ -932,17 +936,17 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
         geocacheData.solved || 'not_solved'
     );
 
-    // Déterminer les coordonnées à afficher
+    // DÃ©terminer les coordonnÃ©es Ã  afficher
     const displayCoords = geocacheData.coordinates_raw || geocacheData.original_coordinates_raw || '';
     const originalCoords = geocacheData.original_coordinates_raw || '';
     const isCorrected = geocacheData.is_corrected === true;
 
-    // Mettre à jour le statut quand les données changent
+    // Mettre Ã  jour le statut quand les donnÃ©es changent
     React.useEffect(() => {
         setSolvedStatus(geocacheData.solved || 'not_solved');
     }, [geocacheData.solved]);
 
-    // Initialiser le formulaire d'édition
+    // Initialiser le formulaire d'Ã©dition
     const startEdit = () => {
         setEditedCoords(displayCoords);
         setIsEditing(true);
@@ -965,10 +969,10 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             
             await onUpdate();
             setIsEditing(false);
-            messages.info('Coordonnées mises à jour');
+            messages.info('CoordonnÃ©es mises Ã  jour');
         } catch (e) {
             console.error('Save coordinates error', e);
-            messages.error('Erreur lors de la mise à jour des coordonnées');
+            messages.error('Erreur lors de la mise Ã  jour des coordonnÃ©es');
         }
     };
 
@@ -982,16 +986,16 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             
             await onUpdate();
             setIsEditing(false);
-            messages.info('Coordonnées réinitialisées');
+            messages.info('CoordonnÃ©es rÃ©initialisÃ©es');
         } catch (e) {
             console.error('Reset coordinates error', e);
-            messages.error('Erreur lors de la réinitialisation des coordonnées');
+            messages.error('Erreur lors de la rÃ©initialisation des coordonnÃ©es');
         }
     };
 
     const sendToGeocaching = async () => {
         if (!isCorrected) {
-            messages.warn('Aucune coordonnée corrigée à envoyer. Corrigez d\'abord les coordonnées.');
+            messages.warn('Aucune coordonnÃ©e corrigÃ©e Ã  envoyer. Corrigez d\'abord les coordonnÃ©es.');
             return;
         }
         setIsSendingToGC(true);
@@ -1003,16 +1007,16 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             const json = await res.json();
             if (!res.ok) {
                 if (res.status === 401) {
-                    messages.error('Non connecté à Geocaching.com — configurez l\'authentification dans GeoApp');
+                    messages.error('Non connectÃ© Ã  Geocaching.com â€” configurez l\'authentification dans GeoApp');
                 } else {
-                    messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
+                    messages.error(`Ã‰chec de l'envoi : ${json.error || res.statusText}`);
                 }
                 return;
             }
-            messages.info(`✅ Coordonnées envoyées vers Geocaching.com (${gcCode || geocacheId})`);
+            messages.info(`âœ… CoordonnÃ©es envoyÃ©es vers Geocaching.com (${gcCode || geocacheId})`);
         } catch (e) {
             console.error('sendToGeocaching error', e);
-            messages.error('Erreur réseau lors de l\'envoi vers Geocaching.com');
+            messages.error('Erreur rÃ©seau lors de l\'envoi vers Geocaching.com');
         } finally {
             setIsSendingToGC(false);
         }
@@ -1029,26 +1033,26 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
             setSolvedStatus(newStatus);
-            messages.info('Statut mis à jour');
+            messages.info('Statut mis Ã  jour');
         } catch (e) {
             console.error('Update solved status error', e);
-            messages.error('Erreur lors de la mise à jour du statut');
+            messages.error('Erreur lors de la mise Ã  jour du statut');
         }
     };
 
     return (
         <div style={{ display: 'grid', gap: 12 }}>
-            {/* Affichage des coordonnées */}
+            {/* Affichage des coordonnÃ©es */}
             {!isEditing && (
                 <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <strong>Coordonnées {isCorrected && '(corrigées)'}</strong>
+                        <strong>CoordonnÃ©es {isCorrected && '(corrigÃ©es)'}</strong>
                         <div style={{ display: 'flex', gap: 6 }}>
                             {isCorrected && (
                                 <button
                                     onClick={sendToGeocaching}
                                     disabled={isSendingToGC}
-                                    title='Envoyer les coordonnées corrigées vers Geocaching.com'
+                                    title='Envoyer les coordonnÃ©es corrigÃ©es vers Geocaching.com'
                                     style={{
                                         padding: '4px 10px',
                                         backgroundColor: 'var(--theia-button-secondaryBackground)',
@@ -1060,7 +1064,7 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                                         opacity: isSendingToGC ? 0.6 : 1
                                     }}
                                 >
-                                    {isSendingToGC ? '⏳ Envoi…' : '📡 Envoyer vers GC.com'}
+                                    {isSendingToGC ? 'â³ Envoiâ€¦' : 'ðŸ“¡ Envoyer vers GC.com'}
                                 </button>
                             )}
                             <button
@@ -1074,7 +1078,7 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                                     cursor: 'pointer'
                                 }}
                             >
-                                {isCorrected ? 'Modifier' : 'Corriger les coordonnées'}
+                                {isCorrected ? 'Modifier' : 'Corriger les coordonnÃ©es'}
                             </button>
                         </div>
                     </div>
@@ -1085,13 +1089,13 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                         fontFamily: 'monospace',
                         fontSize: 14
                     }}>
-                        {displayCoords || 'Aucune coordonnée'}
+                        {displayCoords || 'Aucune coordonnÃ©e'}
                     </div>
                     
-                    {/* Coordonnées originales si différentes */}
+                    {/* CoordonnÃ©es originales si diffÃ©rentes */}
                     {isCorrected && originalCoords && originalCoords !== displayCoords && (
                         <div style={{ marginTop: 8 }}>
-                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Coordonnées originales</div>
+                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>CoordonnÃ©es originales</div>
                             <div style={{ 
                                 padding: 8, 
                                 backgroundColor: 'var(--theia-editor-background)', 
@@ -1107,17 +1111,17 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                 </div>
             )}
 
-            {/* Formulaire d'édition */}
+            {/* Formulaire d'Ã©dition */}
             {isEditing && (
                 <div>
                     <div style={{ marginBottom: 8 }}>
-                        <strong>Modifier les coordonnées</strong>
+                        <strong>Modifier les coordonnÃ©es</strong>
                     </div>
                     <input
                         type="text"
                         value={editedCoords}
                         onChange={(e) => setEditedCoords(e.target.value)}
-                        placeholder="N 48° 51.402 E 002° 21.048"
+                        placeholder="N 48Â° 51.402 E 002Â° 21.048"
                         style={{
                             width: '100%',
                             padding: 8,
@@ -1130,10 +1134,10 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                         }}
                     />
                     
-                    {/* Coordonnées originales en référence */}
+                    {/* CoordonnÃ©es originales en rÃ©fÃ©rence */}
                     {originalCoords && (
                         <div style={{ marginTop: 8 }}>
-                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Coordonnées originales (référence)</div>
+                            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>CoordonnÃ©es originales (rÃ©fÃ©rence)</div>
                             <div style={{ 
                                 padding: 8, 
                                 backgroundColor: 'var(--theia-editor-background)', 
@@ -1187,17 +1191,17 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                                     marginLeft: 'auto'
                                 }}
                             >
-                                Revenir aux coordonnées originales
+                                Revenir aux coordonnÃ©es originales
                             </button>
                         )}
                     </div>
                 </div>
             )}
 
-            {/* Statut de résolution */}
+            {/* Statut de rÃ©solution */}
             <div>
                 <div style={{ marginBottom: 8 }}>
-                    <strong>Statut de résolution</strong>
+                    <strong>Statut de rÃ©solution</strong>
                 </div>
                 <select
                     value={solvedStatus}
@@ -1211,9 +1215,9 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
                         borderRadius: 4
                     }}
                 >
-                    <option value="not_solved">Non résolu</option>
+                    <option value="not_solved">Non rÃ©solu</option>
                     <option value="in_progress">En cours</option>
-                    <option value="solved">Résolu</option>
+                    <option value="solved">RÃ©solu</option>
                 </select>
             </div>
         </div>
@@ -1236,7 +1240,7 @@ type GeocacheDto = {
     is_corrected?: boolean;
     original_latitude?: number;
     original_longitude?: number;
-    original_coordinates_raw?: string;  // Coordonnées originales au format Geocaching
+    original_coordinates_raw?: string;  // CoordonnÃ©es originales au format Geocaching
     placed_at?: string;
     status?: string;
     zone_id?: number;
@@ -1280,6 +1284,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected archiveStatus: 'synced' | 'needs_sync' | 'none' | 'loading' = 'none';
     protected archiveUpdatedAt: string | undefined = undefined;
     protected isSyncingArchive = false;
+    protected chatWorkflowPreview: GeoAppChatWorkflowKind = 'general';
+    protected chatProfilePreview: GeoAppChatProfile = 'fast';
+    protected isChatRoutingPreviewLoading = false;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -1300,39 +1307,25 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.emitInteraction('scroll');
     };
 
-    // Map pour stocker les métadonnées GeoApp des sessions de chat
-    protected static geocacheChatSessions = new Map<string, GeocacheChatMetadata>();
-
+    // Map pour stocker les mÃ©tadonnÃ©es GeoApp des sessions de chat
     constructor(
         @inject(MessageService) protected readonly messages: MessageService,
         @inject(ApplicationShell) protected readonly shell: ApplicationShell,
         @inject(PluginExecutorContribution) protected readonly pluginExecutorContribution: PluginExecutorContribution,
         @inject(CommandService) protected readonly commandService: CommandService,
-        @inject(ChatService) protected readonly chatService: ChatService,
-        @inject(ChatAgentService) protected readonly chatAgentService: ChatAgentService,
         @inject(PreferenceService) protected readonly preferenceService: PreferenceService,
         @inject(LanguageModelRegistry) protected readonly languageModelRegistry: LanguageModelRegistry,
         @inject(LanguageModelService) protected readonly languageModelService: LanguageModelService
     ) {
         super();
         this.id = GeocacheDetailsWidget.ID;
-        this.title.label = 'Géocache';
-        this.title.caption = 'Détails Géocache';
+        this.title.label = 'GÃ©ocache';
+        this.title.caption = 'DÃ©tails GÃ©ocache';
         this.title.closable = true;
         this.title.iconClass = 'fa fa-map-marker';
         this.addClass('theia-geocache-details-widget');
 
         this.node.tabIndex = 0;
-    }
-
-    @postConstruct()
-    initialize(): void {
-        // Nettoyer les métadonnées des sessions supprimées
-        this.chatService.onSessionEvent(event => {
-            if (isSessionDeletedEvent(event)) {
-                GeocacheDetailsWidget.geocacheChatSessions.delete(event.sessionId);
-            }
-        });
     }
 
     protected onAfterAttach(msg: any): void {
@@ -1352,13 +1345,13 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
 
-        // Vérifier que l'événement concerne bien cette géocache (si info fournie)
+        // VÃ©rifier que l'Ã©vÃ©nement concerne bien cette gÃ©ocache (si info fournie)
         const eventGcCode = event.detail.geocache?.gcCode;
         if (eventGcCode && this.data?.gc_code && eventGcCode !== this.data.gc_code) {
             return;
         }
 
-        const title = event.detail.waypointTitle || (event.detail.pluginName ? `Résultat ${event.detail.pluginName}` : undefined);
+        const title = event.detail.waypointTitle || (event.detail.pluginName ? `RÃ©sultat ${event.detail.pluginName}` : undefined);
         const note = event.detail.waypointNote || event.detail.sourceResultText;
 
         if (event.detail.autoSave) {
@@ -1373,7 +1366,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             note
         });
         const source = event.detail.pluginName ? ` (plugin ${event.detail.pluginName})` : '';
-        this.messages.info(`Waypoint prérempli depuis le Plugin Executor${source}`);
+        this.messages.info(`Waypoint prÃ©rempli depuis le Plugin Executor${source}`);
     };
 
     private handleCoordinatesUpdatedEvent = (event: CustomEvent<{ geocacheId: number; gcCode: string }>): void => {
@@ -1381,12 +1374,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
 
-        // Vérifier que l'événement concerne bien cette géocache
+        // VÃ©rifier que l'Ã©vÃ©nement concerne bien cette gÃ©ocache
         if (event.detail.geocacheId !== this.data.id && event.detail.gcCode !== this.data.gc_code) {
             return;
         }
 
-        // Recharger les données de la géocache
+        // Recharger les donnÃ©es de la gÃ©ocache
         this.load().catch(error => {
             console.error('[GeocacheDetailsWidget] Error reloading after coordinates update:', error);
         });
@@ -1431,8 +1424,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Ouvre le formulaire d'ajout de waypoint avec des coordonnées pré-remplies
-     * Méthode publique appelable depuis d'autres widgets (ex: carte)
+     * Ouvre le formulaire d'ajout de waypoint avec des coordonnÃ©es prÃ©-remplies
+     * MÃ©thode publique appelable depuis d'autres widgets (ex: carte)
      */
     public addWaypointWithCoordinates(gcCoords: string, options?: { title?: string; note?: string; autoSave?: boolean }): void {
         if (options?.autoSave) {
@@ -1450,7 +1443,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 note: options?.note
             });
         } else {
-            this.messages.warn('Le formulaire de waypoint n\'est pas encore chargé');
+            this.messages.warn('Le formulaire de waypoint n\'est pas encore chargÃ©');
         }
     }
 
@@ -1498,18 +1491,18 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private async autoSaveWaypoint(gcCoords: string, title?: string, note?: string): Promise<void> {
         if (!this.geocacheId) {
-            this.messages.error('Aucune géocache chargée pour créer le waypoint');
+            this.messages.error('Aucune gÃ©ocache chargÃ©e pour crÃ©er le waypoint');
             return;
         }
         if (this.isSavingWaypoint) {
-            this.messages.warn('Création de waypoint déjà en cours');
+            this.messages.warn('CrÃ©ation de waypoint dÃ©jÃ  en cours');
             return;
         }
 
         this.isSavingWaypoint = true;
         try {
             const payload = {
-                name: title || 'Waypoint détecté',
+                name: title || 'Waypoint dÃ©tectÃ©',
                 gc_coords: gcCoords,
                 note: note || ''
             };
@@ -1528,10 +1521,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             }
 
             await this.load();
-            this.messages.info('Waypoint créé automatiquement depuis le plugin');
+            this.messages.info('Waypoint crÃ©Ã© automatiquement depuis le plugin');
         } catch (error) {
             console.error('[GeocacheDetailsWidget] autoSaveWaypoint failed', error);
-            this.messages.error('Impossible de créer automatiquement le waypoint');
+            this.messages.error('Impossible de crÃ©er automatiquement le waypoint');
         } finally {
             this.isSavingWaypoint = false;
         }
@@ -1539,11 +1532,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     /**
      * Supprime un waypoint depuis un autre widget (ex: carte)
-     * Méthode publique appelable depuis d'autres widgets
+     * MÃ©thode publique appelable depuis d'autres widgets
      */
     public async deleteWaypointById(waypointId: number): Promise<void> {
         if (!this.data?.waypoints) {
-            this.messages.error('Aucune donnée de géocache chargée');
+            this.messages.error('Aucune donnÃ©e de gÃ©ocache chargÃ©e');
             return;
         }
 
@@ -1557,12 +1550,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Définit un waypoint comme coordonnées corrigées depuis un autre widget (ex: carte)
-     * Méthode publique appelable depuis d'autres widgets
+     * DÃ©finit un waypoint comme coordonnÃ©es corrigÃ©es depuis un autre widget (ex: carte)
+     * MÃ©thode publique appelable depuis d'autres widgets
      */
     public async setWaypointAsCorrectedCoords(waypointId: number): Promise<void> {
         if (!this.data?.waypoints) {
-            this.messages.error('Aucune donnée de géocache chargée');
+            this.messages.error('Aucune donnÃ©e de gÃ©ocache chargÃ©e');
             return;
         }
 
@@ -1576,11 +1569,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Ouvre le Formula Solver avec la géocache actuelle
+     * Ouvre le Formula Solver avec la gÃ©ocache actuelle
      */
     protected solveFormula = async (): Promise<void> => {
         if (!this.data || !this.geocacheId) {
-            this.messages.warn('Aucune géocache chargée');
+            this.messages.warn('Aucune gÃ©ocache chargÃ©e');
             return;
         }
 
@@ -1596,7 +1589,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     };
 
     /**
-     * Ouvre le Plugin Executor avec le contexte de la géocache actuelle
+     * Ouvre le Plugin Executor avec le contexte de la gÃ©ocache actuelle
      */
     protected analyzeWithPlugins = (): void => {
         const context = this.buildPluginExecutorContext();
@@ -1611,7 +1604,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     };
 
     /**
-     * Ouvre le Plugin Executor spécifiquement pour l'analyse de page (analysis_web_page)
+     * Ouvre le Plugin Executor spÃ©cifiquement pour l'analyse de page (analysis_web_page)
      */
     protected analyzePage = (): void => {
         const context = this.buildPluginExecutorContext();
@@ -1619,7 +1612,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
 
-        // Ouvrir directement avec analysis_web_page et exécution automatique
+        // Ouvrir directement avec analysis_web_page et exÃ©cution automatique
         this.pluginExecutorContribution.openWithContext(context, 'analysis_web_page', true);
     };
 
@@ -1634,7 +1627,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private buildPluginExecutorContext(): GeocacheContext | undefined {
         if (!this.data) {
-            this.messages.warn('Aucune géocache chargée');
+            this.messages.warn('Aucune gÃ©ocache chargÃ©e');
             return undefined;
         }
 
@@ -1689,11 +1682,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.archiveStatus = 'none';
         this.archiveUpdatedAt = undefined;
         if (context.name) {
-            this.title.label = `Géocache - ${context.name}`;
+            this.title.label = `GÃ©ocache - ${context.name}`;
         } else if (this.data?.name) {
-            this.title.label = `Géocache - ${this.data.name}`;
+            this.title.label = `GÃ©ocache - ${this.data.name}`;
         } else {
-            this.title.label = `Géocache - ${this.geocacheId}`;
+            this.title.label = `GÃ©ocache - ${this.geocacheId}`;
         }
         this.setupMinOpenTimeTimer();
         this.update();
@@ -1701,8 +1694,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Appelé quand le widget devient actif
-     * Réactive automatiquement la carte correspondante
+     * AppelÃ© quand le widget devient actif
+     * RÃ©active automatiquement la carte correspondante
      */
     protected onActivateRequest(msg: any): void {
         super.onActivateRequest(msg);
@@ -1711,8 +1704,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Fournit le contenu structuré pour la recherche in-page (SearchableWidget duck-typing).
-     * Retourne les blocs de texte cherchables extraits des données de la géocache.
+     * Fournit le contenu structurÃ© pour la recherche in-page (SearchableWidget duck-typing).
+     * Retourne les blocs de texte cherchables extraits des donnÃ©es de la gÃ©ocache.
      */
     getSearchableContent(): { id: string; text: string; element?: HTMLElement }[] {
         const d = this.data;
@@ -1722,19 +1715,19 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
         const contents: { id: string; text: string; element?: HTMLElement }[] = [];
 
-        // En-tête : nom, code, type, owner
+        // En-tÃªte : nom, code, type, owner
         const headerParts = [d.name, d.gc_code, d.type, d.owner].filter(Boolean);
         if (headerParts.length > 0) {
             contents.push({ id: 'header', text: headerParts.join(' ') });
         }
 
-        // Coordonnées
+        // CoordonnÃ©es
         const coordParts = [d.coordinates_raw, d.original_coordinates_raw].filter(Boolean);
         if (coordParts.length > 0) {
             contents.push({ id: 'coordinates', text: coordParts.join(' ') });
         }
 
-        // Description (variante affichée)
+        // Description (variante affichÃ©e)
         const descHtml = this.getEffectiveDescriptionHtml(d, this.descriptionVariant);
         if (descHtml) {
             contents.push({ id: 'description', text: htmlToRawText(descHtml) });
@@ -1767,21 +1760,21 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Appelé quand le widget va être fermé
+     * AppelÃ© quand le widget va Ãªtre fermÃ©
      * Ferme automatiquement la carte correspondante
      */
     protected onCloseRequest(msg: any): void {
-        // Fermer la carte de géocache associée avant de fermer l'onglet
+        // Fermer la carte de gÃ©ocache associÃ©e avant de fermer l'onglet
         this.closeAssociatedMap();
 
-        // Appeler la méthode parente pour la fermeture normale
+        // Appeler la mÃ©thode parente pour la fermeture normale
         super.onCloseRequest(msg);
         this.removeEventListeners();
         this.removeInteractionListeners();
     }
 
     /**
-     * Ferme la carte associée à cette géocache
+     * Ferme la carte associÃ©e Ã  cette gÃ©ocache
      */
     private closeAssociatedMap(): void {
         if (this.geocacheId && this.data?.gc_code) {
@@ -1789,7 +1782,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
 
             if (existingMap) {
-                console.log('[GeocacheDetailsWidget] Fermeture de la carte géocache associée:', this.geocacheId);
+                console.log('[GeocacheDetailsWidget] Fermeture de la carte gÃ©ocache associÃ©e:', this.geocacheId);
                 existingMap.close();
             }
         }
@@ -1837,7 +1830,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     protected async translateDescriptionToFrench(): Promise<void> {
         if (!this.data || !this.geocacheId) {
-            this.messages.warn('Aucune géocache chargée');
+            this.messages.warn('Aucune gÃ©ocache chargÃ©e');
             return;
         }
 
@@ -1849,7 +1842,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (hasModified) {
             const dialog = new ConfirmDialog({
                 title: 'Traduire la description',
-                msg: 'Une description modifiée existe déjà. Voulez-vous la remplacer par la traduction ?'
+                msg: 'Une description modifiÃ©e existe dÃ©jÃ . Voulez-vous la remplacer par la traduction ?'
             });
             const ok = await dialog.open();
             if (!ok) {
@@ -1874,14 +1867,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             });
 
             if (!languageModel) {
-                this.messages.error('Aucun modèle IA n\'est configuré pour la traduction (vérifie la configuration IA de Theia)');
+                this.messages.error('Aucun modÃ¨le IA n\'est configurÃ© pour la traduction (vÃ©rifie la configuration IA de Theia)');
                 return;
             }
 
             const prompt =
-                'Tu es un traducteur. Traduis en français le contenu TEXTUEL du HTML fourni, en conservant le HTML.\n'
+                'Tu es un traducteur. Traduis en franÃ§ais le contenu TEXTUEL du HTML fourni, en conservant le HTML.\n'
                 + '- Ne change pas les balises, attributs, liens, images, classes, ids.\n'
-                + '- Ne traduis pas les coordonnées, codes GC, URLs, ni les identifiants techniques.\n'
+                + '- Ne traduis pas les coordonnÃ©es, codes GC, URLs, ni les identifiants techniques.\n'
                 + '- Ne renvoie que le HTML final, sans markdown, sans explications.';
 
             const request: UserRequest = {
@@ -1915,7 +1908,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 .trim();
 
             if (!translatedHtml) {
-                this.messages.warn('Traduction IA: réponse vide');
+                this.messages.warn('Traduction IA: rÃ©ponse vide');
                 return;
             }
 
@@ -1936,7 +1929,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
             this.descriptionVariant = 'modified';
             await this.load();
-            this.messages.info('Traduction enregistrée dans la description modifiée');
+            this.messages.info('Traduction enregistrÃ©e dans la description modifiÃ©e');
         } catch (e) {
             console.error('[GeocacheDetailsWidget] translateDescriptionToFrench error', e);
             this.messages.error(`Traduction IA: erreur (${String(e)})`);
@@ -1961,10 +1954,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             });
             if (!res.ok) {
                 // Ne pas notifier l'utilisateur en auto, seulement loguer
-                console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com échouée');
+                console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com Ã©chouÃ©e');
             }
         } catch (err) {
-            console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com échouée:', err);
+            console.error('[GeocacheDetailsWidget] Auto-sync note Geocaching.com Ã©chouÃ©e:', err);
         }
     }
 
@@ -1987,16 +1980,16 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Réactive la carte correspondante à cette géocache
+     * RÃ©active la carte correspondante Ã  cette gÃ©ocache
      */
     private reactivateMap(): void {
-        // Si on a une géocache chargée, réactiver sa carte
+        // Si on a une gÃ©ocache chargÃ©e, rÃ©activer sa carte
         if (this.geocacheId && this.data?.gc_code) {
             const mapId = `geoapp-map-geocache-${this.geocacheId}`;
             const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
             
             if (existingMap) {
-                console.log('[GeocacheDetailsWidget] Réactivation de la carte géocache:', this.geocacheId);
+                console.log('[GeocacheDetailsWidget] RÃ©activation de la carte gÃ©ocache:', this.geocacheId);
                 this.shell.activateWidget(mapId);
             }
         }
@@ -2026,7 +2019,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Rafraîchit la carte associée à cette géocache après modification des waypoints
+     * RafraÃ®chit la carte associÃ©e Ã  cette gÃ©ocache aprÃ¨s modification des waypoints
      */
     private async refreshAssociatedMap(): Promise<void> {
         if (!this.geocacheId || !this.data?.gc_code) {
@@ -2037,15 +2030,15 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         const existingMap = this.shell.getWidgets('bottom').find(w => w.id === mapId);
         
         if (existingMap && 'loadGeocaches' in existingMap) {
-            console.log('[GeocacheDetailsWidget] Rafraîchissement de la carte géocache:', this.geocacheId);
+            console.log('[GeocacheDetailsWidget] RafraÃ®chissement de la carte gÃ©ocache:', this.geocacheId);
             
-            // Recharger les données de la géocache pour avoir les waypoints à jour
+            // Recharger les donnÃ©es de la gÃ©ocache pour avoir les waypoints Ã  jour
             try {
                 const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}`, { credentials: 'include' });
                 if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
                 const updatedData = await res.json();
                 
-                // Mettre à jour la carte avec les nouvelles données
+                // Mettre Ã  jour la carte avec les nouvelles donnÃ©es
                 const mapGeocache = {
                     id: updatedData.id,
                     gc_code: updatedData.gc_code,
@@ -2065,10 +2058,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                     waypoints: updatedData.waypoints || []
                 };
                 
-                // Appeler loadGeocaches avec la géocache mise à jour
+                // Appeler loadGeocaches avec la gÃ©ocache mise Ã  jour
                 (existingMap as any).loadGeocaches([mapGeocache]);
             } catch (e) {
-                console.error('[GeocacheDetailsWidget] Erreur lors du rafraîchissement de la carte:', e);
+                console.error('[GeocacheDetailsWidget] Erreur lors du rafraÃ®chissement de la carte:', e);
             }
         }
     }
@@ -2085,17 +2078,18 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 this.descriptionVariant = this.getDefaultDescriptionVariant(this.data);
                 this.descriptionVariantGeocacheId = this.geocacheId;
             }
-            this.title.label = `Géocache - ${this.data?.name ?? this.data?.gc_code ?? this.geocacheId}`;
+            this.title.label = `GÃ©ocache - ${this.data?.name ?? this.data?.gc_code ?? this.geocacheId}`;
             
-            // Rafraîchir la carte associée avec les données à jour
+            // RafraÃ®chir la carte associÃ©e avec les donnÃ©es Ã  jour
             await this.refreshAssociatedMap();
             await this.loadNotesCount();
             void this.autoSyncGcPersonalNoteFromDetailsIfEnabled();
             void this.loadArchiveStatus();
+            void this.refreshChatRoutingPreview();
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error('GeocacheDetailsWidget: load error', e);
-            this.messages.error('Impossible de charger la géocache');
+            this.messages.error('Impossible de charger la gÃ©ocache');
         } finally {
             this.isLoading = false;
             this.update();
@@ -2143,7 +2137,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             if (json.synced && json.archive) {
                 this.archiveStatus = 'synced';
                 this.archiveUpdatedAt = json.archive.updated_at;
-                this.messages.info(`Archive ${gcCode} synchronisée`);
+                this.messages.info(`Archive ${gcCode} synchronisÃ©e`);
             } else {
                 this.archiveStatus = 'needs_sync';
             }
@@ -2157,7 +2151,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     };
 
     /**
-     * Supprime un waypoint après confirmation
+     * Supprime un waypoint aprÃ¨s confirmation
      */
     protected deleteWaypoint = async (waypointId: number, waypointName: string): Promise<void> => {
         if (!this.geocacheId || !this.data) { return; }
@@ -2179,18 +2173,18 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             });
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
-            // ✅ Mettre à jour uniquement la liste des waypoints sans recharger toute la page
+            // âœ… Mettre Ã  jour uniquement la liste des waypoints sans recharger toute la page
             if (this.data.waypoints) {
                 this.data.waypoints = this.data.waypoints.filter(w => w.id !== waypointId);
             }
             
-            // ✅ Rafraîchir la carte avec les waypoints mis à jour
+            // âœ… RafraÃ®chir la carte avec les waypoints mis Ã  jour
             await this.refreshAssociatedMap();
             
-            // ✅ Re-render le composant sans perdre la position de scroll
+            // âœ… Re-render le composant sans perdre la position de scroll
             this.update();
             
-            this.messages.info(`Waypoint "${waypointName}" supprimé`);
+            this.messages.info(`Waypoint "${waypointName}" supprimÃ©`);
         } catch (e) {
             console.error('Delete waypoint error', e);
             this.messages.error('Erreur lors de la suppression du waypoint');
@@ -2198,14 +2192,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     };
 
     /**
-     * Envoie les coordonnées d'un waypoint vers Geocaching.com (comme coordonnées corrigées)
+     * Envoie les coordonnÃ©es d'un waypoint vers Geocaching.com (comme coordonnÃ©es corrigÃ©es)
      */
     protected pushWaypointToGeocaching = async (waypointId: number, waypointName: string): Promise<void> => {
         if (!this.geocacheId || !this.data) { return; }
 
         const dialog = new ConfirmDialog({
             title: 'Envoyer vers Geocaching.com',
-            msg: `Envoyer les coordonnées de "${waypointName}" comme coordonnées corrigées vers Geocaching.com (${this.data.gc_code || ''}) ?`,
+            msg: `Envoyer les coordonnÃ©es de "${waypointName}" comme coordonnÃ©es corrigÃ©es vers Geocaching.com (${this.data.gc_code || ''}) ?`,
             ok: 'Envoyer',
             cancel: 'Annuler'
         });
@@ -2221,28 +2215,28 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             const json = await res.json();
             if (!res.ok) {
                 if (res.status === 401) {
-                    this.messages.error('Non connecté à Geocaching.com — configurez l\'authentification dans GeoApp');
+                    this.messages.error('Non connectÃ© Ã  Geocaching.com â€” configurez l\'authentification dans GeoApp');
                 } else {
-                    this.messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
+                    this.messages.error(`Ã‰chec de l'envoi : ${json.error || res.statusText}`);
                 }
                 return;
             }
-            this.messages.info(`✅ Coordonnées de "${waypointName}" envoyées vers Geocaching.com`);
+            this.messages.info(`âœ… CoordonnÃ©es de "${waypointName}" envoyÃ©es vers Geocaching.com`);
         } catch (e) {
             console.error('pushWaypointToGeocaching error', e);
-            this.messages.error('Erreur réseau lors de l\'envoi vers Geocaching.com');
+            this.messages.error('Erreur rÃ©seau lors de l\'envoi vers Geocaching.com');
         }
     };
 
     /**
-     * Définit les coordonnées d'un waypoint comme coordonnées corrigées de la géocache
+     * DÃ©finit les coordonnÃ©es d'un waypoint comme coordonnÃ©es corrigÃ©es de la gÃ©ocache
      */
     protected setAsCorrectedCoords = async (waypointId: number, waypointName: string): Promise<void> => {
         if (!this.geocacheId || !this.data) { return; }
         
         const dialog = new ConfirmDialog({
-            title: 'Définir comme coordonnées corrigées',
-            msg: `Voulez-vous définir les coordonnées du waypoint "${waypointName}" comme coordonnées corrigées de la géocache ?`,
+            title: 'DÃ©finir comme coordonnÃ©es corrigÃ©es',
+            msg: `Voulez-vous dÃ©finir les coordonnÃ©es du waypoint "${waypointName}" comme coordonnÃ©es corrigÃ©es de la gÃ©ocache ?`,
             ok: 'Confirmer',
             cancel: 'Annuler'
         });
@@ -2257,13 +2251,13 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             });
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
-            // Recharger les données pour afficher les nouvelles coordonnées corrigées
+            // Recharger les donnÃ©es pour afficher les nouvelles coordonnÃ©es corrigÃ©es
             await this.load();
             
-            this.messages.info(`Coordonnées corrigées mises à jour depuis "${waypointName}"`);
+            this.messages.info(`CoordonnÃ©es corrigÃ©es mises Ã  jour depuis "${waypointName}"`);
         } catch (e) {
             console.error('Set corrected coords error', e);
-            this.messages.error('Erreur lors de la mise à jour des coordonnées corrigées');
+            this.messages.error('Erreur lors de la mise Ã  jour des coordonnÃ©es corrigÃ©es');
         }
     };
 
@@ -2278,7 +2272,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     protected getAttributeIconUrlFromAttribute(attribute: GeocacheAttribute): string | undefined {
-        // base_filename contient déjà le suffixe -yes ou -no
+        // base_filename contient dÃ©jÃ  le suffixe -yes ou -no
         const iconFilename = attribute.base_filename || `${attribute.name.toLowerCase().replace(/\s+/g, '')}-${attribute.is_negative ? 'no' : 'yes'}`;
         const iconUrl = getAttributeIconUrl(iconFilename);
         
@@ -2290,7 +2284,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Affiche les étoiles de notation (difficulté ou terrain)
+     * Affiche les Ã©toiles de notation (difficultÃ© ou terrain)
      */
     protected renderStars(rating?: number, color: string = 'gold'): React.ReactNode {
         if (!rating) { return undefined; }
@@ -2300,9 +2294,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         
         return (
             <span style={{ color, fontSize: 16 }}>
-                {'★'.repeat(fullStars)}
-                {hasHalfStar && '◐'}
-                {emptyStars > 0 && <span style={{ opacity: 0.3 }}>{'☆'.repeat(emptyStars)}</span>}
+                {'â˜…'.repeat(fullStars)}
+                {hasHalfStar && 'â—'}
+                {emptyStars > 0 && <span style={{ opacity: 0.3 }}>{'â˜†'.repeat(emptyStars)}</span>}
             </span>
         );
     }
@@ -2316,7 +2310,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                     const tooltipText = `${a.is_negative ? 'No ' : ''}${a.name}`;
                     
                     if (!iconUrl) {
-                        // Fallback si l'image n'est pas trouvée
+                        // Fallback si l'image n'est pas trouvÃ©e
                         return (
                             <span key={idx} style={{
                                 border: '1px solid var(--theia-foreground)',
@@ -2351,109 +2345,36 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private openGeocacheAIChat = async (): Promise<void> => {
         if (!this.geocacheId || !this.data) {
-            this.messages.warn('Aucune géocache sélectionnée pour ouvrir le chat IA.');
+            this.messages.warn('Aucune geocache selectionnee pour ouvrir le chat IA.');
             return;
         }
-
-        const metadata: GeocacheChatMetadata = {
-            geocacheId: this.geocacheId,
-            geocacheCode: this.data.gc_code,
-            geocacheName: this.data.name,
-            lastUpdatedIso: new Date().toISOString()
-        };
-
         try {
-            const existingSession = this.findGeocacheChatSession(this.geocacheId);
-            if (existingSession) {
-                existingSession.pinnedAgent = await this.resolveDefaultChatAgent();
-                this.setSessionGeocacheMetadata(existingSession, metadata);
-                this.chatService.setActiveSession(existingSession.id, { focus: true });
-                this.messages.info('Chat IA rouvert pour cette géocache.');
-                return;
-            }
-
-            const pinnedAgent = await this.resolveDefaultChatAgent();
-            console.log('[GeocacheDetailsWidget] Opening chat session with pinned agent:', pinnedAgent?.id, pinnedAgent?.name);
-            const session = this.chatService.createSession(ChatAgentLocation.Panel, { focus: true }, pinnedAgent);
-            this.setSessionGeocacheMetadata(session, metadata);
-            session.title = `CHAT IA - ${this.data.gc_code ?? this.data.name}`;
-
-            const prompt = this.buildGeocachePrompt(this.data);
-            await this.chatService.sendRequest(session.id, { text: prompt });
-            this.messages.info('Chat IA lancé pour cette géocache.');
+            dispatchGeoAppOpenChatRequest(
+                window,
+                CustomEvent,
+                buildGeocacheGeoAppOpenChatDetail(
+                    this.data,
+                    this.chatWorkflowPreview,
+                    this.chatProfilePreview,
+                )
+            );
+            this.messages.info('Chat IA lance pour cette geocache.');
         } catch (error) {
             console.error('[GeocacheDetailsWidget] openGeocacheAIChat error', error);
-            this.messages.error('Impossible d\'ouvrir le chat IA pour cette géocache.');
+            this.messages.error('Impossible d\'ouvrir le chat IA pour cette geocache.');
         }
     };
 
-    private async resolveDefaultChatAgent(): Promise<ChatAgent | undefined> {
-        const available = this.chatAgentService.getAgents();
-        const candidates: ChatAgent[] = [];
-
-        const isClaudeCode = (agent: ChatAgent): boolean => {
-            const id = (agent.id || '').toLowerCase();
-            const name = (agent.name || '').toLowerCase();
-            return id === 'claudecode' || name === 'claudecode' || id.includes('claude') || name.includes('claude');
-        };
-
-        const configuredId = this.preferenceService.get(DEFAULT_CHAT_AGENT_PREF, undefined) as string | undefined;
-        const configured = configuredId ? this.chatAgentService.getAgent(configuredId) : undefined;
-        if (configured && !isClaudeCode(configured)) {
-            candidates.push(configured);
-        }
-
-        const geoApp = available.find(a => (a.id || '').toLowerCase() === 'geoapp' || (a.name || '').toLowerCase() === 'geoapp');
-        if (geoApp) {
-            candidates.push(geoApp);
-        }
-
-        const universal = available.find(a => (a.id || '').toLowerCase().includes('universal') || (a.name || '').toLowerCase().includes('universal'));
-        if (universal) {
-            candidates.push(universal);
-        }
-
-        for (const agent of available) {
-            if (!isClaudeCode(agent) && !candidates.includes(agent)) {
-                candidates.push(agent);
-            }
-        }
-
-        for (const agent of candidates) {
-            if (await this.isChatAgentReady(agent)) {
-                return agent;
-            }
-        }
-
-        return candidates[0] ?? available[0];
-    }
-
-    private async isChatAgentReady(agent: ChatAgent | undefined): Promise<boolean> {
-        if (!agent?.id) {
-            return false;
-        }
-        try {
-            const languageModel = await this.languageModelRegistry.selectLanguageModel({
-                agent: agent.id,
-                purpose: 'chat',
-                identifier: 'default/universal'
-            });
-            return !!languageModel;
-        } catch {
-            return false;
-        }
-    }
-
     /**
-     * Ouvre le widget des logs pour cette géocache dans le panneau droit
+     * Ouvre le widget des logs pour cette gÃ©ocache dans le panneau droit
      */
     private openLogs = (): void => {
         if (!this.geocacheId || !this.data) {
-            this.messages.warn('Aucune géocache sélectionnée pour voir les logs.');
+            this.messages.warn('Aucune gÃ©ocache sÃ©lectionnÃ©e pour voir les logs.');
             return;
         }
 
-        // Émettre un événement pour ouvrir le widget des logs
+        // Ã‰mettre un Ã©vÃ©nement pour ouvrir le widget des logs
         const event = new CustomEvent('open-geocache-logs', {
             detail: {
                 geocacheId: this.geocacheId,
@@ -2466,25 +2387,25 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     private openLogEditor = (): void => {
         if (!this.geocacheId || !this.data) {
-            this.messages.warn('Aucune géocache sélectionnée pour loguer.');
+            this.messages.warn('Aucune gÃ©ocache sÃ©lectionnÃ©e pour loguer.');
             return;
         }
 
         const event = new CustomEvent('open-geocache-log-editor', {
             detail: {
                 geocacheIds: [this.geocacheId],
-                title: this.data.gc_code ? `Log - ${this.data.gc_code}` : 'Log - 1 géocache',
+                title: this.data.gc_code ? `Log - ${this.data.gc_code}` : 'Log - 1 gÃ©ocache',
             }
         });
         window.dispatchEvent(event);
     };
 
     /**
-     * Ouvre le widget des notes pour cette géocache dans le panneau droit
+     * Ouvre le widget des notes pour cette gÃ©ocache dans le panneau droit
      */
     private openNotes = (): void => {
         if (!this.geocacheId || !this.data) {
-            this.messages.warn('Aucune géocache sélectionnée pour voir les notes.');
+            this.messages.warn('Aucune gÃ©ocache sÃ©lectionnÃ©e pour voir les notes.');
             return;
         }
 
@@ -2497,197 +2418,6 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         });
         window.dispatchEvent(event);
     };
-
-    private findGeocacheChatSession(geocacheId: number): ChatSession | undefined {
-        return this.chatService.getSessions()
-            .find(session => GeocacheDetailsWidget.geocacheChatSessions.get(session.id)?.geocacheId === geocacheId);
-    }
-
-    private setSessionGeocacheMetadata(session: ChatSession, metadata: GeocacheChatMetadata): void {
-        GeocacheDetailsWidget.geocacheChatSessions.set(session.id, metadata);
-    }
-
-    private buildGeocachePrompt(data: GeocacheDto): string {
-        const gcCode = (data.gc_code ?? '').trim();
-        const certitudeCheckerUrl = data.checkers?.find(c => (c.url || '').toLowerCase().includes('certitudes.org'))?.url;
-        const certitudeUrl = certitudeCheckerUrl;
-        const geocachingCheckerUrl = data.checkers?.find(c => (c.name || '').toLowerCase().includes('geocaching'))?.url;
-
-        const lines: string[] = [
-            `Nom : ${data.name}`,
-            `ID : ${data.id}`,
-            `Code : ${data.gc_code ?? 'Inconnu'} • Type : ${data.type ?? 'Inconnu'} • Taille : ${data.size ?? 'N/A'}`,
-            `Difficulté / Terrain : ${data.difficulty ?? '?'} / ${data.terrain ?? '?'}`,
-            `Propriétaire : ${data.owner ?? 'Inconnu'} • Statut : ${data.status ?? 'Inconnu'}`,
-            `Coordonnées affichées : ${data.coordinates_raw ?? data.original_coordinates_raw ?? 'Non renseignées'}`,
-            data.original_coordinates_raw && data.coordinates_raw && data.original_coordinates_raw !== data.coordinates_raw
-                ? `Coordonnées originales : ${data.original_coordinates_raw}`
-                : undefined,
-            data.placed_at ? `Placée le : ${data.placed_at}` : undefined,
-            `Favoris : ${data.favorites_count ?? 0} • Logs : ${data.logs_count ?? 0}`,
-            data.waypoints?.length ? `Waypoints (${data.waypoints.length}) : ${this.buildWaypointsSummary(data.waypoints)}` : undefined,
-            data.checkers?.length
-                ? `Checkers : ${data.checkers
-                    .map(c => (c.url ? `${c.name || 'Checker'}: ${c.url}` : (c.name || 'Checker')))
-                    .join(' • ')}`
-                : undefined
-        ].filter((value): value is string => Boolean(value));
-
-        const descriptionSnippet = this.sanitizeRichText(data.description_html, 1500);
-        if (descriptionSnippet) {
-            lines.push('', 'Description (extrait) :', descriptionSnippet);
-        }
-
-        const decodedHints = this.getDecodedHints(data);
-        if (decodedHints) {
-            lines.push('', 'Indices (extrait) :', this.truncate(decodedHints.trim(), 600));
-        }
-
-        if (data.waypoints?.length) {
-            lines.push('', 'Waypoints (détails) :', ...this.buildWaypointsDetails(data.waypoints));
-        }
-
-        return [
-            "Tu es un assistant IA spécialisé dans la résolution d'énigmes de géocaching.",
-            'Rappels stricts :',
-            '1. Ne propose jamais de coordonnées inventées.',
-            "2. Limite ta réponse à 3 pistes ou plans d'action structurés maximum.",
-            '3. Cite les outils, calculs ou vérifications nécessaires.',
-            '4. Demande des précisions avant de conclure si les données sont insuffisantes.',
-            '5. Ne JAMAIS inventer une URL de checker. Utilise uniquement celles fournies dans "Checkers".',
-            '',
-            ...(certitudeUrl
-                ? [
-                    'Certitude (checker) :',
-                    certitudeUrl,
-                    ...(gcCode
-                        ? [
-                            `Pour Certitude, si tu appelles run_checker et que l'URL n'a pas de ?wp=..., passe aussi wp="${gcCode}".`,
-                            `Pour une éventuelle session Certitude: ensure_checker_session(provider="certitudes", wp="${gcCode}").`,
-                        ]
-                        : []),
-                    ''
-                ]
-                : []),
-            'Tools disponibles (GeoApp) :',
-            '~geoapp.checkers.run',
-            '~geoapp.checkers.session.ensure',
-            '~geoapp.checkers.session.login',
-            '~geoapp.checkers.session.reset',
-            '~geoapp.plugins.listing.classify',
-            '~geoapp.plugins.metasolver.recommend',
-            '~plugin.metasolver',
-            '~formula-solver.detect-formula',
-            '~formula-solver.find-questions',
-            '~formula-solver.search-answer',
-            '~formula-solver.calculate-value',
-            '~formula-solver.calculate-coordinates',
-            '',
-            'Classification initiale du listing :',
-            '- Commence par classifier le listing avec classify_geocache_listing(geocache_id) pour identifier les familles probables : secret_code, hidden_content, formula, word_game, image_puzzle, coord_transform, checker_available.',
-            '- Utilise les labels, les hidden_signals et les candidate_secret_fragments pour choisir ensuite le bon workflow.',
-            '',
-            'Formules / coordonnées :',
-            '- Si la classification signale formula, commence par detect_formula(text, geocache_id?) pour extraire les formules et leurs variables.',
-            '- Ensuite utilise find_questions_for_variables(text, variables) pour rattacher les questions aux lettres.',
-            '- Si certaines réponses sont factuelles, utilise search_answer_online(question, context) avant de convertir avec calculate_variable_value(answer, type).',
-            '- Quand les valeurs sont connues, utilise calculate_final_coordinates(north_formula, east_formula, values).',
-            '- Si formula est dominant, ne lance pas metasolver en premier sauf si un candidate_secret_fragment très fort est aussi présent.',
-            '',
-            'Codes secrets / metasolver :',
-            '- Si la classification signale secret_code, prends de preference le meilleur candidate_secret_fragment puis appelle d’abord recommend_metasolver_plugins(text, preset?) pour obtenir une signature d’entrée et une plugin_list recommandée.',
-            '- Ensuite appelle metasolver en mode tool-driven avec le texte extrait. Utilise de préférence plugin_list recommandée pour limiter le bruit.',
-            "- Si tu veux tester tout un preset sans filtrage explicite, appelle metasolver avec preset seulement et sans plugin_list.",
-            '',
-            'Vérification (checkers) :',
-            '- Pour valider une réponse, appelle run_checker en mode tool-driven avec geocache_id (recommandé) : run_checker(geocache_id, candidate). Le tool résout automatiquement le bon checker, l\'URL et wp.',
-            "- Si un checker est fourni (ex: Certitude) et que tu proposes une réponse textuelle, valide-la en appelant le tool run_checker(url, candidate) AVANT de conclure.",
-            "- Si le checker nécessite une session (ex: Geocaching.com), appelle d'abord ensure_checker_session(provider=\"geocaching\"). Si logged_in=false, propose login_checker_session(provider=\"geocaching\") puis réessaie.",
-            ...(geocachingCheckerUrl && geocachingCheckerUrl.toLowerCase().includes('#solution-checker') && gcCode
-                ? [
-                    `Note: le checker Geocaching peut être stocké comme ancre (${geocachingCheckerUrl}). Dans ce cas, lors de l'appel à run_checker, passe aussi wp=\"${gcCode}\" pour que l'app reconstruise l'URL Geocaching correcte.`,
-                    ''
-                ]
-                : []),
-            '',
-            '--- CONTEXTE GÉOCACHE ---',
-            ...lines,
-            '',
-            '--- OBJECTIF ---',
-            "Analyse l'énigme, propose un plan d'action clair (max 3 pistes) et précise comment vérifier chaque hypothèse avant d'estimer la position finale."
-        ].join('\n');
-    }
-
-    private buildWaypointsDetails(waypoints: GeocacheWaypoint[]): string[] {
-        return waypoints.map(w => {
-            const labelParts: string[] = [];
-            if (w.prefix) {
-                labelParts.push(w.prefix);
-            }
-            if (w.lookup) {
-                labelParts.push(w.lookup);
-            }
-
-            const label = labelParts.join(' / ');
-            const name = (w.name || '').trim();
-            const title = [label || undefined, name || undefined].filter(Boolean).join(' • ') || 'Waypoint';
-            const type = (w.type || '').trim();
-
-            let coords = (w.gc_coords || '').trim();
-            if (!coords && w.latitude !== undefined && w.longitude !== undefined) {
-                const gcFormat = toGCFormat(w.latitude, w.longitude);
-                coords = `${gcFormat.gcLat}, ${gcFormat.gcLon}`;
-            }
-
-            const decimalCoords = (w.latitude !== undefined && w.longitude !== undefined)
-                ? `${w.latitude.toFixed(5)}, ${w.longitude.toFixed(5)}`
-                : undefined;
-
-            const note = (w.note || '').trim();
-            const notePreview = note ? this.truncate(note.replace(/\s+/g, ' '), 220) : undefined;
-
-            const parts: string[] = [
-                `- ${title}${type ? ` (${type})` : ''}`,
-                ...(coords ? [`  Coordonnées : ${coords}`] : []),
-                ...(decimalCoords ? [`  Décimal : ${decimalCoords}`] : []),
-                ...(notePreview ? [`  Note : ${notePreview}`] : []),
-            ];
-
-            return parts.join('\n');
-        });
-    }
-
-    private buildWaypointsSummary(waypoints: GeocacheWaypoint[]): string {
-        const preview = waypoints
-            .slice(0, 3)
-            .map(w => {
-                const label = w.name || w.prefix || 'WP';
-                const coords = w.gc_coords || (w.latitude !== undefined && w.longitude !== undefined
-                    ? `${w.latitude.toFixed(5)}, ${w.longitude.toFixed(5)}`
-                    : undefined);
-                return coords ? `${label} (${coords})` : label;
-            })
-            .join(' • ');
-        const remaining = waypoints.length > 3 ? ` … (+${waypoints.length - 3})` : '';
-        return `${preview}${remaining}`;
-    }
-
-    private sanitizeRichText(value?: string, maxLength = 1500): string {
-        if (!value) {
-            return '';
-        }
-        const text = this.stripHtml(value).replace(/\s+/g, ' ').trim();
-        return this.truncate(text, maxLength);
-    }
-
-    private stripHtml(value: string): string {
-        if (typeof document !== 'undefined') {
-            const temp = document.createElement('div');
-            temp.innerHTML = value;
-            return (temp.textContent || temp.innerText || '').trim();
-        }
-        return value.replace(/<[^>]+>/g, ' ').trim();
-    }
 
     private getDecodedHints(data: GeocacheDto): string | undefined {
         if (data.hints_decoded_override) {
@@ -2704,7 +2434,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
     protected async translateAllToFrench(): Promise<void> {
         if (!this.data || !this.geocacheId) {
-            this.messages.warn('Aucune géocache chargée');
+            this.messages.warn('Aucune gÃ©ocache chargÃ©e');
             return;
         }
 
@@ -2721,7 +2451,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (hasAnyOverride) {
             const dialog = new ConfirmDialog({
                 title: 'Traduire tout le contenu',
-                msg: 'Des valeurs modifiées existent déjà (description, indices, ou notes de waypoints). Voulez-vous les remplacer par la traduction ?'
+                msg: 'Des valeurs modifiÃ©es existent dÃ©jÃ  (description, indices, ou notes de waypoints). Voulez-vous les remplacer par la traduction ?'
             });
             const ok = await dialog.open();
             if (!ok) {
@@ -2746,7 +2476,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                 identifier: 'default/universal'
             });
             if (!languageModel) {
-                this.messages.error('Aucun modèle IA n\'est configuré pour la traduction (vérifie la configuration IA de Theia)');
+                this.messages.error('Aucun modÃ¨le IA n\'est configurÃ© pour la traduction (vÃ©rifie la configuration IA de Theia)');
                 return;
             }
 
@@ -2757,12 +2487,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             };
 
             const prompt =
-                'Traduis en français le contenu suivant et renvoie UNIQUEMENT un JSON valide.\n'
+                'Traduis en franÃ§ais le contenu suivant et renvoie UNIQUEMENT un JSON valide.\n'
                 + 'Contraintes :\n'
                 + '- description_html : conserve strictement le HTML (balises/attributs/liens/images), ne traduis que le texte.\n'
-                + '- Ne traduis pas les coordonnées, codes GC, URLs, ni les identifiants techniques.\n'
+                + '- Ne traduis pas les coordonnÃ©es, codes GC, URLs, ni les identifiants techniques.\n'
                 + '- waypoints : conserve les ids, traduis uniquement la note.\n'
-                + 'Schéma JSON de sortie : {"description_html": string, "hints_decoded": string, "waypoints": [{"id": number, "note": string}] }\n';
+                + 'SchÃ©ma JSON de sortie : {"description_html": string, "hints_decoded": string, "waypoints": [{"id": number, "note": string}] }\n';
 
             const request: UserRequest = {
                 messages: [
@@ -2807,7 +2537,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
 
             this.descriptionVariant = 'modified';
             await this.load();
-            this.messages.info('Traduction enregistrée (description + indices + waypoints)');
+            this.messages.info('Traduction enregistrÃ©e (description + indices + waypoints)');
         } catch (e) {
             console.error('[GeocacheDetailsWidget] translateAllToFrench error', e);
             this.messages.error(`Traduction IA: erreur (${String(e)})`);
@@ -2823,17 +2553,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         this.update();
     };
 
-    private truncate(value: string, maxLength: number): string {
-        if (value.length <= maxLength) {
-            return value;
-        }
-        return `${value.substring(0, maxLength).trim()}…`;
-    }
-
     private async confirmStoreAllImages(options: { geocacheId: number; pendingCount: number }): Promise<boolean> {
         const dialog = new ConfirmDialog({
             title: 'Stockage local des images',
-            msg: `Stocker localement ${options.pendingCount} image(s) pour cette géocache ?`,
+            msg: `Stocker localement ${options.pendingCount} image(s) pour cette gÃ©ocache ?`,
         });
         const confirmed = await dialog.open();
         return Boolean(confirmed);
@@ -2926,6 +2649,57 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return 'new-tab';
     }
 
+    private resolveChatProfileForWorkflow(workflowKind: GeoAppChatWorkflowKind): GeoAppChatProfile {
+        return resolveGeoAppChatProfileForWorkflow(workflowKind, undefined, {
+            'geoApp.chat.defaultProfile': this.preferenceService.get('geoApp.chat.defaultProfile', 'fast'),
+            'geoApp.chat.workflowProfile.secretCode': this.preferenceService.get('geoApp.chat.workflowProfile.secretCode', 'default'),
+            'geoApp.chat.workflowProfile.formula': this.preferenceService.get('geoApp.chat.workflowProfile.formula', 'default'),
+            'geoApp.chat.workflowProfile.checker': this.preferenceService.get('geoApp.chat.workflowProfile.checker', 'default'),
+            'geoApp.chat.workflowProfile.hiddenContent': this.preferenceService.get('geoApp.chat.workflowProfile.hiddenContent', 'default'),
+            'geoApp.chat.workflowProfile.imagePuzzle': this.preferenceService.get('geoApp.chat.workflowProfile.imagePuzzle', 'default'),
+        });
+    }
+
+    private resolveWorkflowKindFromOrchestrator(preview?: GeoAppWorkflowResolutionPreview): GeoAppChatWorkflowKind {
+        return resolveGeoAppChatWorkflowKindFromOrchestrator(preview);
+    }
+
+    private async refreshChatRoutingPreview(): Promise<void> {
+        if (!this.geocacheId || !this.data) {
+            this.chatWorkflowPreview = 'general';
+            this.chatProfilePreview = this.resolveChatProfileForWorkflow('general');
+            this.isChatRoutingPreviewLoading = false;
+            this.update();
+            return;
+        }
+
+        this.isChatRoutingPreviewLoading = true;
+        this.update();
+        try {
+            const response = await fetch(`${this.backendBaseUrl}/api/plugins/workflow/resolve`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ geocache_id: this.geocacheId })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const preview = await response.json() as GeoAppWorkflowResolutionPreview;
+            this.chatWorkflowPreview = this.resolveWorkflowKindFromOrchestrator(preview);
+            this.chatProfilePreview = this.resolveChatProfileForWorkflow(this.chatWorkflowPreview);
+        } catch (error) {
+            console.warn('[GeocacheDetailsWidget] refreshChatRoutingPreview error', error);
+            this.chatWorkflowPreview = 'general';
+            this.chatProfilePreview = this.resolveChatProfileForWorkflow('general');
+        } finally {
+            this.isChatRoutingPreviewLoading = false;
+            this.update();
+        }
+    }
+
     protected renderCheckers(checkers?: GeocacheChecker[]): React.ReactNode {
         if (!checkers || checkers.length === 0) { return undefined; }
         return (
@@ -2950,11 +2724,11 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             : undefined;
         return (
             <div className='p-2'>
-                {this.isLoading && <div>Chargement…</div>}
-                {!this.isLoading && !d && <div style={{ opacity: 0.7 }}>Aucune donnée</div>}
+                {this.isLoading && <div>Chargementâ€¦</div>}
+                {!this.isLoading && !d && <div style={{ opacity: 0.7 }}>Aucune donnÃ©e</div>}
                 {!this.isLoading && d && (
                     <div style={{ display: 'grid', gap: 12 }}>
-                        {/* En-tête */}
+                        {/* En-tÃªte */}
                         <div style={{ marginBottom: 8 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                                 <h3 style={{ margin: 0 }}>{d.name}</h3>
@@ -2965,15 +2739,15 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                         style={{ fontSize: 12, padding: '4px 12px' }}
                                         title='Ouvrir le Formula Solver'
                                     >
-                                        🧮 Résoudre formule
+                                        ðŸ§® RÃ©soudre formule
                                     </button>
                                     <button
                                         className='theia-button secondary'
                                         onClick={this.analyzePage}
                                         style={{ fontSize: 12, padding: '4px 12px' }}
-                                        title='Lancer l analyse complète de la page'
+                                        title='Lancer l analyse complÃ¨te de la page'
                                     >
-                                        🔍 Analyse Page
+                                        ðŸ” Analyse Page
                                     </button>
                                     <button
                                         className='theia-button secondary'
@@ -2981,57 +2755,57 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                         style={{ fontSize: 12, padding: '4px 12px' }}
                                         title='Analyser le texte avec Metasolver'
                                     >
-                                        🧩 Analyse de Code
+                                        ðŸ§© Analyse de Code
                                     </button>
                                     <button
                                         className='theia-button secondary'
                                         onClick={this.analyzeWithPlugins}
                                         style={{ fontSize: 12, padding: '4px 12px' }}
-                                        title='Analyser cette géocache avec les plugins'
+                                        title='Analyser cette gÃ©ocache avec les plugins'
                                     >
-                                        🔌 Analyser avec plugins
+                                        ðŸ”Œ Analyser avec plugins
                                     </button>
                                     <button
                                         className='theia-button'
                                         onClick={this.openGeocacheAIChat}
                                         style={{ fontSize: 12, padding: '4px 12px' }}
-                                        title='Ouvrir un chat IA dédié à cette géocache'
+                                        title={`Ouvrir un chat IA dedie a cette geocache${this.isChatRoutingPreviewLoading ? ' (analyse du profil en cours)' : ` - profil ${this.chatProfilePreview}, workflow ${this.chatWorkflowPreview}`}`}
                                     >
-                                        🤖 Chat IA
+                                        {`Chat IA [${this.isChatRoutingPreviewLoading ? '...' : this.chatProfilePreview}]`}
                                     </button>
                                     <div style={{ display: 'flex', gap: 8 }}>
                                         <button
                                             className='theia-button secondary'
                                             onClick={this.openLogs}
                                             style={{ fontSize: 12, padding: '4px 12px' }}
-                                            title='Voir les logs de cette géocache'
+                                            title='Voir les logs de cette gÃ©ocache'
                                         >
-                                            💬 Logs
+                                            ðŸ’¬ Logs
                                         </button>
                                         <button
                                             className='theia-button secondary'
                                             onClick={this.openLogEditor}
                                             style={{ fontSize: 12, padding: '4px 12px' }}
-                                            title='Loguer cette géocache (éditeur)'
+                                            title='Loguer cette gÃ©ocache (Ã©diteur)'
                                         >
-                                            ✍️ Loguer
+                                            âœï¸ Loguer
                                         </button>
                                         <button
                                             className='theia-button secondary'
                                             onClick={this.openNotes}
                                             style={{ fontSize: 12, padding: '4px 12px' }}
-                                            title='Voir les notes de cette géocache'
+                                            title='Voir les notes de cette gÃ©ocache'
                                         >
-                                            📝 Notes{this.notesCount && this.notesCount > 0 ? ` (${this.notesCount})` : ''}
+                                            ðŸ“ Notes{this.notesCount && this.notesCount > 0 ? ` (${this.notesCount})` : ''}
                                         </button>
                                     </div>
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: 16, alignItems: 'center', fontSize: 14 }}>
                                 <span style={{ opacity: 0.7 }}>{d.gc_code}</span>
-                                <span style={{ opacity: 0.7 }}>•</span>
+                                <span style={{ opacity: 0.7 }}>â€¢</span>
                                 <span style={{ opacity: 0.7 }}>{d.type}</span>
-                                <span style={{ opacity: 0.7 }}>•</span>
+                                <span style={{ opacity: 0.7 }}>â€¢</span>
                                 <span style={{ opacity: 0.7 }}>Par {d.owner || 'Inconnu'}</span>
                                 {this.archiveStatus !== 'none' && (
                                     <button
@@ -3039,10 +2813,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                         disabled={this.archiveStatus === 'loading' || this.isSyncingArchive}
                                         title={
                                             this.archiveStatus === 'synced'
-                                                ? `Archive à jour${this.archiveUpdatedAt ? ` (${new Date(this.archiveUpdatedAt).toLocaleString()})` : ''} — Cliquer pour re-synchroniser`
+                                                ? `Archive Ã  jour${this.archiveUpdatedAt ? ` (${new Date(this.archiveUpdatedAt).toLocaleString()})` : ''} â€” Cliquer pour re-synchroniser`
                                                 : this.archiveStatus === 'loading'
-                                                ? 'Synchronisation en cours…'
-                                                : 'Archive non synchronisée — Cliquer pour synchroniser'
+                                                ? 'Synchronisation en coursâ€¦'
+                                                : 'Archive non synchronisÃ©e â€” Cliquer pour synchroniser'
                                         }
                                         style={{
                                             background: 'none',
@@ -3059,8 +2833,8 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             opacity: this.isSyncingArchive ? 0.6 : 1,
                                         }}
                                     >
-                                        <span>{this.archiveStatus === 'synced' ? '💾' : this.archiveStatus === 'loading' ? '⏳' : '⚠️'}</span>
-                                        <span>{this.archiveStatus === 'synced' ? 'Archive' : this.archiveStatus === 'loading' ? 'Sync…' : 'Non archivée'}</span>
+                                        <span>{this.archiveStatus === 'synced' ? 'ðŸ’¾' : this.archiveStatus === 'loading' ? 'â³' : 'âš ï¸'}</span>
+                                        <span>{this.archiveStatus === 'synced' ? 'Archive' : this.archiveStatus === 'loading' ? 'Syncâ€¦' : 'Non archivÃ©e'}</span>
                                     </button>
                                 )}
                             </div>
@@ -3078,7 +2852,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 <h4 style={{ margin: '0 0 16px 0', fontSize: 16 }}>Statistiques</h4>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                                     <div>
-                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>Difficulté</div>
+                                        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 4 }}>DifficultÃ©</div>
                                         <div>{this.renderStars(d.difficulty, '#fbbf24')}</div>
                                     </div>
                                     <div>
@@ -3104,14 +2878,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                 )}
                             </div>
 
-                            {/* Colonne droite : Coordonnées */}
+                            {/* Colonne droite : CoordonnÃ©es */}
                             <div style={{ 
                                 background: 'var(--theia-editor-background)', 
                                 border: '1px solid var(--theia-panel-border)',
                                 borderRadius: 6, 
                                 padding: 16 
                             }}>
-                                <h4 style={{ margin: '0 0 16px 0', fontSize: 16 }}>Coordonnées</h4>
+                                <h4 style={{ margin: '0 0 16px 0', fontSize: 16 }}>CoordonnÃ©es</h4>
                                 <CoordinatesEditor
                                     geocacheData={d}
                                     geocacheId={this.geocacheId!}
@@ -3123,25 +2897,25 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                             </div>
                         </div>
 
-                        {/* Informations supplémentaires (table) */}
+                        {/* Informations supplÃ©mentaires (table) */}
                         <details style={{ 
                             background: 'var(--theia-editor-background)', 
                             border: '1px solid var(--theia-panel-border)',
                             borderRadius: 6, 
                             padding: 16 
                         }}>
-                            <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: 8 }}>Informations détaillées</summary>
+                            <summary style={{ cursor: 'pointer', fontWeight: 'bold', marginBottom: 8 }}>Informations dÃ©taillÃ©es</summary>
                             <table className='theia-table' style={{ width: '100%', marginTop: 8 }}>
                                 <tbody>
                                     {this.renderRow('Code', d.gc_code)}
-                                    {this.renderRow('Propriétaire', d.owner)}
+                                    {this.renderRow('PropriÃ©taire', d.owner)}
                                     {this.renderRow('Type', d.type)}
                                     {this.renderRow('Taille', d.size)}
-                                    {this.renderRow('Difficulté', d.difficulty?.toString())}
+                                    {this.renderRow('DifficultÃ©', d.difficulty?.toString())}
                                     {this.renderRow('Terrain', d.terrain?.toString())}
                                     {this.renderRow('Favoris', d.favorites_count?.toString())}
                                     {this.renderRow('Logs', d.logs_count?.toString())}
-                                    {this.renderRow('Placée le', d.placed_at)}
+                                    {this.renderRow('PlacÃ©e le', d.placed_at)}
                                     {this.renderRow('Statut', d.status)}
                                     {this.renderRow('Lien', d.url ? <a href={d.url} target='_blank' rel='noreferrer'>{d.url}</a> : undefined)}
                                 </tbody>
@@ -3174,9 +2948,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                     <button
                                         className='theia-button'
                                         onClick={() => { void this.toggleHintsDisplayMode(); }}
-                                        title={displayDecodedHints ? 'Coder (ROT13)' : 'Décoder (ROT13)'}
+                                        title={displayDecodedHints ? 'Coder (ROT13)' : 'DÃ©coder (ROT13)'}
                                     >
-                                        {displayDecodedHints ? 'Coder' : 'Décoder'}
+                                        {displayDecodedHints ? 'Coder' : 'DÃ©coder'}
                                     </button>
                                 </div>
                                 <div style={{ whiteSpace: 'pre-wrap', opacity: 0.9 }}>{displayedHints}</div>
@@ -3231,5 +3005,6 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         );
     }
 }
+
 
 

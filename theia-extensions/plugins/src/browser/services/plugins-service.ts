@@ -20,7 +20,11 @@ import {
     MetasolverRecommendationRequest,
     MetasolverRecommendationResponse,
     ListingClassificationRequest,
-    ListingClassificationResponse
+    ListingClassificationResponse,
+    ResolutionWorkflowRequest,
+    ResolutionWorkflowResponse,
+    ResolutionWorkflowStepRunRequest,
+    ResolutionWorkflowStepRunResponse
 } from '../../common/plugin-protocol';
 
 @injectable()
@@ -186,6 +190,26 @@ export class PluginsServiceImpl implements IPluginsService {
         } catch (error) {
             console.error('Erreur lors de la classification du listing:', error);
             throw new Error(`Impossible de classifier le listing: ${this.getErrorMessage(error)}`);
+        }
+    }
+
+    async resolveWorkflow(request: ResolutionWorkflowRequest): Promise<ResolutionWorkflowResponse> {
+        try {
+            const response = await this.client.post('/api/plugins/workflow/resolve', request);
+            return response.data;
+        } catch (error) {
+            console.error('Erreur lors de la resolution du workflow:', error);
+            throw new Error(`Impossible de resoudre le workflow: ${this.getErrorMessage(error)}`);
+        }
+    }
+
+    async runWorkflowStep(request: ResolutionWorkflowStepRunRequest): Promise<ResolutionWorkflowStepRunResponse> {
+        try {
+            const response = await this.client.post('/api/plugins/workflow/run-next-step', request);
+            return response.data;
+        } catch (error) {
+            console.error('Erreur lors de l execution d une etape du workflow:', error);
+            throw new Error(`Impossible d executer l etape du workflow: ${this.getErrorMessage(error)}`);
         }
     }
     

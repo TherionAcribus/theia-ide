@@ -7,7 +7,7 @@
     "noEmitOnError": false
   },
   "include": ["src"],
-  "exclude": ["lib", "node_modules"]
+  "exclude": ["lib", "node_modules", "src/browser/tests"]
 }
 
 

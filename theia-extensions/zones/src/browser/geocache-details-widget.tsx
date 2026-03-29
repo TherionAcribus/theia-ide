@@ -15,6 +15,7 @@ import { GeocacheImagesPanel } from './geocache-images-panel';
 import { GeoAppTranslateDescriptionAgentId } from './geoapp-translate-description-agent';
 import {
     GeoAppChatProfile,
+    GeoAppChatWorkflowProfile,
     GeoAppChatWorkflowKind
 } from './geoapp-chat-agent';
 import {
@@ -64,6 +65,14 @@ type GeocacheWaypoint = {
     note_override_updated_at?: string;
 };
 type GeocacheChecker = { id?: number; name?: string; url?: string };
+
+const GEOAPP_CHAT_PROFILE_MENU_OPTIONS: Array<{ value: GeoAppChatWorkflowProfile; label: string }> = [
+    { value: 'default', label: 'Auto' },
+    { value: 'fast', label: 'Fast' },
+    { value: 'strong', label: 'Strong' },
+    { value: 'web', label: 'Web' },
+    { value: 'local', label: 'Local' },
+];
 
 interface SerializedGeocacheDetailsState {
     geocacheId?: number;
@@ -1286,7 +1295,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     protected isSyncingArchive = false;
     protected chatWorkflowPreview: GeoAppChatWorkflowKind = 'general';
     protected chatProfilePreview: GeoAppChatProfile = 'fast';
+    protected chatProfileOverride: GeoAppChatWorkflowProfile = 'default';
     protected isChatRoutingPreviewLoading = false;
+    protected isChatProfileMenuOpen = false;
 
     private readonly displayDecodedHintsPreferenceKey = 'geoApp.geocache.hints.displayDecoded';
     private readonly descriptionDefaultVariantPreferenceKey = 'geoApp.geocache.description.defaultVariant';
@@ -2349,13 +2360,14 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
         try {
+            this.isChatProfileMenuOpen = false;
             dispatchGeoAppOpenChatRequest(
                 window,
                 CustomEvent,
                 buildGeocacheGeoAppOpenChatDetail(
                     this.data,
                     this.chatWorkflowPreview,
-                    this.chatProfilePreview,
+                    this.chatProfileOverride === 'default' ? undefined : this.chatProfileOverride,
                 )
             );
             this.messages.info('Chat IA lance pour cette geocache.');
@@ -2664,6 +2676,30 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         return resolveGeoAppChatWorkflowKindFromOrchestrator(preview);
     }
 
+    private getEffectiveChatProfile(): GeoAppChatProfile {
+        return this.chatProfileOverride === 'default' ? this.chatProfilePreview : this.chatProfileOverride;
+    }
+
+    private getChatProfileOverrideLabel(): string {
+        if (this.chatProfileOverride === 'default') {
+            return `Auto (${this.chatProfilePreview})`;
+        }
+        return this.chatProfileOverride;
+    }
+
+    private toggleChatProfileMenu = (event: React.MouseEvent<HTMLButtonElement>): void => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.isChatProfileMenuOpen = !this.isChatProfileMenuOpen;
+        this.update();
+    };
+
+    private selectChatProfileOverride = (profile: GeoAppChatWorkflowProfile): void => {
+        this.chatProfileOverride = profile;
+        this.isChatProfileMenuOpen = false;
+        this.update();
+    };
+
     private async refreshChatRoutingPreview(): Promise<void> {
         if (!this.geocacheId || !this.data) {
             this.chatWorkflowPreview = 'general';
@@ -2765,15 +2801,67 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                     >
                                         &#x1F4BE; Analyser avec plugins
                                     </button>
-                                    <button
-                                        className='theia-button'
-                                        onClick={this.openGeocacheAIChat}
-                                        style={{ fontSize: 12, padding: '4px 12px' }}
-                                        title={`Ouvrir un chat IA dédié à cette géocache${this.isChatRoutingPreviewLoading ? ' (analyse du profil en cours)' : ` - profil ${this.chatProfilePreview}, workflow ${this.chatWorkflowPreview}`}`}
-                                        title={`Ouvrir un chat IA dedie a cette geocache${this.isChatRoutingPreviewLoading ? ' (analyse du profil en cours)' : ` - profil ${this.chatProfilePreview}, workflow ${this.chatWorkflowPreview}`}`}
-                                    >
-                                        {`Chat IA [${this.isChatRoutingPreviewLoading ? '...' : this.chatProfilePreview}]`}
-                                    </button>
+                                    <div style={{ position: 'relative', display: 'flex', alignItems: 'stretch' }}>
+                                        <button
+                                            className='theia-button'
+                                            onClick={this.openGeocacheAIChat}
+                                            style={{ fontSize: 12, padding: '4px 12px', borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+                                            title={`Ouvrir un chat IA dedie a cette geocache${this.isChatRoutingPreviewLoading ? ' (analyse du profil en cours)' : ` - profil effectif ${this.getEffectiveChatProfile()}, workflow ${this.chatWorkflowPreview}, selection ${this.getChatProfileOverrideLabel()}`}`}
+                                        >
+                                            {`Chat IA [${this.isChatRoutingPreviewLoading ? '...' : this.getEffectiveChatProfile()}]`}
+                                        </button>
+                                        <button
+                                            className='theia-button secondary'
+                                            onClick={this.toggleChatProfileMenu}
+                                            style={{ fontSize: 12, padding: '4px 8px', borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                                            title={`Choisir le profil de chat IA (actuel: ${this.getChatProfileOverrideLabel()})`}
+                                        >
+                                            ▼
+                                        </button>
+                                        {this.isChatProfileMenuOpen && (
+                                            <div
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: '100%',
+                                                    right: 0,
+                                                    marginTop: 4,
+                                                    minWidth: 150,
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    background: 'var(--theia-editorWidget-background)',
+                                                    border: '1px solid var(--theia-panel-border)',
+                                                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
+                                                    zIndex: 20,
+                                                }}
+                                            >
+                                                {GEOAPP_CHAT_PROFILE_MENU_OPTIONS.map(option => {
+                                                    const isSelected = this.chatProfileOverride === option.value;
+                                                    const autoSuffix = option.value === 'default' ? ` -> ${this.chatProfilePreview}` : '';
+                                                    return (
+                                                        <button
+                                                            key={option.value}
+                                                            className='theia-button secondary'
+                                                            onClick={() => this.selectChatProfileOverride(option.value)}
+                                                            style={{
+                                                                fontSize: 12,
+                                                                padding: '6px 10px',
+                                                                textAlign: 'left',
+                                                                border: 0,
+                                                                borderRadius: 0,
+                                                                background: isSelected ? 'var(--theia-list-activeSelectionBackground)' : 'transparent',
+                                                                color: isSelected ? 'var(--theia-list-activeSelectionForeground)' : 'inherit',
+                                                            }}
+                                                            title={option.value === 'default'
+                                                                ? `Utiliser le profil determine automatiquement par le workflow (${this.chatProfilePreview})`
+                                                                : `Forcer le profil ${option.label}`}
+                                                        >
+                                                            {`${isSelected ? '• ' : ''}${option.label}${autoSuffix}`}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                     <div style={{ display: 'flex', gap: 8 }}>
                                         <button
                                             className='theia-button secondary'

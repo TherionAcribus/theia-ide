@@ -368,8 +368,33 @@ export interface GeographicPlausibilityAssessment {
     reference_distances?: GeographicPlausibilityReference[];
 }
 
+export interface ResolutionDirectPluginCandidate {
+    plugin_name: string;
+    confidence: number;
+    reason: string;
+    source_kind?: string | null;
+    source_text?: string | null;
+    should_run_directly?: boolean;
+    plugin_inputs?: Record<string, any> | null;
+    axes?: string[];
+    position_count?: number;
+    fallback_plugin_list?: string[];
+}
+
+export interface ResolutionDirectPluginResult {
+    plugin_name: string;
+    status?: string;
+    summary?: string;
+    results_count: number;
+    top_results: PluginResultItem[];
+    coordinates?: Record<string, any> | null;
+    geographic_plausibility?: GeographicPlausibilityAssessment | null;
+}
+
 export interface ResolutionSecretExecution {
     selected_fragment?: ListingSecretFragment | null;
+    direct_plugin_candidate?: ResolutionDirectPluginCandidate | null;
+    direct_plugin_result?: ResolutionDirectPluginResult | null;
     recommendation?: MetasolverRecommendationResponse | null;
     metasolver_result?: {
         status?: string;

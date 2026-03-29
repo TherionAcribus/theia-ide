@@ -2884,6 +2884,17 @@ const cloneWorkflowResolution = (
                     text: truncateDiagnosticText(secretExecution.selected_fragment.text, 320),
                     evidence: (secretExecution.selected_fragment.evidence || []).slice(0, 3),
                 } : null,
+                direct_plugin_candidate: secretExecution.direct_plugin_candidate ? {
+                    ...secretExecution.direct_plugin_candidate,
+                    source_text: truncateDiagnosticText(secretExecution.direct_plugin_candidate.source_text || '', 320) || null,
+                    axes: (secretExecution.direct_plugin_candidate.axes || []).slice(0, 4),
+                    fallback_plugin_list: (secretExecution.direct_plugin_candidate.fallback_plugin_list || []).slice(0, 8),
+                    plugin_inputs: secretExecution.direct_plugin_candidate.plugin_inputs ? { ...secretExecution.direct_plugin_candidate.plugin_inputs } : null,
+                } : null,
+                direct_plugin_result: secretExecution.direct_plugin_result ? {
+                    ...secretExecution.direct_plugin_result,
+                    top_results: (secretExecution.direct_plugin_result.top_results || []).slice(0, 5).map(result => ({ ...result })),
+                } : null,
                 recommendation: cloneMetasolverRecommendation(secretExecution.recommendation || null),
                 metasolver_result: secretExecution.metasolver_result ? {
                     ...secretExecution.metasolver_result,

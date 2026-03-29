@@ -203,6 +203,8 @@ export function buildGeocacheChatPrompt(data: GeocachePromptData): string {
         '3. Cite les outils, calculs ou verifications necessaires.',
         '4. Demande des precisions avant de conclure si les donnees sont insuffisantes.',
         '5. Ne JAMAIS inventer une URL de checker. Utilise uniquement celles fournies dans "Checkers".',
+        '6. Si un step automatise fiable est deja disponible via GeoApp, execute-le avant de rester au niveau plan theorique.',
+        '7. Ne decris jamais un resultat de plugin, de checker ou de calcul comme un fait acquis si tu ne l as pas obtenu via un tool call dans cet echange.',
         '',
         ...(certitudeUrl
             ? [
@@ -235,7 +237,8 @@ export function buildGeocacheChatPrompt(data: GeocachePromptData): string {
         '',
         'Orchestration initiale du listing :',
         '- Commence par resolve_geocache_workflow(geocache_id) pour obtenir la classification, le workflow principal, un plan d execution et la pre-analyse deterministe des branches secret_code ou formula.',
-        '- Quand une etape backend est automatisable, tu peux enchainer avec run_geocache_workflow_step(geocache_id, target_step_id?) pour executer directement inspect-images, execute-metasolver, search-answers, calculate-final-coordinates ou validate-with-checker.',
+        '- Quand une etape backend est automatisable, tu peux enchainer avec run_geocache_workflow_step(geocache_id, target_step_id?) pour executer directement inspect-images, execute-direct-plugin, execute-metasolver, search-answers, calculate-final-coordinates ou validate-with-checker.',
+        '- Si resolve_geocache_workflow remonte un direct_plugin_candidate avec should_run_directly=true, appelle immediatement run_geocache_workflow_step(geocache_id, "execute-direct-plugin") avant de proposer des variantes generiques.',
         '- Utilise classify_geocache_listing seulement si tu dois reinspecter le listing apres une nouvelle hypothese ou comparer plusieurs branches.',
         '',
         'Formules / coordonnees :',
@@ -252,6 +255,8 @@ export function buildGeocacheChatPrompt(data: GeocachePromptData): string {
         '',
         'Codes secrets / metasolver :',
         '- Si resolve_geocache_workflow choisit secret_code, reprends de preference le selected_fragment et la recommendation metasolver deja retournes.',
+        '- Si un direct_plugin_candidate fiable est deja remonte, execute-le avant de recalculer une recommandation metasolver.',
+        '- Si execute-direct-plugin renvoie une sortie exploitable, utilise d abord ce resultat; ne rebascule vers metasolver que si le resultat direct reste insuffisant ou ambigu.',
         '- Si tu changes de fragment ou de texte, appelle ensuite recommend_metasolver_plugins(text, preset?) pour recalculer la signature d entree et la plugin_list recommandee.',
         '- Ensuite appelle metasolver en mode tool-driven avec le texte extrait. Utilise de preference plugin_list recommandee pour limiter le bruit.',
         '- Si tu veux tester tout un preset sans filtrage explicite, appelle metasolver avec preset seulement et sans plugin_list.',
@@ -260,6 +265,7 @@ export function buildGeocacheChatPrompt(data: GeocachePromptData): string {
         '- Pour valider une reponse, appelle run_checker en mode tool-driven avec geocache_id (recommande) : run_checker(geocache_id, candidate). Le tool resout automatiquement le bon checker, l URL et wp.',
         '- Si un checker est fourni (ex: Certitude) et que tu proposes une reponse textuelle, valide-la en appelant le tool run_checker(url, candidate) AVANT de conclure.',
         '- Si le checker necessite une session (ex: Geocaching.com), appelle d abord ensure_checker_session(provider="geocaching"). Si logged_in=false, propose login_checker_session(provider="geocaching") puis reessaie.',
+        '- Si un direct plugin, un calcul de formule ou une etape backend produit une coordonnee plausible et qu un checker existe, tente la validation checker avant de conclure.',
         ...(geocachingCheckerUrl && geocachingCheckerUrl.toLowerCase().includes('#solution-checker') && gcCode
             ? [
                 `Note: le checker Geocaching peut etre stocke comme ancre (${geocachingCheckerUrl}). Dans ce cas, lors de l'appel a run_checker, passe aussi wp="${gcCode}" pour que l'app reconstruise l'URL Geocaching correcte.`,
@@ -271,7 +277,7 @@ export function buildGeocacheChatPrompt(data: GeocachePromptData): string {
         ...lines,
         '',
         '--- OBJECTIF ---',
-        "Analyse l'enigme, propose un plan d'action clair (max 3 pistes) et precise comment verifier chaque hypothese avant d'estimer la position finale.",
+        "Analyse l'enigme, mais priorise toujours l'execution des tools GeoApp fiables avant de rester sur un plan abstrait. Si un direct plugin ou un checker peut etre lance proprement, fais-le d abord, puis resume le resultat en max 3 pistes si necessaire.",
     ].join('\n');
 }
 

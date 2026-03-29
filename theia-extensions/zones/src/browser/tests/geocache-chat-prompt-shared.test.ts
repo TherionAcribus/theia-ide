@@ -57,6 +57,10 @@ function testBuildGeocacheChatPrompt(): void {
     assert.ok(prompt.includes('Images / OCR :'));
     assert.ok(prompt.includes('Codes secrets / metasolver :'));
     assert.ok(prompt.includes('Verification (checkers) :'));
+    assert.ok(prompt.includes('Si resolve_geocache_workflow remonte un direct_plugin_candidate avec should_run_directly=true'));
+    assert.ok(prompt.includes('Si execute-direct-plugin renvoie une sortie exploitable, utilise d abord ce resultat'));
+    assert.ok(prompt.includes('Si un direct plugin, un calcul de formule ou une etape backend produit une coordonnee plausible'));
+    assert.ok(prompt.includes('Ne decris jamais un resultat de plugin, de checker ou de calcul comme un fait acquis'));
     assert.ok(prompt.includes('Note: le checker Geocaching peut etre stocke comme ancre'));
     assert.ok(prompt.includes('--- CONTEXTE GEOCACHE ---'));
     assert.ok(prompt.includes('Nom : Mystery hybride'));
@@ -73,7 +77,7 @@ function testBuildGeocacheChatPrompt(): void {
     assert.ok(prompt.includes('Waypoints (details) :'));
     assert.ok(prompt.includes('- P1 / STAGE • Etape 1 (Stage)'));
     assert.ok(prompt.includes('Note : Compter les marches autour du panneau.'));
-    assert.ok(prompt.includes('Analyse l\'enigme, propose un plan d\'action clair'));
+    assert.ok(prompt.includes('priorise toujours l\'execution des tools GeoApp fiables'));
 }
 
 function testBuildGeocacheGeoAppOpenChatDetail(): void {

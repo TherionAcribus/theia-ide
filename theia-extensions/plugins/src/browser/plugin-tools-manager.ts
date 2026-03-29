@@ -317,7 +317,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
         return {
             id: 'geoapp.plugins.workflow.resolve',
             name: 'resolve_geocache_workflow',
-            description: 'Orchestre l analyse initiale d une geocache: classification, choix du workflow principal, plan d execution et pre-analyse deterministic du workflow secret_code ou formula.',
+            description: 'Orchestre l analyse initiale d une geocache: classification, choix du workflow principal, plan d execution et pre-analyse deterministic du workflow secret_code ou formula, avec plugin direct si un decodeur tres specifique ressort nettement.',
             providerName: PluginToolsManager.PROVIDER_NAME,
             parameters: {
                 type: 'object',
@@ -352,7 +352,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                     },
                     auto_execute: {
                         type: 'boolean',
-                        description: 'Execute le metasolver si le workflow principal est secret_code.'
+                        description: 'Execute d abord le plugin direct s il est suffisamment fiable pour secret_code, sinon le metasolver.'
                     },
                     max_secret_fragments: {
                         type: 'number',
@@ -377,7 +377,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
         return {
             id: 'geoapp.plugins.workflow.run-step',
             name: 'run_geocache_workflow_step',
-            description: 'Execute la prochaine etape automatisable du workflow GeoApp, ou une etape ciblee comme inspect-hidden-html, inspect-images, execute-metasolver, search-answers, calculate-final-coordinates ou validate-with-checker.',
+            description: 'Execute la prochaine etape automatisable du workflow GeoApp, ou une etape ciblee comme inspect-hidden-html, inspect-images, execute-direct-plugin, execute-metasolver, search-answers, calculate-final-coordinates ou validate-with-checker.',
             providerName: PluginToolsManager.PROVIDER_NAME,
             parameters: {
                 type: 'object',
@@ -408,7 +408,7 @@ export class PluginToolsManager implements FrontendApplicationContribution {
                     },
                     target_step_id: {
                         type: 'string',
-                        description: 'Etape cible optionnelle: inspect-hidden-html, inspect-images, execute-metasolver, search-answers, calculate-final-coordinates, validate-with-checker.'
+                        description: 'Etape cible optionnelle: inspect-hidden-html, inspect-images, execute-direct-plugin, execute-metasolver, search-answers, calculate-final-coordinates, validate-with-checker.'
                     },
                     preferred_workflow: {
                         type: 'string',

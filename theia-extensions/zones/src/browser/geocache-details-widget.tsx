@@ -224,7 +224,7 @@ const WaypointsEditorWrapper: React.FC<WaypointsEditorWrapperProps> = (props) =>
         }
     }, [onRegisterCallback]);
 
-    // Créer une version modifiée du WaypointsEditor avec accès Ã  startEdit
+    // Créer une version modifiée du WaypointsEditor avec accès à startEdit
     return (
         <WaypointsEditorWithRef
             {...editorProps}
@@ -339,7 +339,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
             cancelEdit();
             messages.info('Waypoint sauvegardé');
         } catch (e) {
-            console.error('[WaypointsEditor] âŒ Save waypoint error', e);
+            console.error('[WaypointsEditor] ❌ Save waypoint error', e);
             messages.error('Erreur lors de la sauvegarde du waypoint');
         }
     };
@@ -605,7 +605,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                             title='Définir ces coordonnées comme coordonnées corrigées de la géocache'
                             style={{ fontSize: 12 }}
                         >
-                            ðŸ“ Définir comme coords corrigées
+                            📍 Définir comme coords corrigées
                         </button>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
@@ -648,7 +648,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Éditer'
                                         >
-                                            âœï¸
+                                            ✏️
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -657,7 +657,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Dupliquer'
                                         >
-                                            ðŸ“‹
+                                            📋
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -666,7 +666,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Définir comme coordonnées corrigées'
                                         >
-                                            ðŸ“
+                                            📍
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -675,7 +675,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Envoyer ces coordonnées vers Geocaching.com (comme coordonnées corrigées)'
                                         >
-                                            ðŸ“¡
+                                            📡
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -684,7 +684,7 @@ const WaypointsEditorWithRef: React.FC<WaypointsEditorWithRefProps> = ({ onStart
                                             style={{ padding: '2px 8px', fontSize: 11 }}
                                             title='Supprimer'
                                         >
-                                            ðŸ—‘ï¸
+                                            🗑️
                                         </button>
                                     </div>
                                 </td>
@@ -788,10 +788,10 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
             }
             await onUpdate();
             setIsEditing(false);
-            messages.info('Description mise Ã  jour');
+            messages.info('Description mise à jour');
         } catch (e) {
             console.error('Save description error', e);
-            messages.error('Erreur lors de la mise Ã  jour de la description');
+            messages.error('Erreur lors de la mise à jour de la description');
         }
     };
 
@@ -921,7 +921,7 @@ const DescriptionEditor: React.FC<DescriptionEditorProps> = ({
                             disabled={!hasModified}
                             title={!hasModified ? 'Aucune description modifiée' : undefined}
                         >
-                            Revenir Ã  l'originale
+                            Revenir à l'originale
                         </button>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className='theia-button secondary' onClick={cancelEdit}>Annuler</button>
@@ -945,12 +945,12 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
         geocacheData.solved || 'not_solved'
     );
 
-    // Déterminer les coordonnées Ã  afficher
+    // Déterminer les coordonnées à afficher
     const displayCoords = geocacheData.coordinates_raw || geocacheData.original_coordinates_raw || '';
     const originalCoords = geocacheData.original_coordinates_raw || '';
     const isCorrected = geocacheData.is_corrected === true;
 
-    // Mettre Ã  jour le statut quand les données changent
+    // Mettre à jour le statut quand les données changent
     React.useEffect(() => {
         setSolvedStatus(geocacheData.solved || 'not_solved');
     }, [geocacheData.solved]);
@@ -978,10 +978,10 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             
             await onUpdate();
             setIsEditing(false);
-            messages.info('Coordonnées mises Ã  jour');
+            messages.info('Coordonnées mises à jour');
         } catch (e) {
             console.error('Save coordinates error', e);
-            messages.error('Erreur lors de la mise Ã  jour des coordonnées');
+            messages.error('Erreur lors de la mise à jour des coordonnées');
         }
     };
 
@@ -1004,7 +1004,7 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
 
     const sendToGeocaching = async () => {
         if (!isCorrected) {
-            messages.warn('Aucune coordonnée corrigée Ã  envoyer. Corrigez d\'abord les coordonnées.');
+            messages.warn('Aucune coordonnée corrigée à envoyer. Corrigez d\'abord les coordonnées.');
             return;
         }
         setIsSendingToGC(true);
@@ -1016,7 +1016,7 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             const json = await res.json();
             if (!res.ok) {
                 if (res.status === 401) {
-                    messages.error('Non connecté Ã  Geocaching.com "” configurez l\'authentification dans GeoApp');
+                    messages.error('Non connecté à Geocaching.com "” configurez l\'authentification dans GeoApp');
                 } else {
                     messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
                 }
@@ -1042,10 +1042,10 @@ const CoordinatesEditor: React.FC<CoordinatesEditorProps> = ({ geocacheData, geo
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
             setSolvedStatus(newStatus);
-            messages.info('Statut mis Ã  jour');
+            messages.info('Statut mis à jour');
         } catch (e) {
             console.error('Update solved status error', e);
-            messages.error('Erreur lors de la mise Ã  jour du statut');
+            messages.error('Erreur lors de la mise à jour du statut');
         }
     };
 
@@ -1506,7 +1506,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             return;
         }
         if (this.isSavingWaypoint) {
-            this.messages.warn('Création de waypoint déjÃ  en cours');
+            this.messages.warn('Création de waypoint déjà en cours');
             return;
         }
 
@@ -1785,7 +1785,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Ferme la carte associée Ã  cette géocache
+     * Ferme la carte associée à cette géocache
      */
     private closeAssociatedMap(): void {
         if (this.geocacheId && this.data?.gc_code) {
@@ -1853,7 +1853,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (hasModified) {
             const dialog = new ConfirmDialog({
                 title: 'Traduire la description',
-                msg: 'Une description modifiée existe déjÃ . Voulez-vous la remplacer par la traduction ?'
+                msg: 'Une description modifiée existe déjà. Voulez-vous la remplacer par la traduction ?'
             });
             const ok = await dialog.open();
             if (!ok) {
@@ -1991,7 +1991,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Réactive la carte correspondante Ã  cette géocache
+     * Réactive la carte correspondante à cette géocache
      */
     private reactivateMap(): void {
         // Si on a une géocache chargée, réactiver sa carte
@@ -2030,7 +2030,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     /**
-     * Rafraîchit la carte associée Ã  cette géocache après modification des waypoints
+     * Rafraîchit la carte associée à cette géocache après modification des waypoints
      */
     private async refreshAssociatedMap(): Promise<void> {
         if (!this.geocacheId || !this.data?.gc_code) {
@@ -2043,13 +2043,13 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (existingMap && 'loadGeocaches' in existingMap) {
             console.log('[GeocacheDetailsWidget] Rafraîchissement de la carte géocache:', this.geocacheId);
             
-            // Recharger les données de la géocache pour avoir les waypoints Ã  jour
+            // Recharger les données de la géocache pour avoir les waypoints à jour
             try {
                 const res = await fetch(`${this.backendBaseUrl}/api/geocaches/${this.geocacheId}`, { credentials: 'include' });
                 if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
                 const updatedData = await res.json();
                 
-                // Mettre Ã  jour la carte avec les nouvelles données
+                // Mettre à jour la carte avec les nouvelles données
                 const mapGeocache = {
                     id: updatedData.id,
                     gc_code: updatedData.gc_code,
@@ -2069,7 +2069,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                     waypoints: updatedData.waypoints || []
                 };
                 
-                // Appeler loadGeocaches avec la géocache mise Ã  jour
+                // Appeler loadGeocaches avec la géocache mise à jour
                 (existingMap as any).loadGeocaches([mapGeocache]);
             } catch (e) {
                 console.error('[GeocacheDetailsWidget] Erreur lors du rafraîchissement de la carte:', e);
@@ -2091,7 +2091,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             }
             this.title.label = `Géocache - ${this.data?.name ?? this.data?.gc_code ?? this.geocacheId}`;
             
-            // Rafraîchir la carte associée avec les données Ã  jour
+            // Rafraîchir la carte associée avec les données à jour
             await this.refreshAssociatedMap();
             await this.loadNotesCount();
             void this.autoSyncGcPersonalNoteFromDetailsIfEnabled();
@@ -2184,12 +2184,12 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             });
             if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
             
-            // ✅ Mettre Ã  jour uniquement la liste des waypoints sans recharger toute la page
+            // ✅ Mettre à jour uniquement la liste des waypoints sans recharger toute la page
             if (this.data.waypoints) {
                 this.data.waypoints = this.data.waypoints.filter(w => w.id !== waypointId);
             }
             
-            // ✅ Rafraîchir la carte avec les waypoints mis Ã  jour
+            // ✅ Rafraîchir la carte avec les waypoints mis à jour
             await this.refreshAssociatedMap();
             
             // ✅ Re-render le composant sans perdre la position de scroll
@@ -2226,7 +2226,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             const json = await res.json();
             if (!res.ok) {
                 if (res.status === 401) {
-                    this.messages.error('Non connecté Ã  Geocaching.com "” configurez l\'authentification dans GeoApp');
+                    this.messages.error('Non connecté à Geocaching.com "” configurez l\'authentification dans GeoApp');
                 } else {
                     this.messages.error(`Échec de l'envoi : ${json.error || res.statusText}`);
                 }
@@ -2265,10 +2265,10 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
             // Recharger les données pour afficher les nouvelles coordonnées corrigées
             await this.load();
             
-            this.messages.info(`Coordonnées corrigées mises Ã  jour depuis "${waypointName}"`);
+            this.messages.info(`Coordonnées corrigées mises à jour depuis "${waypointName}"`);
         } catch (e) {
             console.error('Set corrected coords error', e);
-            this.messages.error('Erreur lors de la mise Ã  jour des coordonnées corrigées');
+            this.messages.error('Erreur lors de la mise à jour des coordonnées corrigées');
         }
     };
 
@@ -2283,7 +2283,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
     }
 
     protected getAttributeIconUrlFromAttribute(attribute: GeocacheAttribute): string | undefined {
-        // base_filename contient déjÃ  le suffixe -yes ou -no
+        // base_filename contient déjà le suffixe -yes ou -no
         const iconFilename = attribute.base_filename || `${attribute.name.toLowerCase().replace(/\s+/g, '')}-${attribute.is_negative ? 'no' : 'yes'}`;
         const iconUrl = getAttributeIconUrl(iconFilename);
         
@@ -2305,9 +2305,9 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         
         return (
             <span style={{ color, fontSize: 16 }}>
-                {'â˜…'.repeat(fullStars)}
-                {hasHalfStar && 'â—'}
-                {emptyStars > 0 && <span style={{ opacity: 0.3 }}>{'â˜†'.repeat(emptyStars)}</span>}
+                {'★'.repeat(fullStars)}
+                {hasHalfStar && '◐'}
+                {emptyStars > 0 && <span style={{ opacity: 0.3 }}>{'☆'.repeat(emptyStars)}</span>}
             </span>
         );
     }
@@ -2463,7 +2463,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
         if (hasAnyOverride) {
             const dialog = new ConfirmDialog({
                 title: 'Traduire tout le contenu',
-                msg: 'Des valeurs modifiées existent déjÃ  (description, indices, ou notes de waypoints). Voulez-vous les remplacer par la traduction ?'
+                msg: 'Des valeurs modifiées existent déjà (description, indices, ou notes de waypoints). Voulez-vous les remplacer par la traduction ?'
             });
             const ok = await dialog.open();
             if (!ok) {
@@ -2869,7 +2869,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             style={{ fontSize: 12, padding: '4px 12px' }}
                                             title='Voir les logs de cette géocache'
                                         >
-                                            ðŸ’¬ Logs
+                                            💬 Logs
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -2877,7 +2877,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             style={{ fontSize: 12, padding: '4px 12px' }}
                                             title='Loguer cette géocache (éditeur)'
                                         >
-                                            âœï¸ Loguer
+                                            âœ️ Loguer
                                         </button>
                                         <button
                                             className='theia-button secondary'
@@ -2885,7 +2885,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             style={{ fontSize: 12, padding: '4px 12px' }}
                                             title='Voir les notes de cette géocache'
                                         >
-                                            ðŸ“ Notes{this.notesCount && this.notesCount > 0 ? ` (${this.notesCount})` : ''}
+                                            📝 Notes{this.notesCount && this.notesCount > 0 ? ` (${this.notesCount})` : ''}
                                         </button>
                                     </div>
                                 </div>
@@ -2902,7 +2902,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                         disabled={this.archiveStatus === 'loading' || this.isSyncingArchive}
                                         title={
                                             this.archiveStatus === 'synced'
-                                                ? `Archive Ã  jour${this.archiveUpdatedAt ? ` (${new Date(this.archiveUpdatedAt).toLocaleString()})` : ''} "” Cliquer pour re-synchroniser`
+                                                ? `Archive à jour${this.archiveUpdatedAt ? ` (${new Date(this.archiveUpdatedAt).toLocaleString()})` : ''} "” Cliquer pour re-synchroniser`
                                                 : this.archiveStatus === 'loading'
                                                 ? 'Synchronisation en cours"¦'
                                                 : 'Archive non synchronisée "” Cliquer pour synchroniser'
@@ -2922,7 +2922,7 @@ export class GeocacheDetailsWidget extends ReactWidget implements StatefulWidget
                                             opacity: this.isSyncingArchive ? 0.6 : 1,
                                         }}
                                     >
-                                        <span>{this.archiveStatus === 'synced' ? 'ðŸ’¾' : this.archiveStatus === 'loading' ? 'â³' : 'âš ï¸'}</span>
+                                        <span>{this.archiveStatus === 'synced' ? '💾' : this.archiveStatus === 'loading' ? '⏳' : '⚠️'}</span>
                                         <span>{this.archiveStatus === 'synced' ? 'Archive' : this.archiveStatus === 'loading' ? 'Sync"¦' : 'Non archivée'}</span>
                                     </button>
                                 )}

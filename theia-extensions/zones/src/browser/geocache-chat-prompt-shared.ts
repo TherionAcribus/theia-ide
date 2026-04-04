@@ -109,7 +109,7 @@ function buildWaypointsSummary(waypoints: GeocachePromptWaypoint[]): string {
         .slice(0, 3)
         .map(waypoint => {
             const label = waypoint.name || waypoint.prefix || 'WP';
-            const coords = waypoint.gc_coords || (waypoint.latitude !== undefined && waypoint.longitude !== undefined
+            const coords = waypoint.gc_coords || (waypoint.latitude != null && waypoint.longitude != null
                 ? `${waypoint.latitude.toFixed(5)}, ${waypoint.longitude.toFixed(5)}`
                 : undefined);
             return coords ? `${label} (${coords})` : label;
@@ -135,12 +135,12 @@ function buildWaypointsDetails(waypoints: GeocachePromptWaypoint[]): string[] {
         const type = (waypoint.type || '').trim();
 
         let coords = (waypoint.gc_coords || '').trim();
-        if (!coords && waypoint.latitude !== undefined && waypoint.longitude !== undefined) {
+        if (!coords && waypoint.latitude != null && waypoint.longitude != null) {
             const gcFormat = toGCFormat(waypoint.latitude, waypoint.longitude);
             coords = `${gcFormat.gcLat}, ${gcFormat.gcLon}`;
         }
 
-        const decimalCoords = waypoint.latitude !== undefined && waypoint.longitude !== undefined
+        const decimalCoords = waypoint.latitude != null && waypoint.longitude != null
             ? `${waypoint.latitude.toFixed(5)}, ${waypoint.longitude.toFixed(5)}`
             : undefined;
 
